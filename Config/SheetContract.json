@@ -1,0 +1,580 @@
+{
+  "schemaVersion": 1,
+  "source": "Power BI Governance Model.pbit (ExpectedColumns lists in Base * queries)",
+  "workbooks": {
+    "Model Detail.xlsx": {
+      "Semantic Models": {
+        "expectedColumns": [
+          "Type",
+          "Table",
+          "Name",
+          "FormatString",
+          "DisplayFolder",
+          "Description",
+          "IsHidden",
+          "TableStorageMode",
+          "Expression",
+          "ModelAsOfDate",
+          "ModelName",
+          "ModelID",
+          "RelationshipFromTable",
+          "RelationshipFromColumn",
+          "RelationshipToTable",
+          "RelationshipToColumn",
+          "RelationshipStatus",
+          "RelationshipFromCardinality",
+          "RelationshipToCardinality",
+          "RelationshipCrossFilteringBehavior"
+        ],
+        "referencedBy": [
+          "Base Semantic Models"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Measure Dependencies": {
+        "expectedColumns": [
+          "ObjectName",
+          "ObjectType",
+          "DependsOn",
+          "DependsOnType",
+          "ModelAsOfDate",
+          "ModelName",
+          "ModelID"
+        ],
+        "referencedBy": [
+          "Base Measure Dependencies",
+          "Base Calculated Column Dependencies",
+          "Base Calculation Group Dependencies"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      }
+    },
+    "Report Detail.xlsx": {
+      "Bookmarks": {
+        "expectedColumns": [
+          "ReportName",
+          "ReportID",
+          "ModelID",
+          "Name",
+          "Id",
+          "PageName",
+          "PageId",
+          "VisualId",
+          "VisualHiddenFlag",
+          "ReportDate",
+          "SuppressData",
+          "CurrentPageSelected",
+          "ApplyVisualDisplayState",
+          "ApplyToAllVisuals"
+        ],
+        "referencedBy": [
+          "Base Bookmarks"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "CustomVisuals": {
+        "expectedColumns": [
+          "ReportName",
+          "ReportID",
+          "ModelID",
+          "Name",
+          "ReportDate"
+        ],
+        "referencedBy": [
+          "Base Custom Visuals"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "PageFilters": {
+        "expectedColumns": [
+          "ReportName",
+          "ReportID",
+          "ModelID",
+          "PageId",
+          "PageName",
+          "DisplayName",
+          "TableName",
+          "ObjectName",
+          "ObjectType",
+          "FilterType",
+          "ReportDate",
+          "HiddenFilter",
+          "LockedFilter",
+          "AppliedFilterVersion",
+          "HowCreated",
+          "Used"
+        ],
+        "referencedBy": [
+          "Base Page Filters"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "ReportFilters": {
+        "expectedColumns": [
+          "ReportName",
+          "ReportID",
+          "ModelID",
+          "DisplayName",
+          "TableName",
+          "ObjectName",
+          "ObjectType",
+          "FilterType",
+          "ReportDate",
+          "HiddenFilter",
+          "LockedFilter",
+          "AppliedFilterVersion",
+          "HowCreated",
+          "Used"
+        ],
+        "referencedBy": [
+          "Base Report Filters"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "VisualInteractions": {
+        "expectedColumns": [
+          "ReportName",
+          "ReportID",
+          "ModelID",
+          "PageName",
+          "PageId",
+          "SourceVisualID",
+          "TargetVisualID",
+          "TypeID",
+          "Type",
+          "ReportDate",
+          "SourceVisualName",
+          "TargetVisualName"
+        ],
+        "referencedBy": [
+          "Base Visual Interactions"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "ReportLevelMeasures": {
+        "expectedColumns": [
+          "ReportName",
+          "ReportID",
+          "ModelID",
+          "TableName",
+          "ObjectName",
+          "ObjectType",
+          "ReportDate",
+          "HiddenFlag",
+          "FormatString",
+          "Expression",
+          "DataType",
+          "DataCategory"
+        ],
+        "referencedBy": [
+          "Base Report Level Measures"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Connections": {
+        "expectedColumns": [
+          "ReportID",
+          "ModelID",
+          "ReportDate",
+          "ReportName",
+          "Type",
+          "ServerName"
+        ],
+        "referencedBy": [
+          "Base Connections"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Pages": {
+        "expectedColumns": [
+          "ReportID",
+          "BackgroundImage",
+          "Type",
+          "Number",
+          "Name",
+          "WallpaperImage",
+          "ReportName",
+          "Id",
+          "ReportDate",
+          "VisualCount",
+          "Width",
+          "Height",
+          "ModelID",
+          "HiddenFlag",
+          "DisplayOption",
+          "DataVisualCount",
+          "VisibleVisualCount",
+          "PageFilterCount"
+        ],
+        "referencedBy": [
+          "Base Pages"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Visuals": {
+        "expectedColumns": [
+          "ReportID",
+          "Id",
+          "Type",
+          "HiddenFlag",
+          "ParentGroup",
+          "ShowItemsNoDataFlag",
+          "Name",
+          "Y",
+          "ReportName",
+          "ReportDate",
+          "Z",
+          "ObjectCount",
+          "SlicerType",
+          "Height",
+          "ModelID",
+          "PageId",
+          "PageName",
+          "Width",
+          "CustomVisualFlag",
+          "X",
+          "DisplayType",
+          "Title",
+          "SubTitle",
+          "AltText",
+          "TabOrder",
+          "VisualFilterCount",
+          "DataLimit",
+          "Divider",
+          "RowSubTotals",
+          "ColumnSubTotals",
+          "DataVisual",
+          "HasSparkline"
+        ],
+        "referencedBy": [
+          "Base Visuals"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "VisualObjects": {
+        "expectedColumns": [
+          "ReportID",
+          "ObjectName",
+          "AppliedFilterVersion",
+          "PageName",
+          "VisualType",
+          "TableName",
+          "ObjectType",
+          "ReportName",
+          "ReportDate",
+          "DisplayName",
+          "VisualId",
+          "ModelID",
+          "PageId",
+          "Source",
+          "CustomVisualFlag",
+          "VisualName",
+          "ImplicitMeasure",
+          "Sparkline",
+          "VisualCalc",
+          "Format"
+        ],
+        "referencedBy": [
+          "Base Visuals Objects"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "VisualFilters": {
+        "expectedColumns": [
+          "HiddenFilter",
+          "ObjectName",
+          "AppliedFilterVersion",
+          "PageName",
+          "TableName",
+          "ObjectType",
+          "ReportName",
+          "ReportDate",
+          "DisplayName",
+          "LockedFilter",
+          "ReportID",
+          "VisualId",
+          "ModelID",
+          "PageId",
+          "FilterType",
+          "HowCreated",
+          "Used"
+        ],
+        "referencedBy": [
+          "Base Visual Filters"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      }
+    },
+    "Power BI Environment Detail.xlsx": {
+      "DataflowLineage": {
+        "expectedColumns": [
+          "DataflowId",
+          "DatasetId",
+          "WorkspaceId",
+          "WorkspaceName",
+          "DataflowName",
+          "DatasetName"
+        ],
+        "referencedBy": [
+          "Base Dataflow Lineage"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "FabricItems": {
+        "expectedColumns": [
+          "FabricItemDescription",
+          "FabricItemName",
+          "FabricItemID",
+          "FabricItemType",
+          "WorkspaceId",
+          "WorkspaceName"
+        ],
+        "referencedBy": [
+          "Base Fabric Item Info"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Dataflows": {
+        "expectedColumns": [
+          "DataflowJsonURL",
+          "DataflowDescription",
+          "DataflowConfiguredBy",
+          "DataflowModifiedDateTime",
+          "DataflowModifiedBy",
+          "DataflowName",
+          "DataflowId",
+          "users",
+          "DataflowGeneration",
+          "WorkspaceId",
+          "WorkspaceName"
+        ],
+        "referencedBy": [
+          "Base Power BI Dataflows"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Apps": {
+        "expectedColumns": [
+          "AppId",
+          "AppName",
+          "AppLastUpdate",
+          "AppDescription",
+          "AppPublishedBy",
+          "AppWorkspaceId"
+        ],
+        "referencedBy": [
+          "Base Power BI Apps"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "AppReports": {
+        "expectedColumns": [
+          "AppReportId",
+          "AppReportType",
+          "ReportName",
+          "AppReportWebUrl",
+          "AppReportEmbedUrl",
+          "AppReportIsOwnedByMe",
+          "AppReportDatasetId",
+          "ReportId",
+          "AppId",
+          "AppName"
+        ],
+        "referencedBy": [
+          "Base Power BI App Reports"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "DataflowSourcesInfo": {
+        "expectedColumns": [
+          "DataflowDatasourceGatewayId",
+          "DataflowDatasourceType",
+          "DataflowDatasourceConnectionDetails",
+          "DataflowDatasourceId",
+          "WorkspaceId",
+          "WorkspaceName",
+          "DataflowId",
+          "DataflowName"
+        ],
+        "referencedBy": [
+          "Base Dataflow Source Info"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "DataflowRefreshHistory": {
+        "expectedColumns": [
+          "DataflowRefreshId",
+          "DataflowRefreshType",
+          "DataflowRefreshRequestId",
+          "DataflowRefreshEndTime",
+          "DataflowRefreshStartTime",
+          "DataflowRefreshStatus",
+          "DataflowErrorInfo",
+          "WorkspaceId",
+          "WorkspaceName",
+          "DataflowId",
+          "DataflowName"
+        ],
+        "referencedBy": [
+          "Base Dataflow Refresh History"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "DatasetSourcesInfo": {
+        "expectedColumns": [
+          "DatasetDatasourceGatewayId",
+          "DatasetDatasourceType",
+          "DatasetDatasourceConnectionDetails",
+          "DatasetDatasourceId",
+          "WorkspaceId",
+          "WorkspaceName",
+          "DatasetId",
+          "DatasetName"
+        ],
+        "referencedBy": [
+          "Base Power BI Model Sources"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "DatasetRefreshHistory": {
+        "expectedColumns": [
+          "DatasetRefreshId",
+          "DatasetRefreshType",
+          "DatasetRefreshRequestId",
+          "DatasetRefreshEndTime",
+          "DatasetRefreshStartTime",
+          "DatasetRefreshStatus",
+          "refreshAttempts",
+          "WorkspaceId",
+          "WorkspaceName",
+          "DatasetId",
+          "DatasetName"
+        ],
+        "referencedBy": [
+          "Base Power BI Model Refresh History"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Datasets": {
+        "expectedColumns": [
+          "DatasetWebUrl",
+          "DatasetId",
+          "DatasetIsRefreshable",
+          "DatasetCreatedDate",
+          "DatasetIsOnPremGatewayRequired",
+          "DatasetName",
+          "DatasetTargetStorageMode",
+          "DatasetIsEffectiveIdentityRolesRequired",
+          "DatasetDescription",
+          "DatasetQueryScaleOutSettings",
+          "DatasetAddRowsAPIEnabled",
+          "DatasetConfiguredBy",
+          "DatasetIsEffectiveIdentityRequired",
+          "createReportEmbedURL",
+          "qnaEmbedURL",
+          "upstreamDatasets",
+          "users",
+          "WorkspaceId",
+          "WorkspaceName"
+        ],
+        "referencedBy": [
+          "Base Power BI Datasets"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Reports": {
+        "expectedColumns": [
+          "ReportEmbedUrl",
+          "ReportId",
+          "ReportDescription",
+          "ReportIsFromPbix",
+          "ReportName",
+          "DatasetId",
+          "DatasetWorkspaceId",
+          "ReportWebUrl",
+          "ReportIsOwnedByMe",
+          "ReportType",
+          "format",
+          "users",
+          "subscriptions",
+          "WorkspaceId",
+          "WorkspaceName",
+          "DatasetName"
+        ],
+        "referencedBy": [
+          "Base Power BI Reports"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "ReportPages": {
+        "expectedColumns": [
+          "PageName",
+          "PageDisplayName",
+          "PageOrder",
+          "WorkspaceId",
+          "WorkspaceName",
+          "ReportId",
+          "ReportName"
+        ],
+        "referencedBy": [
+          "Base Power BI Pages"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "Workspaces": {
+        "expectedColumns": [
+          "WorkspaceId",
+          "WorkspaceName",
+          "WorkspaceType",
+          "WorkspaceCapacityId",
+          "WorkspaceDefaultDatasetStorageFormat",
+          "WorkspaceIsReadOnly",
+          "WorkspaceIsOnDedicatedCapacity"
+        ],
+        "referencedBy": [
+          "Base Power BI Workspaces"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      },
+      "DatasetRefreshSchedule": {
+        "expectedColumns": [
+          "DatasetRefreshScheduleLocalTimeZoneId",
+          "DatasetRefreshScheduleNotifyOption",
+          "DatasetRefreshScheduleEnabled",
+          "@odata.context",
+          "WorkspaceId",
+          "WorkspaceName",
+          "DatasetId",
+          "DatasetName",
+          "DatasetRefreshScheduleDay",
+          "DatasetRefreshScheduleTime"
+        ],
+        "referencedBy": [
+          "Base Power BI Model Refresh Schedule"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      }
+    },
+    "Dataflow Detail.xlsx": {
+      "Sheet1": {
+        "expectedColumns": [
+          "Dataflow ID",
+          "Dataflow Name",
+          "Query Name",
+          "Query",
+          "Report Date",
+          "Workspace Name - Dataflow Name",
+          "RowError",
+          "RowState",
+          "Table",
+          "ItemArray",
+          "HasErrors"
+        ],
+        "referencedBy": [
+          "Base Dataflows"
+        ],
+        "note": "The template adds any missing expected column as null, but the sheet itself must exist."
+      }
+    }
+  }
+}
