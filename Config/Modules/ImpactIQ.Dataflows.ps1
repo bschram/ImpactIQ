@@ -377,7 +377,7 @@ function Get-IQMDerivedColumn {
     return $result
 }
 
-function Get-IQDataflowQueryMetadata {
+function Get-IQDataflowQueryMetaMap {
     <#
     .SYNOPSIS
     Normalises "queriesMetadata" (object keyed by query name, or an array) into a hashtable name -> @{ LoadEnabled; IsHidden; QueryGroupId; QueryGroup } (private).
@@ -646,7 +646,7 @@ function Export-IQGen1Dataflow {
     $mashup = Get-IQDataflowMember -Object $modelJson -Name 'pbi:mashup'
     $metadataMap = @{}
     if ($null -ne $mashup) {
-        $metadataMap = Get-IQDataflowQueryMetadata -QueriesMetadata (Get-IQDataflowMember -Object $mashup -Name 'queriesMetadata') -QueryGroups (Get-IQDataflowMember -Object $modelJson -Name 'pbi:QueryGroups')
+        $metadataMap = Get-IQDataflowQueryMetaMap -QueriesMetadata (Get-IQDataflowMember -Object $mashup -Name 'queriesMetadata') -QueryGroups (Get-IQDataflowMember -Object $modelJson -Name 'pbi:QueryGroups')
         $result.Metadata = @{
             FetchedTime        = [string](Get-IQDataflowMember -Object $mashup -Name 'fetchedTime')
             AllowNativeQueries = (Get-IQDataflowMember -Object $mashup -Name 'allowNativeQueries')
@@ -798,7 +798,7 @@ function Export-IQFabricDataflow {
             $metaText = [System.Text.Encoding]::UTF8.GetString($metadataBytes)
             if ($metaText.Length -gt 0 -and $metaText[0] -eq [char]0xFEFF) { $metaText = $metaText.Substring(1) }
             $metaJson = ConvertFrom-Json -InputObject $metaText
-            $metadataMap = Get-IQDataflowQueryMetadata -QueriesMetadata (Get-IQDataflowMember -Object $metaJson -Name 'queriesMetadata') -QueryGroups (Get-IQDataflowMember -Object $metaJson -Name 'queryGroups')
+            $metadataMap = Get-IQDataflowQueryMetaMap -QueriesMetadata (Get-IQDataflowMember -Object $metaJson -Name 'queriesMetadata') -QueryGroups (Get-IQDataflowMember -Object $metaJson -Name 'queryGroups')
             $result.Metadata = @{
                 FormatVersion = [string](Get-IQDataflowMember -Object $metaJson -Name 'formatVersion')
                 Name          = [string](Get-IQDataflowMember -Object $metaJson -Name 'name')

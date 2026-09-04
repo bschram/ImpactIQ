@@ -260,6 +260,8 @@ function Invoke-IQAuthRequest {
         }
         catch {
             $info = Get-IQAuthHttpErrorInfo -ErrorRecord $_
+            # A thrown JSON string (e.g. from a test mock) carries the OAuth error in the message, not in a body.
+            if ([string]::IsNullOrWhiteSpace($info.Body) -and [string]$info.Message -match '^\s*\{') { $info.Body = [string]$info.Message }
             $parsed = ConvertFrom-IQAuthErrorBody -Body $info.Body
             $result.StatusCode = $info.StatusCode
             $result.Body = $info.Body
@@ -280,6 +282,20 @@ function Invoke-IQAuthRequest {
         }
     }
     return $result
+}
+
+function Test-IQAuthPermanentFailure {
+    <#
+    .SYNOPSIS
+        $true when a failed Invoke-IQAuthRequest result is an OAuth/Entra rejection (4xx or an error code) rather than a transient network/5xx failure.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][hashtable]$Result)
+    if ($null -ne $Result.StatusCode -and [int]$Result.StatusCode -ge 400 -and [int]$Result.StatusCode -lt 500) { return $true }
+    $code = [string]$Result.Error
+    if ([string]::IsNullOrWhiteSpace($code)) { return $false }
+    if ($code -in @('temporarily_unavailable', 'server_error', 'no_refresh_token')) { return $false }
+    return $true
 }
 
 function Get-IQAuthResultText {
@@ -329,7 +345,7 @@ function Get-IQJwtPayload {
     catch { return $null }
 }
 
-function Get-IQJwtClaims {
+function Get-IQJwtClaimSet {
     <#
     .SYNOPSIS
         Returns the claims of a JWT as an object (ConvertFrom-Json of the payload), or $null when unparsable.
@@ -348,7 +364,7 @@ function Get-IQJwtExpiry {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false, Position = 0)][AllowNull()][AllowEmptyString()][string]$Token)
-    $claims = Get-IQJwtClaims -Token $Token
+    $claims = Get-IQJwtClaimSet -Token $Token
     if ($null -eq $claims) { return [datetime]::MaxValue }
     try {
         if (-not $claims.PSObject.Properties['exp']) { return [datetime]::MaxValue }
@@ -367,7 +383,7 @@ function Get-IQJwtAccount {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Token)
-    $claims = Get-IQJwtClaims -Token $Token
+    $claims = Get-IQJwtClaimSet -Token $Token
     if ($null -eq $claims) { return $null }
     foreach ($name in @('preferred_username', 'upn', 'unique_name', 'email')) {
         if ($claims.PSObject.Properties[$name] -and -not [string]::IsNullOrWhiteSpace([string]$claims.$name)) { return [string]$claims.$name }
@@ -405,6 +421,25 @@ function ConvertTo-IQPlainTokenValue {
     if ($Value.PSObject.Properties['Token']) { return (ConvertTo-IQPlainTokenValue -Value $Value.Token) }
     if ($Value.PSObject.Properties['Authorization']) { return (ConvertTo-IQPlainTokenValue -Value $Value.Authorization) }
     return ([string]$Value -replace '^(?i)Bearer\s+', '').Trim()
+}
+
+function Get-IQAuthResponseAccessToken {
+    <#
+    .SYNOPSIS
+        Returns the access_token string from a token-endpoint response object, or $null when absent (strict-mode safe).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()]$Response)
+    if ($null -eq $Response) { return $null }
+    try {
+        if ($Response -is [System.Collections.IDictionary]) {
+            if ($Response.Contains('access_token')) { return [string]$Response['access_token'] }
+            return $null
+        }
+        if ($Response.PSObject.Properties['access_token']) { return [string]$Response.access_token }
+    }
+    catch { return $null }
+    return $null
 }
 
 function Register-IQAuthSecret {
@@ -513,7 +548,7 @@ function Set-IQAuthToken {
         if (-not [string]::IsNullOrWhiteSpace($account)) { $auth.Account = $account }
     }
     if ([string]::IsNullOrWhiteSpace([string]$auth.TenantIdResolved)) {
-        $claims = Get-IQJwtClaims -Token $AccessToken
+        $claims = Get-IQJwtClaimSet -Token $AccessToken
         if ($null -ne $claims -and $claims.PSObject.Properties['tid']) { $auth.TenantIdResolved = [string]$claims.tid }
     }
 
@@ -627,31 +662,34 @@ function Invoke-IQDeviceCodeFlow {
         Start-IQAuthSleep -Seconds $interval
         $poll = Invoke-IQAuthRequest -Uri $tokenUrl -Body $pollBody -MaxAttempts 3 -Description 'device-code poll'
         if ($poll.Ok) {
-            if ($null -eq $poll.Response -or -not $poll.Response.PSObject.Properties['access_token']) { throw 'Device-code token response contained no access_token.' }
+            $accessToken = Get-IQAuthResponseAccessToken -Response $poll.Response
+            if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'Device-code token response contained no access_token.' }
             Write-IQLog -Level Success -Stage Auth -Message 'Device-code sign-in completed.'
             return $poll.Response
         }
         $err = [string]$poll.Error
-        switch ($err) {
-            'authorization_pending' {
-                if ([datetime]::UtcNow -gt $deadline) { throw 'Device-code sign-in was not completed before the code expired.' }
-                continue
+        if ($err -eq 'authorization_pending') {
+            if ([datetime]::UtcNow -gt $deadline) { throw 'Device-code sign-in was not completed before the code expired.' }
+        }
+        elseif ($err -eq 'slow_down') {
+            $interval += 5
+            Write-IQLog -Level Debug -Stage Auth -Message ("Token endpoint asked to slow down; polling every {0} s." -f $interval)
+        }
+        elseif ($err -eq 'expired_token') {
+            throw 'The device code expired before anyone completed the sign-in. Re-run and complete the sign-in within the time shown.'
+        }
+        elseif ($err -eq 'authorization_declined') {
+            throw 'The device-code sign-in was declined by the user.'
+        }
+        elseif ($err -eq 'bad_verification_code') {
+            throw ('The token endpoint rejected the device code: ' + (Get-IQAuthResultText -Result $poll))
+        }
+        else {
+            $text = Get-IQAuthResultText -Result $poll
+            if ($poll.AadCodes -contains '50076' -or $poll.AadCodes -contains '50079' -or $poll.AadCodes -contains '53003' -or $poll.AadCodes -contains '530036') {
+                throw ('Device-code sign-in blocked by Conditional Access / MFA policy: ' + $text)
             }
-            'slow_down' {
-                $interval += 5
-                Write-IQLog -Level Debug -Stage Auth -Message ("Token endpoint asked to slow down; polling every {0} s." -f $interval)
-                continue
-            }
-            'expired_token' { throw 'The device code expired before anyone completed the sign-in. Re-run and complete the sign-in within the time shown.' }
-            'authorization_declined' { throw 'The device-code sign-in was declined by the user.' }
-            'bad_verification_code' { throw ('The token endpoint rejected the device code: ' + (Get-IQAuthResultText -Result $poll)) }
-            default {
-                $text = Get-IQAuthResultText -Result $poll
-                if ($poll.AadCodes -contains '50076' -or $poll.AadCodes -contains '50079' -or $poll.AadCodes -contains '53003' -or $poll.AadCodes -contains '530036') {
-                    throw ('Device-code sign-in blocked by Conditional Access / MFA policy: ' + $text)
-                }
-                throw ('Device-code sign-in failed: ' + $text)
-            }
+            throw ('Device-code sign-in failed: ' + $text)
         }
     }
 }
@@ -1012,6 +1050,7 @@ function Initialize-IQAuth {
         DeviceCodeWebhookUrl = $DeviceCodeWebhookUrl
         FabricUnavailable    = $false
         FabricWarned         = $false
+        StaticExpiryWarned   = $false
         CacheWarned          = $false
         Description          = $null
         SignedInUtc          = $null
@@ -1085,7 +1124,7 @@ function Initialize-IQAuthDeviceCode {
         Write-IQLog -Level Info -Stage Auth -Message ("Token cache found (saved {0}); attempting a silent refresh." -f $cache.savedUtc)
         $r = Invoke-IQRefreshTokenGrant -Resource PowerBI
         if ($r.Ok) {
-            Set-IQAuthToken -Resource PowerBI -AccessToken ([string]$r.Response.access_token) -Response $r.Response -Source 'cached refresh token' -PersistCache | Out-Null
+            Set-IQAuthToken -Resource PowerBI -AccessToken (Get-IQAuthResponseAccessToken -Response $r.Response) -Response $r.Response -Source 'cached refresh token' -PersistCache | Out-Null
             $auth.Source = 'cached refresh token'
             $signedIn = $true
         }
@@ -1097,7 +1136,7 @@ function Initialize-IQAuthDeviceCode {
     }
     if (-not $signedIn) {
         $response = Invoke-IQDeviceCodeFlow
-        Set-IQAuthToken -Resource PowerBI -AccessToken ([string]$response.access_token) -Response $response -Source 'device code' -PersistCache | Out-Null
+        Set-IQAuthToken -Resource PowerBI -AccessToken (Get-IQAuthResponseAccessToken -Response $response) -Response $response -Source 'device code' -PersistCache | Out-Null
         $auth.Source = 'fresh device code'
     }
 }
@@ -1119,7 +1158,7 @@ function Initialize-IQAuthCredential {
     if ($r.Ok) {
         $auth.Provider = 'Http'
         $auth.Source = 'ROPC'
-        Set-IQAuthToken -Resource PowerBI -AccessToken ([string]$r.Response.access_token) -Response $r.Response -Source 'ROPC' | Out-Null
+        Set-IQAuthToken -Resource PowerBI -AccessToken (Get-IQAuthResponseAccessToken -Response $r.Response) -Response $r.Response -Source 'ROPC' | Out-Null
         return
     }
     $mapped = Get-IQRopcErrorMessage -Result $r
@@ -1250,12 +1289,11 @@ function Update-IQAuthToken {
         }
         'DeviceCode' {
             $r = Invoke-IQRefreshTokenGrant -Resource $Resource
-            if ($r.Ok) { return (Set-IQAuthToken -Resource $Resource -AccessToken ([string]$r.Response.access_token) -Response $r.Response -Source 'refresh token' -PersistCache) }
+            if ($r.Ok) { return (Set-IQAuthToken -Resource $Resource -AccessToken (Get-IQAuthResponseAccessToken -Response $r.Response) -Response $r.Response -Source 'refresh token' -PersistCache) }
             $text = Get-IQAuthResultText -Result $r
             if ($Resource -eq 'Fabric') {
-                $permanent = ($null -ne $r.StatusCode -and [int]$r.StatusCode -ge 400 -and [int]$r.StatusCode -lt 500)
                 Write-IQLog -Level Debug -Stage Auth -Message ('Fabric refresh-token grant failed: ' + $text)
-                return (Set-IQAuthFabricUnavailable -Reason $text -Permanent:$permanent)
+                return (Set-IQAuthFabricUnavailable -Reason $text -Permanent:(Test-IQAuthPermanentFailure -Result $r))
             }
             if ($r.Error -eq 'invalid_grant' -or $r.Error -eq 'interaction_required') {
                 # The refresh token was revoked/expired (password change, CA policy, 90-day inactivity): the only way
@@ -1265,7 +1303,7 @@ function Update-IQAuthToken {
                 $response = Invoke-IQDeviceCodeFlow
                 $auth.Source = 'fresh device code'
                 $auth.Description = $null
-                $t = Set-IQAuthToken -Resource PowerBI -AccessToken ([string]$response.access_token) -Response $response -Source 'device code' -PersistCache
+                $t = Set-IQAuthToken -Resource PowerBI -AccessToken (Get-IQAuthResponseAccessToken -Response $response) -Response $response -Source 'device code' -PersistCache
                 $auth.Description = Get-IQAuthDescription
                 return $t
             }
@@ -1284,11 +1322,10 @@ function Update-IQAuthToken {
                 if (-not $r.Ok) { Write-IQLog -Level Debug -Stage Auth -Message ("Refresh-token grant failed ({0}); repeating the password grant." -f (Get-IQAuthResultText -Result $r)) }
             }
             if ($null -eq $r -or -not $r.Ok) { $r = Invoke-IQPasswordGrant -Credential $auth.Credential -Resource $Resource }
-            if ($r.Ok) { return (Set-IQAuthToken -Resource $Resource -AccessToken ([string]$r.Response.access_token) -Response $r.Response -Source 'ROPC') }
+            if ($r.Ok) { return (Set-IQAuthToken -Resource $Resource -AccessToken (Get-IQAuthResponseAccessToken -Response $r.Response) -Response $r.Response -Source 'ROPC') }
             if ($Resource -eq 'Fabric') {
                 $text = Get-IQAuthResultText -Result $r
-                $permanent = ($null -ne $r.StatusCode -and [int]$r.StatusCode -ge 400 -and [int]$r.StatusCode -lt 500)
-                return (Set-IQAuthFabricUnavailable -Reason $text -Permanent:$permanent)
+                return (Set-IQAuthFabricUnavailable -Reason $text -Permanent:(Test-IQAuthPermanentFailure -Result $r))
             }
             $mapped = Get-IQRopcErrorMessage -Result $r
             throw ('Could not refresh the Power BI access token: ' + $mapped.Message)
@@ -1317,7 +1354,8 @@ function Update-IQAuthToken {
                 if ($Resource -eq 'Fabric') { return (Set-IQAuthFabricUnavailable -Reason ('IMPACTIQ_FABRIC_TOKEN expired at ' + $expiry.ToString('u')) -Permanent) }
                 throw ("The IMPACTIQ_PBI_TOKEN access token expired at {0:u} and AccessToken mode cannot refresh it. Provide a fresh token (or use DeviceCode/Credential/AzContext) and resume the run." -f $expiry)
             }
-            if ($expiry -ne [datetime]::MaxValue -and $expiry -le [datetime]::UtcNow.AddMinutes($script:IQAuthRefreshSkewMinutes)) {
+            if ($expiry -ne [datetime]::MaxValue -and $expiry -le [datetime]::UtcNow.AddMinutes($script:IQAuthRefreshSkewMinutes) -and -not $auth.StaticExpiryWarned) {
+                $auth.StaticExpiryWarned = $true
                 Write-IQLog -Level Warn -Stage Auth -Message ("The static {0} token expires at {1:u}; the run will fail after that." -f $Resource, $expiry)
             }
             return (Set-IQAuthToken -Resource $Resource -AccessToken $t -Source ('IMPACTIQ_' + $(if ($Resource -eq 'Fabric') { 'FABRIC' } else { 'PBI' }) + '_TOKEN'))
@@ -1382,7 +1420,7 @@ function Get-IQAuthDescription {
 # Token cache (brief 4.3)
 # ---------------------------------------------------------------------------------------------------------------------
 
-function Get-IQTokenCacheKeyBytes {
+function Get-IQTokenCacheKey {
     <#
     .SYNOPSIS
         SHA-256 of the UTF-8 cache key string = the AES-256 key (private).
@@ -1394,7 +1432,7 @@ function Get-IQTokenCacheKeyBytes {
     finally { $sha.Dispose() }
 }
 
-function Protect-IQTokenCacheBytes {
+function Protect-IQTokenCacheData {
     <#
     .SYNOPSIS
         Encrypts bytes: AES-256-CBC (random IV prepended) when a key string is given, else DPAPI CurrentUser on Windows; returns @{Format; Data} (base64).
@@ -1410,7 +1448,7 @@ function Protect-IQTokenCacheBytes {
             $aes.KeySize = 256
             $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
             $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
-            $aes.Key = Get-IQTokenCacheKeyBytes -KeyString $KeyString
+            $aes.Key = Get-IQTokenCacheKey -KeyString $KeyString
             $aes.GenerateIV()
             $encryptor = $aes.CreateEncryptor()
             try { $cipher = $encryptor.TransformFinalBlock($Bytes, 0, $Bytes.Length) } finally { $encryptor.Dispose() }
@@ -1431,10 +1469,10 @@ function Protect-IQTokenCacheBytes {
     throw 'No token-cache key (-TokenCacheKey / IMPACTIQ_TOKEN_CACHE_KEY) and DPAPI is only available on Windows.'
 }
 
-function Unprotect-IQTokenCacheBytes {
+function Unprotect-IQTokenCacheData {
     <#
     .SYNOPSIS
-        Decrypts a cache payload written by Protect-IQTokenCacheBytes; throws on wrong key / other user / unsupported format.
+        Decrypts a cache payload written by Protect-IQTokenCacheData; throws on wrong key / other user / unsupported format.
     #>
     [CmdletBinding()]
     param(
@@ -1452,7 +1490,7 @@ function Unprotect-IQTokenCacheBytes {
                 $aes.KeySize = 256
                 $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
                 $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
-                $aes.Key = Get-IQTokenCacheKeyBytes -KeyString $KeyString
+                $aes.Key = Get-IQTokenCacheKey -KeyString $KeyString
                 $iv = New-Object byte[] 16
                 [Array]::Copy($raw, 0, $iv, 0, 16)
                 $aes.IV = $iv
@@ -1513,7 +1551,7 @@ function Save-IQTokenCache {
         }
         $json = ConvertTo-Json -InputObject $payload -Depth 20 -Compress
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-        $protected = Protect-IQTokenCacheBytes -Bytes $bytes -KeyString $keyString
+        $protected = Protect-IQTokenCacheData -Bytes $bytes -KeyString $keyString
         $file = [ordered]@{ format = $protected.Format; data = $protected.Data }
         ConvertTo-IQJsonFile -Object $file -Path $Path
         Write-IQLog -Level Debug -Stage Auth -Message ("Token cache saved ({0}) to {1}." -f $protected.Format, $Path)
@@ -1543,7 +1581,7 @@ function Restore-IQTokenCache {
         }
         $keyString = $null
         if ($auth -and $auth.ContainsKey('TokenCacheKey')) { $keyString = [string]$auth.TokenCacheKey }
-        $bytes = Unprotect-IQTokenCacheBytes -Format ([string]$file.format) -Data ([string]$file.data) -KeyString $keyString
+        $bytes = Unprotect-IQTokenCacheData -Format ([string]$file.format) -Data ([string]$file.data) -KeyString $keyString
         $json = [System.Text.Encoding]::UTF8.GetString($bytes)
         $payload = ConvertFrom-Json -InputObject $json -ErrorAction Stop
         $cache = @{}
@@ -1561,7 +1599,10 @@ function Restore-IQTokenCache {
             if ([string]$cache['authority'] -ne [string]$auth.Authority) { $mismatch.Add('authority') }
             if ([string]$cache['clientId'] -ne [string]$auth.ClientId) { $mismatch.Add('clientId') }
             if ([string]$cache['environment'] -ne [string]$auth.Environment) { $mismatch.Add('environment') }
-            if ([string]$cache['tenantId'] -ne [string]$auth.TenantId) { $mismatch.Add('tenantId') }
+            if ([string]$cache['tenantId'] -ne [string]$auth.TenantId) {
+                # Refresh tokens are not bound to a tenant id (organizations vs. a GUID); keep using the cache.
+                Write-IQLog -Level Debug -Stage Auth -Message ("Token cache was saved with tenant '{0}' (current '{1}'); using it anyway." -f $cache['tenantId'], $auth.TenantId)
+            }
             if ($mismatch.Count -gt 0) {
                 Write-IQLog -Level Warn -Stage Auth -Message ('Token cache was created for a different ' + [string]::Join('/', $mismatch.ToArray()) + '; ignoring it.')
                 return $null
