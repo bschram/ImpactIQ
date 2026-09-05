@@ -1,0 +1,127 @@
+# ImpactIQ v3 - scheduled, headless, resumable Azure DevOps pipeline.
+#
+# What it does (see docs/Azure-DevOps.md for the full walkthrough):
+#   1. checks out this repo (the repo IS the ImpactIQ base folder: Config\, ImpactIQ.ps1, ...)
+#   2. restores State\ (run manifests, checkpoints, encrypted token cache) from the latest run of this pipeline
+#   3. runs ImpactIQ.ps1 headless under Windows PowerShell 5.1 (pwsh: false) and resumes an unfinished run
+#   4. publishes State, the four workbooks, logs and (optionally) the backups as pipeline artifacts
+#   5. optionally commits the four workbooks to an outputs branch so the Power BI template can read them
+#      from Azure Repos with a PAT (Web.Contents), or copies them to a OneDrive/SharePoint sync folder
+#      on a self-hosted agent.
+#
+# Secrets are NEVER put in this file. Define them as secret pipeline variables (Edit > Variables) or in a
+# variable group and pass its name in the variableGroup parameter:
+#   IMPACTIQ_USERNAME / IMPACTIQ_PASSWORD   - authMode Credential (MFA-exempt account only)
+#   IMPACTIQ_TOKEN_CACHE_KEY                - authMode DeviceCode on hosted agents (AES key for the refresh-token cache)
+#   IMPACTIQ_DEVICECODE_WEBHOOK             - optional Teams/Slack incoming webhook that receives the device-code message
+#   IMPACTIQ_PBI_TOKEN                      - authMode AccessToken (one-off runs only, no refresh possible)
+#   IMPACTIQ_TENANT_ID                      - optional tenant GUID (recommended for guest/multi-tenant accounts)
+#
+# Time limits: Microsoft-hosted agents cap a job at 60 minutes on the free tier and 360 minutes with one paid
+# parallel job; self-hosted agents have no cap (set timeoutInMinutes: 0 for "unlimited"). ImpactIQ checkpoints
+# every item, so a run killed by the cap is simply resumed by the next scheduled run (-Resume Auto).
+
+parameters:
+  - name: pool
+    displayName: Agent pool (object; vmImage for Microsoft-hosted, name for self-hosted)
+    type: object
+    default:
+      vmImage: windows-latest
+  - name: authMode
+    displayName: Authentication mode
+    type: string
+    default: DeviceCode
+    values:
+      - DeviceCode
+      - Credential
+      - AzContext
+  - name: environment
+    displayName: Power BI environment
+    type: string
+    default: USGov
+    values:
+      - Public
+      - USGov
+      - USGovHigh
+      - USGovMil
+      - China
+      - Germany
+  - name: runMode
+    displayName: Run mode
+    type: string
+    default: Workspaces
+    values:
+      - Workspaces
+      - Reports
+      - Models
+  - name: workspaceNames
+    displayName: Workspace names (semicolon-separated, wildcards allowed; "*" = all workspaces)
+    type: string
+    default: '*'
+  - name: stages
+    displayName: Stages to run (comma-separated; empty = all)
+    type: string
+    default: ''
+  - name: extraArgs
+    displayName: Extra ImpactIQ.ps1 arguments (e.g. -IncludeMyWorkspace -IncludeUsageMetrics -MaxParallelExtracts 3)
+    type: string
+    default: ''
+  - name: publishBackups
+    displayName: Publish Model/Report/Dataflow Backups as an artifact
+    type: boolean
+    default: false
+  - name: commitOutputs
+    displayName: Commit the four workbooks to the outputs branch (needs Contribute for the build service)
+    type: boolean
+    default: false
+  - name: outputsBranch
+    displayName: Branch that receives outputs/*.xlsx when commitOutputs is true
+    type: string
+    default: data
+  - name: sharePointSyncPath
+    displayName: Self-hosted only - OneDrive/SharePoint sync folder to copy the workbooks into (empty = off)
+    type: string
+    default: ''
+  - name: variableGroup
+    displayName: Variable group holding the IMPACTIQ_* secrets (empty = pipeline variables only)
+    type: string
+    default: ''
+  - name: timeoutInMinutes
+    displayName: Job timeout (360 = hosted paid cap; 0 = unlimited on self-hosted)
+    type: number
+    default: 360
+
+trigger: none
+pr: none
+
+schedules:
+  - cron: '0 6 * * 1-5'
+    displayName: Weekdays 06:00 UTC
+    branches:
+      include:
+        - main
+    always: true
+
+variables:
+  - ${{ if ne(parameters.variableGroup, '') }}:
+      - group: ${{ parameters.variableGroup }}
+
+jobs:
+  - job: ImpactIQ
+    displayName: ImpactIQ ${{ parameters.environment }} (${{ parameters.authMode }})
+    timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
+    cancelTimeoutInMinutes: 15
+    pool: ${{ parameters.pool }}
+    steps:
+      - template: templates/impactiq-run.yml
+        parameters:
+          authMode: ${{ parameters.authMode }}
+          environment: ${{ parameters.environment }}
+          runMode: ${{ parameters.runMode }}
+          workspaceNames: ${{ parameters.workspaceNames }}
+          stages: ${{ parameters.stages }}
+          extraArgs: ${{ parameters.extraArgs }}
+          publishBackups: ${{ parameters.publishBackups }}
+          commitOutputs: ${{ parameters.commitOutputs }}
+          outputsBranch: ${{ parameters.outputsBranch }}
+          sharePointSyncPath: ${{ parameters.sharePointSyncPath }}
