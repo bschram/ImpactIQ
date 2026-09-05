@@ -644,7 +644,14 @@ try {
 
     # ---- 8. tools, run manifest --------------------------------------------------------------------------------------
     Initialize-IQTools -SkipToolUpdate:$SkipToolUpdate | Out-Null
-    Initialize-IQRun -RunId $RunId -ResumePolicy $Resume -ResumeMaxAgeDays $ResumeMaxAgeDays -Force:$Force | Out-Null
+    $resumePolicy = $Resume
+    if ($resumePolicy -eq 'Auto' -and -not $Force -and $stageList -notcontains 'Inventory') {
+        # Later stages only make sense on top of an existing run's inventory; a fresh run here would also clear
+        # today's backup folders (legacy re-run semantics) - so "-Stages X" without Inventory implies -Resume Always.
+        $resumePolicy = 'Always'
+        Write-IQEntryMessage -Level Info -Message '-Stages does not include Inventory: resuming the existing run for this RunId (-Resume Always implied).'
+    }
+    Initialize-IQRun -RunId $RunId -ResumePolicy $resumePolicy -ResumeMaxAgeDays $ResumeMaxAgeDays -Force:$Force | Out-Null
     $runStarted = $true
     if ($script:IQ.IsResume) { Write-IQEntryMessage -Level Info -Message ('Resuming run {0} ({1})' -f $script:IQ.RunId, $script:IQ.RunPath) }
     else { Write-IQEntryMessage -Level Info -Message ('Fresh run {0} ({1})' -f $script:IQ.RunId, $script:IQ.RunPath) }
@@ -654,7 +661,7 @@ try {
         $isFatal = ($stageName -eq 'Inventory')
         $status = $null
         try {
-            $status = Invoke-IQStage -Name $stageName -Fatal:$isFatal -Body ({ Invoke-IQEntryStageBody -Name $stageName }.GetNewClosure())
+            $status = Invoke-IQStage -Name $stageName -Fatal:$isFatal -Body { Invoke-IQEntryStageBody -Name $stageName }
         }
         catch {
             if ($stageName -eq 'Inventory' -and [bool](Get-IQMemberValue -Object $script:IQ -Name 'ScopeCancelled')) {
@@ -705,7 +712,8 @@ if ($runStarted -and $script:IQ -and $null -ne $script:IQ.Manifest) {
 }
 
 if ($cancelled) {
-    Write-IQEntryMessage -Level Warn -Message 'ImpactIQ cancelled - nothing was changed. Exit code 0.'
+    if ($runStarted -and $script:IQ -and $script:IQ.RunId) { Write-IQEntryMessage -Level Warn -Message ('ImpactIQ cancelled - run {0} is marked Cancelled and will be resumed by the next start. Exit code 0.' -f $script:IQ.RunId) }
+    else { Write-IQEntryMessage -Level Warn -Message 'ImpactIQ cancelled before the run started - nothing was changed. Exit code 0.' }
 }
 elseif ($null -ne $fatal) {
     Write-IQEntryMessage -Level Error -Message 'ImpactIQ ended with a fatal error (exit code 1).'
