@@ -19,7 +19,8 @@
 #    Do NOT use this launcher; call ImpactIQ.ps1 directly with -NonInteractive and the scope parameters, e.g.
 #      powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Power BI Backups\ImpactIQ.ps1" -NonInteractive `
 #          -Environment USGov -AuthMode DeviceCode -AllWorkspaces -IncludeMyWorkspace
-#    Exit codes: 0 = ok, 2 = finished with item failures (see the Failures sheet), 1 = fatal (see the log).
+#    Exit codes: 0 = ok, 2 = finished with item failures (see the Failures sheet), 3 = paused (-TimeBudgetMinutes
+#    reached; run it again to resume), 1 = fatal (see the log).
 #    See docs\Automation.md, docs\Auth-Options.md, docs\Azure-DevOps.md and docs\Headless-and-Resume.md.
 #
 #  NOTE FOR PASTING
@@ -79,6 +80,10 @@ switch ($impactIqExitCode) {
     2 {
         Write-Host ''
         Write-Host "[DONE] ImpactIQ finished with some item failures - the workbooks were still produced. Check the 'Failures' sheet in 'Power BI Environment Detail.xlsx' and the newest file in '$impactIqBaseFolder\Logs'. Running this launcher again retries only what failed." -ForegroundColor Yellow
+    }
+    3 {
+        Write-Host ''
+        Write-Host "[PAUSED] ImpactIQ stopped because its time budget was reached - partial workbooks were produced. Run this launcher again to resume; everything already finished is skipped." -ForegroundColor Yellow
     }
     default {
         Write-Host ''

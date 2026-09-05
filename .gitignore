@@ -1,0 +1,20 @@
+# ImpactIQ run-time artefacts (never commit state, logs or temp extraction folders)
+State/
+Logs/
+*.log
+Config/Temp/
+tests/TestResults/
+
+# Backups and workbooks produced by a run (keep the repo to code + config)
+Model Backups/
+Report Backups/
+Dataflow Backups/
+Power BI Environment Detail.xlsx
+Report Detail.xlsx
+Model Detail.xlsx
+Dataflow Detail.xlsx
+
+# Machine-specific junk that ended up in the tool folders (audit C1-19)
+Config/TabularEditor/WindowsLaps*
+Config/localhost/
+localhost/

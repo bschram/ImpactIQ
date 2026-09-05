@@ -70,7 +70,7 @@ Describe 'ImpactIQ.ps1 parses and declares the headless parameters' -Skip:(-not 
     }
     It 'declares [CmdletBinding()] and the section 5.1 parameters' {
         $params = @($script:Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-        foreach ($p in @('BaseFolder', 'Environment', 'AuthMode', 'TenantId', 'ClientId', 'Credential', 'TokenCachePath', 'TokenCacheKey', 'DeviceCodeWebhookUrl', 'NonInteractive', 'RunMode', 'WorkspaceId', 'WorkspaceName', 'AllWorkspaces', 'IncludeMyWorkspace', 'ReportId', 'DatasetId', 'Stages', 'SkipStages', 'RunId', 'Resume', 'ResumeMaxAgeDays', 'Force', 'RefreshInventory', 'ModelDetailMethod', 'MaxParallelExtracts', 'ToolTimeoutMinutes', 'MaxRetries', 'SkipToolUpdate', 'IncludeAdminApis', 'IncludeUsageMetrics', 'ActivityDays', 'LogPath', 'PassThru')) {
+        foreach ($p in @('BaseFolder', 'Environment', 'AuthMode', 'TenantId', 'ClientId', 'Credential', 'TokenCachePath', 'TokenCacheKey', 'DeviceCodeWebhookUrl', 'NonInteractive', 'RunMode', 'WorkspaceId', 'WorkspaceName', 'AllWorkspaces', 'IncludeMyWorkspace', 'ReportId', 'DatasetId', 'Stages', 'SkipStages', 'RunId', 'Resume', 'ResumeMaxAgeDays', 'Force', 'RefreshInventory', 'ModelDetailMethod', 'MaxParallelExtracts', 'ToolTimeoutMinutes', 'MaxRetries', 'SkipToolUpdate', 'IncludeAdminApis', 'IncludeUsageMetrics', 'ActivityDays', 'LogPath', 'PassThru', 'TimeBudgetMinutes', 'DefinitionTimeoutMinutes')) {
             $params | Should -Contain $p
         }
         @($script:Ast.ParamBlock.Attributes | Where-Object { $_.TypeName.Name -eq 'CmdletBinding' }).Count | Should -Be 1

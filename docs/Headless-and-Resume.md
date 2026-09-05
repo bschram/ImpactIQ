@@ -4,7 +4,7 @@ Everything `ImpactIQ.ps1` does unattended: parameters, environment variables, wh
 decides what to skip, exit codes, logging and troubleshooting. Works on Windows PowerShell 5.1 and PowerShell 7.
 
 Contents: 1 parameters - 2 examples - 3 state layout and manifest - 4 resume rules - 5 stages and checkpoints -
-6 scope resolution - 7 exit codes - 8 logging - 9 troubleshooting.
+6 scope resolution - 7 exit codes - 8 logging - 9 troubleshooting - 10 time budget (60-minute agents).
 
 ## 1. `ImpactIQ.ps1` parameters
 
@@ -30,10 +30,12 @@ Contents: 1 parameters - 2 examples - 3 state layout and manifest - 4 resume rul
 | `-ResumeMaxAgeDays <int>` | `3` | how far back `Auto` looks for an unfinished run |
 | `-Force` | off | delete `State\runs\<RunId>` and the three `<RunId>` backup folders, then start fresh |
 | `-RefreshInventory` | off | on a resume, re-run the `Inventory` stage even though it completed |
-| `-ModelDetailMethod Auto\|TabularEditor\|Dax\|Both` | `Auto` | `Auto` = Tabular Editor csx when a `.bim` exists and TE2 works, else DAX `INFO.*` over `executeQueries`; `Both` = TE2 then DAX on failure |
+| `-ModelDetailMethod Auto\|TabularEditor\|Bim\|Dax\|Both` | `Auto` | `Auto` = Tabular Editor csx when a `.bim` exists, TE2 works and the `.bim` database name equals the file name, else the built-in `.bim` (TMSL) parser (`Bim`) when any `.bim` exists, else DAX `INFO.VIEW.*` / `INFO.*` over `executeQueries`; `TabularEditor` = TE2 only; `Bim` = parser only (no TE2, no API calls); `Dax` = DAX only; `Both` = TE2, then Bim, then DAX on failure. The method used is recorded per model in the checkpoint (`method`) |
 | `-MaxParallelExtracts <int>` | `2` | concurrent Tabular Editor / pbi-tools processes |
 | `-ToolTimeoutMinutes <int>` | `20` | per external process (ReportDetail uses 3x) |
 | `-MaxRetries <int>` | `5` | HTTP retries for 5xx/network errors (429 has its own 8-retry budget honouring `Retry-After`) |
+| `-DefinitionTimeoutMinutes <int>` | `10` | timeout for Fabric `getDefinition` long-running operations (report, dataflow and semantic-model definitions) |
+| `-TimeBudgetMinutes <int>` | `0` (unlimited) | stop cleanly after this many minutes: every stage checks the elapsed time of the current process between items; when the budget minus a 2-minute grace is reached the stage stops, later stages are deferred, `Assemble` still builds the (partial) workbooks, the manifest is `Paused` and the exit code is `3`. The next start resumes the run (section 10) |
 | `-SkipToolUpdate` | off (`IMPACTIQ_OFFLINE=1`) | do not download Tabular Editor 2 / pbi-tools updates |
 | `-IncludeAdminApis` | off | Extras: admin groups, Scanner API, activity events (Fabric admin only; probed, else skipped) |
 | `-IncludeUsageMetrics` | off | Extras: per-workspace "Usage Metrics Report" model via DAX |
@@ -131,7 +133,7 @@ Effective `RunId` = `-RunId` if given, else today's `yyyy-MM-dd`.
 | `-Force` (any) | delete `State\runs\<RunId>` and clear `Model Backups\<RunId>`, `Report Backups\<RunId>`, `Dataflow Backups\<RunId>`; fresh run |
 | `Never` | fresh run for `<RunId>` (same as `-Force` for that RunId; other runs' backups untouched) |
 | `Always` | resume `<RunId>` if its manifest exists (any status, even `Completed`), else fresh |
-| `Auto` (default) | 1. manifest for `<RunId>` exists and status != `Completed` -> resume it; 2. else, when `-RunId` was **not** given, the newest manifest with status `Running` / `Failed` / `CompletedWithErrors` whose `startedUtc` is within `-ResumeMaxAgeDays` (3) -> resume **that** RunId (yesterday's run that died is finished today, in yesterday's folders); 3. else fresh run for `<RunId>` - an existing `Completed` manifest for today is archived to `manifest.<timestamp>.json` and today's backup folders are cleared (the v2 "re-run today = start over" behaviour) |
+| `Auto` (default) | 1. manifest for `<RunId>` exists and status != `Completed` (`Running`, `Paused`, `Failed`, `CompletedWithErrors`, `Cancelled`) -> resume it; 2. else, when `-RunId` was **not** given, the newest manifest with status `Running` / `Paused` / `Failed` / `CompletedWithErrors` whose `startedUtc` is within `-ResumeMaxAgeDays` (3) -> resume **that** RunId (yesterday's run that died or paused is finished today, in yesterday's folders); 3. else fresh run for `<RunId>` - an existing `Completed` manifest for today is archived to `manifest.<timestamp>.json` and today's backup folders are cleared (the v2 "re-run today = start over" behaviour) |
 
 On a resume:
 
@@ -139,7 +141,7 @@ On a resume:
   marked `Interrupted` and re-run;
 * stages already `Completed` are skipped ("skipping" in the log) - except `Assemble`, which always rebuilds the four
   workbooks, and `Inventory` when `-RefreshInventory` is given (its checkpoints are deleted so every workspace is
-  re-collected);
+  re-collected); stages left `Paused` by the time budget are re-run (their finished items are skipped);
 * inside a stage, items whose checkpoint is `Succeeded` or `Skipped` **and whose output files still exist** are skipped;
   a checkpoint whose `.bim`/`.pbix`/`.csv` was deleted is treated as not done;
 * failed items are retried; when they succeed, their entries are removed from `manifest.failures`;
@@ -158,11 +160,11 @@ manifest is shared).
 | `Inventory` (fatal) | workspace id (+ `global`, `My Workspace`) | `done\Inventory\<id>.json` and the `ws-*.json` exist | the `ws-<id>.json` file | a partial workspace (one collector threw) is `Failed` and re-collected on resume |
 | `ModelBackup` | dataset id | `.bim` exists and is > 0 bytes | `Model Backups\<RunId>\<Ws> ~ <Model>.bim` | dedicated capacity only (XMLA via Tabular Editor 2, `-MaxParallelExtracts` in parallel); Pro workspaces are `Skipped` (model comes from the PBIX in ReportBackup); TE2 unavailable -> `Failed` with reason, ModelDetail still runs via DAX |
 | `ReportBackup` | report id | file exists | `.pbix` / `.rdl` (+ `.bim` for Pro IncludeModel exports) | Export API (`IncludeModel` for Pro, `LiveConnect` for dedicated), Fabric `getDefinition` fallback where Fabric exists, pbi-tools extraction for Pro; `ReportExports.txt` summarises method per report |
-| `ReportDetail` | `all` | the stage completed | the `*.txt` extract files | two csx scripts run once over every PBIX of the run folder (timeout 3x `-ToolTimeoutMinutes`) |
-| `ModelDetail` | dataset id | both CSVs exist | `<Ws> ~ <Model>.csv`, `_MD.csv` | method recorded (`TabularEditor` / `Dax`) |
+| `ReportDetail` | `all` | the stage completed | the `*.txt` extract files | two csx scripts run once over every PBIX of the run folder (timeout 3x `-ToolTimeoutMinutes`); the csx read `IMPACTIQ_BASE`, `IMPACTIQ_DATE_FOLDER`, `IMPACTIQ_REPORT_DATE` so they process THIS run's folder |
+| `ModelDetail` | dataset id | both CSVs exist | `<Ws> ~ <Model>.csv`, `_MD.csv` | method recorded (`TabularEditor` / `Bim` / `Dax`); `Auto` order TabularEditor -> Bim -> Dax |
 | `Dataflows` | dataflow id | backup + extract exist | `.txt` (Gen1) / `.pq` (Gen2) + `extracts\dataflows\<id>.json` | |
 | `Extras` | `admin-groups`, `admin-scan`, `admin-activity-<date>`, `usage-<workspaceId>` | each item | `inventory\extras-*.json` | only with `-IncludeAdminApis` / `-IncludeUsageMetrics` |
-| `Assemble` | the four workbooks | never (always rebuilt) | the workbook paths in `manifest.outputs` | writes to a temp file then moves, so a half-written workbook never replaces a good one; every sheet in `Config\SheetContract.json` exists even when empty |
+| `Assemble` | the four workbooks | never (always rebuilt) | the workbook paths in `manifest.outputs` | writes to a temp file then moves, so a half-written workbook never replaces a good one; every sheet in `Config\SheetContract.json` exists even when empty; also runs on a `Paused` run so partial workbooks exist. Excel limits tab names to 31 characters: the `DatasetDirectQueryRefreshSchedule` collection is written as the `DatasetDQRefreshSchedule` sheet |
 
 `-Stages` / `-SkipStages` select stages; `Inventory` is required by every later stage on a fresh run (on a resume its
 files are already there, so `-Stages ModelBackup` alone works).
@@ -184,6 +186,7 @@ produce the same structure.
 |---|---|---|---|
 | `0` | every stage `Completed`; or the user cancelled the interactive scope dialog | `Completed` | Succeeded |
 | `2` | finished, but at least one item failed or a non-fatal stage failed (details in `manifest.failures` / the `Failures` sheet); outputs were still produced | `CompletedWithErrors` | SucceededWithIssues |
+| `3` | paused: `-TimeBudgetMinutes` was reached; the stages that did not finish are `Paused`, `Assemble` still built the partial workbooks; the next start resumes the run | `Paused` | SucceededWithIssues |
 | `1` | fatal: authentication, no scope, `Inventory` stage failure, tool bootstrap when nothing can run, or an unhandled exception | `Failed` | Failed |
 
 `-PassThru` returns the manifest object in addition to setting the exit code.
@@ -221,3 +224,24 @@ produce the same structure.
 | Workbook missing a sheet the PBIT expects | Assemble Warn lines | every contract sheet is created empty; if the PBIT still complains, run `-Stages Assemble -Resume Always` and check `Config\SheetContract.json` is present |
 | Run resumed the wrong day | first lines: `Resuming run <RunId>` | pass `-RunId` explicitly, or `-Force` for a clean start |
 | `Set-StrictMode` / `$IsWindows` errors on PowerShell 5.1 | log | report it - modules avoid PS7-only syntax and use `$script:IQ.IsWindows`; `Install-Module ImportExcel` is the only external dependency |
+| Run ends with `Paused` / exit 3 every time and never finishes | `Time budget of N min reached` lines | the budget is smaller than one item takes (a huge model over XMLA, the Report Detail csx run). Raise `-TimeBudgetMinutes`, lower `-MaxParallelExtracts`, or split the scope; each start still makes progress because finished items are checkpointed |
+
+## 10. Time budget (`-TimeBudgetMinutes`)
+
+Free Microsoft-hosted Azure DevOps agents kill a job after 60 minutes (360 with one paid parallel job); Task Scheduler
+and cron users may also want a hard stop. Instead of being killed mid-item, ImpactIQ can stop itself:
+
+* `-TimeBudgetMinutes 55` (or the pipeline parameter `timeBudgetMinutes`) starts a clock when the process starts.
+* Between items every stage calls `Test-IQTimeBudget`; when `budget - 2 minutes` has elapsed the current stage stops
+  after the item in progress, logs `Time budget of 55 min reached`, and is marked `Paused` in the manifest. The
+  2-minute grace leaves time for `Assemble` and the manifest/artifact writes.
+* Every later stage except `Assemble` is marked `Paused` without running; `Assemble` still rebuilds the four
+  workbooks from what exists, so partial outputs are published.
+* `Complete-IQRun` sets the run status `Paused`; the exit code is `3` (the pipeline template maps it to
+  `SucceededWithIssues`).
+* The next start (`-Resume Auto`, same or no `-RunId`) treats `Paused` like `Running`: the run is resumed, `Paused`
+  stages run again, checkpointed items are skipped, and the budget starts from zero for the new process. A big tenant
+  therefore finishes over several scheduled runs without ever losing work.
+* External processes already running (Tabular Editor, pbi-tools) are never killed by the budget; they finish (or hit
+  `-ToolTimeoutMinutes`) and are checkpointed before the stage stops, so keep the budget at least
+  `ToolTimeoutMinutes + 2` minutes below the hard job limit when models are large.

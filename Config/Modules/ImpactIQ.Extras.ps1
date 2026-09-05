@@ -1261,7 +1261,7 @@ function Invoke-IQUsageCollector {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][string]$Stage = 'Extras')
-    $summary = @{ Total = 0; Done = 0; Skipped = 0; Failed = 0; AlreadyDone = 0; Outputs = @() }
+    $summary = @{ Total = 0; Done = 0; Skipped = 0; Failed = 0; AlreadyDone = 0; Outputs = @(); BudgetStop = $false }
     $folder = Get-IQExtrasFolder -Name 'usage'
     $days = [int](Get-IQExtrasOption -Name 'UsageDays' -Default 30)
     if ($days -lt 1) { $days = 30 }
@@ -1278,6 +1278,11 @@ function Invoke-IQUsageCollector {
             $summary.AlreadyDone++
             Write-IQLog -Level Debug -Stage $Stage -Item $item -Message 'Usage metrics already collected (checkpoint); skipping'
             continue
+        }
+        if (Test-IQTimeBudget -Stage $Stage -Item $item) {
+            Write-IQLog -Level Warn -Stage $Stage -Item 'usage' -Message ("Time budget reached: {0} of {1} workspace(s) without usage metrics yet - collected on the next start." -f ($workspaces.Count - $index + 1), $workspaces.Count)
+            $summary.BudgetStop = $true
+            break
         }
         Write-IQLog -Level Info -Stage $Stage -Item $item -Message ("[{0}/{1}] Reading usage metrics" -f $index, $workspaces.Count)
         $path = Join-Path $folder ((Get-IQSafeKey -Value $w.WorkspaceId) + '.json')
@@ -1374,6 +1379,10 @@ function Invoke-IQExtrasCollector {
         # A Skipped checkpoint means the admin probe failed on an earlier run; now that it succeeded, collect for real.
         Write-IQLog -Level Info -Stage $Stage -Item $Item -Message 'Previously skipped (admin probe failed); collecting now'
     }
+    if (Test-IQTimeBudget -Stage $Stage -Item $Item) {
+        Write-IQLog -Level Warn -Stage $Stage -Item $Item -Message 'Time budget reached - this collector runs on the next start.'
+        return 'Paused'
+    }
     Write-IQLog -Level Info -Stage $Stage -Item $Item -Message 'Collecting'
     $result = $null
     try { $result = & $Body }
@@ -1453,6 +1462,11 @@ function Invoke-IQExtrasStage {
                     }
                     Write-IQLog -Level Debug -Stage $stage -Item $item -Message 'Re-reading the partial (current) day'
                 }
+                if (Test-IQTimeBudget -Stage $stage -Item $item) {
+                    Write-IQLog -Level Warn -Stage $stage -Item 'admin-activity' -Message 'Time budget reached - the remaining activity days are collected on the next start.'
+                    $summary.Items[$key] = 'Paused'
+                    break
+                }
                 $dayResult = Get-IQAdminActivityDay -Day $day -Stage $stage
                 $data = @{ Date = $dayText; EventCount = [int]$dayResult.EventCount; Pages = [int]$dayResult.Pages; Partial = [bool]$dayResult.Partial; ExtractFile = [string]$dayResult.Path }
                 if ($dayResult.Success) {
@@ -1473,7 +1487,11 @@ function Invoke-IQExtrasStage {
         }
     }
 
-    if ($summary.UsageRequested) {
+    if ($summary.UsageRequested -and (Test-IQTimeBudget -Stage $stage -Item 'usage')) {
+        Write-IQLog -Level Warn -Stage $stage -Item 'usage' -Message 'Time budget reached - usage metrics are collected on the next start.'
+        $summary.Items['usage'] = 'Paused'
+    }
+    elseif ($summary.UsageRequested) {
         $summary.Usage = Invoke-IQUsageCollector -Stage $stage
         $summary.Outputs += @($summary.Usage.Outputs)
     }

@@ -444,7 +444,7 @@ function Invoke-IQTabularEditor {
     if ($result.TimedOut) { $reason = 'timeout' }
     elseif ($result.StartError) { $reason = 'start-failure' }
     elseif ($result.ExitCode -ne 0) { $reason = "exit $($result.ExitCode)" }
-    elseif ((Select-IQTabularEditorError -Output $result.StdOut).Count -gt 0) { $reason = 'script-error' }
+    elseif (@(Select-IQTabularEditorError -Output $result.StdOut).Count -gt 0) { $reason = 'script-error' }
     $result.Success = ($null -eq $reason)
     $result.ErrorLines = @($errorLines)
     $result.FailureReason = $reason

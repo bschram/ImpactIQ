@@ -220,3 +220,79 @@ Describe 'Resume decisions (brief section 5.2)' {
         $marker | Should -Exist
     }
 }
+
+Describe 'Time budget: Paused stages, Paused run, exit code 3, resume' {
+    BeforeAll {
+        Set-Clock '2026-09-10T10:00:00Z'
+        $script:IQ.Options['TimeBudgetMinutes'] = 0
+        $script:IQ.BudgetExceeded = $false
+        Initialize-IQRun -RunId 'budget-run' -ResumePolicy Never | Out-Null
+        $script:IQ.Options['TimeBudgetMinutes'] = 30
+        $script:IQ.StartedUtc = [datetime]::UtcNow
+    }
+    AfterAll {
+        $script:IQ.Options['TimeBudgetMinutes'] = 0
+        $script:IQ.BudgetExceeded = $false
+        $script:IQ.StartedUtc = [datetime]::UtcNow
+    }
+    It 'a stage whose body stops on the budget is Paused (not Completed) and the rest of the items stay unchecked' {
+        $script:BudgetSeen = @()
+        $status = Invoke-IQStage -Name 'Dataflows' -Body {
+            foreach ($k in @('df1', 'df2', 'df3')) {
+                if (Test-IQTimeBudget -Stage 'Dataflows' -Item $k) { break }
+                Set-IQItemDone -Stage Dataflows -ItemKey $k -Item $k | Out-Null
+                $script:BudgetSeen += $k
+                # the budget "runs out" after the first item
+                $script:IQ.StartedUtc = [datetime]::UtcNow.AddMinutes(-29)
+            }
+        }
+        $status | Should -Be 'Paused'
+        $script:BudgetSeen | Should -Be @('df1')
+        $script:IQ.Manifest.stages.Dataflows.status | Should -Be 'Paused'
+        [int]$script:IQ.Manifest.stages.Dataflows.itemsDone | Should -Be 1
+        $script:IQ.BudgetExceeded | Should -BeTrue
+    }
+    It 'later stages are marked Paused without running, but Assemble still runs' {
+        $script:AssembleRan = $false
+        Invoke-IQStage -Name 'Extras' -Body { throw 'must not run' } | Should -Be 'Paused'
+        $script:IQ.Manifest.stages.Extras.status | Should -Be 'Paused'
+        Invoke-IQStage -Name 'Assemble' -Body { $script:AssembleRan = $true } | Should -Be 'Completed'
+        $script:AssembleRan | Should -BeTrue
+        $script:IQ.Manifest.stages.Assemble.status | Should -Be 'Completed'
+    }
+    It 'Complete-IQRun marks the run Paused and the exit code is 3' {
+        Complete-IQRun | Should -Be 'Paused'
+        $m = Get-ManifestFromDisk
+        $m.status | Should -Be 'Paused'
+        Get-IQExitCode -Manifest $script:IQ.Manifest | Should -Be 3
+        Get-IQExitCode -Manifest $m | Should -Be 3
+    }
+    It 'Auto resume treats a Paused run like Running (same RunId) and re-runs the Paused stages, skipping done items' {
+        $script:IQ.BudgetExceeded = $false
+        $script:IQ.StartedUtc = [datetime]::UtcNow
+        Initialize-IQRun -RunId 'budget-run' -ResumePolicy Auto | Out-Null
+        $script:IQ.IsResume | Should -BeTrue
+        $script:IQ.Manifest.status | Should -Be 'Running'
+        Test-IQItemDone -Stage Dataflows -ItemKey 'df1' | Should -BeTrue
+        $script:Ran = @()
+        Invoke-IQStage -Name 'Dataflows' -Body {
+            foreach ($k in @('df1', 'df2', 'df3')) {
+                if (Test-IQItemDone -Stage Dataflows -ItemKey $k) { continue }
+                Set-IQItemDone -Stage Dataflows -ItemKey $k -Item $k | Out-Null
+                $script:Ran += $k
+            }
+        } | Should -Be 'Completed'
+        $script:Ran | Should -Be @('df2', 'df3')
+        Invoke-IQStage -Name 'Extras' -Body { 'ok' } | Should -Be 'Completed'
+        Complete-IQRun | Should -Be 'Completed'
+        Get-IQExitCode -Manifest $script:IQ.Manifest | Should -Be 0
+    }
+    It 'Auto without -RunId also picks up a Paused run within ResumeMaxAgeDays' {
+        $script:IQ.Manifest.status = 'Paused'; Save-IQManifest
+        Set-Clock '2026-09-11T10:00:00Z'
+        Initialize-IQRun -RunId '' -ResumePolicy Auto | Out-Null
+        $script:IQ.RunId | Should -Be 'budget-run'
+        $script:IQ.IsResume | Should -BeTrue
+        Complete-IQRun -Status Completed | Out-Null
+    }
+}

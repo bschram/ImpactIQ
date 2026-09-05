@@ -78,7 +78,7 @@ Rows are produced offline by the two Tabular Editor 2 C# scripts (`Report Detail
 |---|---|---|---|
 | `Visuals`, `VisualObjects`, `VisualFilters`, `VisualInteractions`, `Pages`, `PageFilters`, `ReportFilters`, `Bookmarks`, `Connections`, `CustomVisuals`, `ReportLevelMeasures` | visual-level field usage, layouts/wireframe, filters, interactions, bookmarks, model connections, custom visuals, report-level measures (12-column layout; the v2 10-column bug is fixed) | 1. `GET groups/{id}/reports/{rId}/Export?downloadType=IncludeModel` (Pro) / `LiveConnect` (dedicated capacity); 2. fallback **Fabric** `POST workspaces/{id}/reports/{rId}/getDefinition` (PBIR / PBIR-Legacy, staged as a PBIX with a synthesized `Connections` file); 3. Pro `.bim` extracted from the IncludeModel PBIX with pbi-tools (needs Power BI Desktop on the machine) | Export: C+ in the report's workspace (and in the dataset's workspace for cross-workspace reports), tenant setting *Download reports* on; not for large-storage-format / Direct Lake / incremental-refresh / usage-metrics / template-app reports. getDefinition: read+write on the report, blocked for encrypted labels, Fabric only (not GCC) |
 | `ReportExports` **new** | one row per report: `ReportName, ReportID, ModelID, WorkspaceID, WorkspaceName, ReportDisplayName, ReportType, FileName, ExportMethod (IncludeModel / LiveConnect / getDefinition), Status, Message, FileSizeBytes, DurationSec, DefinitionFormat, ModelExtract, BimPath, ReportDate` | rebuilt from the `ReportBackup` checkpoints (`Report Backups\<RunId>\ReportExports.txt`) | - |
-| `ExtractErrors` (when present) | per-report parse errors from the csx scripts | written by the extractors when something fails | - |
+| `ExtractErrors` (when present) | per-report extraction errors from the two csx scripts: `ReportName, Script (PBIR / Classic), Stage (unzip / report), Error, ReportDate` | written by the extractors when a report cannot be unzipped or parsed (the other reports are still processed and flushed to the TXT files one report at a time) | - |
 
 ## 3. `Model Detail.xlsx` (stages `ModelBackup` -> `ModelDetail` -> `Assemble`)
 
@@ -87,8 +87,16 @@ Rows are produced offline by the two Tabular Editor 2 C# scripts (`Report Detail
 | `Semantic Models` | one row per table, column, calculated column, measure, hierarchy, level, partition (M/DAX source), calculation group/item, RLS filter, relationship - 20 columns (`Type, Table, Name, FormatString, DisplayFolder, Description, IsHidden, TableStorageMode, Expression, ModelAsOfDate, ModelName, ModelID, Relationship*`) | **TabularEditor**: XMLA export of the model to `<Ws> ~ <Model>.bim` (`Provider=MSOLAP;Data Source=<XmlaPrefix>/v1.0/myorg/<workspace>;Password=<token>`), then `Model Detail Extract Script.csx`; Pro workspaces: `.bim` from the IncludeModel PBIX via pbi-tools. **Dax**: `POST groups/{id}/datasets/{dsId}/executeQueries` with `INFO.TABLES(), INFO.COLUMNS(), INFO.MEASURES(), INFO.RELATIONSHIPS(), INFO.PARTITIONS(), INFO.ROLES(), INFO.TABLEPERMISSIONS(), INFO.CALCULATIONGROUPS(), INFO.CALCULATIONITEMS(), INFO.HIERARCHIES(), INFO.LEVELS()` (one call each, raw results cached under `extracts\dax\`) | XMLA: dedicated capacity (Premium/PPU/Fabric), capacity setting *XMLA Endpoint* Read or Read Write, tenant setting *Allow XMLA endpoints and Analyze in Excel*, **Build** on the model (Contributor+ recommended - Build-only callers see masked metadata), Tabular Editor 2 runnable (Windows, .NET Framework 4.7.2+). DAX: tenant setting *Semantic Model Execute Queries REST API*, **Build** on the model, works on Pro; measure/RLS/partition expressions are blank without Write (Contributor+); raw `INFO.*` is documented as unsupported on `executeQueries` and some tenants reject it (HTTP 400, error 3239575574) - then the item is `Failed` with that message |
 | `Measure Dependencies` | direct dependencies of every measure / calculated column / calculation item (`ObjectName, ObjectType, DependsOn, DependsOnType, ModelAsOfDate, ModelName, ModelID`) | TabularEditor: `Measure Dependency Extract Script.csx`; Dax: `INFO.CALCDEPENDENCY()` mapped to the same columns | as above; `INFO.CALCDEPENDENCY` requires **Write** on the model |
 
-`-ModelDetailMethod Auto` uses Tabular Editor when a `.bim` exists and TE2 works, otherwise DAX; `Both` runs TE2 and
-falls back to DAX per model; `Dax` never needs Tabular Editor (Linux/hosted agents without the .NET tools).
+`-ModelDetailMethod Auto` uses Tabular Editor when a `.bim` exists, TE2 works and the `.bim` database name equals the
+file name (XMLA / pbi-tools exports renamed by the tool), otherwise the built-in `.bim` (TMSL) parser (`Bim`: the same
+20/7 columns, no external tool, no API call; measure dependencies come from parsing the DAX expressions - direct
+references, approximate), otherwise DAX; `Both` runs TE2 and falls back to Bim, then DAX per model; `Bim` uses the
+parser only; `Dax` never needs Tabular Editor (Linux/hosted agents without the .NET tools). When Tabular Editor cannot
+export a dedicated-capacity model over XMLA and a Fabric token exists, `ModelBackup` tries
+`POST workspaces/{id}/semanticModels/{dsId}/getDefinition?format=TMSL` (needs read+write on the model; unverified on
+GCC and shared capacity) to obtain the `.bim`. The DAX path uses `INFO.VIEW.TABLES/COLUMNS/MEASURES/RELATIONSHIPS()`
+first (documented for `executeQueries`), then the raw `INFO.*` functions best-effort; parts a tenant rejects are listed
+as "unavailable via REST" in the checkpoint, and measure expressions are blank when the caller lacks Write.
 `ModelName` is always `<CleanWs> ~ <CleanModel>` and `ModelID` the dataset GUID (dedicated) or the file name (Pro), so
 the PBIT joins are unchanged.
 
@@ -111,6 +119,8 @@ trailing semicolons and `shared` inside strings.
 | `-IncludeAdminApis` | `AdminWorkspaces`, `AdminWorkspaceUsers`, `Scan*`, `ActivityEvents` | Fabric administrator role (probed; otherwise skipped) | Scanner: ~3 calls per 100 workspaces + polling; activity: 1+ call per day (200/h cap) |
 | `-ActivityDays N` | how many UTC days of activity (max 28) | with `-IncludeAdminApis` | |
 | `-ModelDetailMethod Dax` | model detail without Tabular Editor / XMLA | Build + executeQueries tenant setting | 12 calls per model |
+| `-ModelDetailMethod Bim` | model detail from the `.bim` files alone (XMLA / pbi-tools / Fabric getDefinition exports), no Tabular Editor and no API call | a `.bim` per model from `ModelBackup` / `ReportBackup` | none |
+| `-TimeBudgetMinutes N` | nothing extra - stops cleanly before a job cap (exit 3, `Paused`, resumed next run) | - | - |
 
 Not collected because no non-admin API exists: report/dashboard/app user lists, subscriptions, endorsement and
 sensitivity-label **names** (only ids), tenant-wide activity, unused artifacts. These come only with `-IncludeAdminApis`.

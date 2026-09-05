@@ -19,7 +19,9 @@
 #
 # Time limits: Microsoft-hosted agents cap a job at 60 minutes on the free tier and 360 minutes with one paid
 # parallel job; self-hosted agents have no cap (set timeoutInMinutes: 0 for "unlimited"). ImpactIQ checkpoints
-# every item, so a run killed by the cap is simply resumed by the next scheduled run (-Resume Auto).
+# every item, so a run killed by the cap is simply resumed by the next scheduled run (-Resume Auto). Better: set
+# timeBudgetMinutes a few minutes below the job cap (55 on the free tier) so ImpactIQ stops cleanly, builds the
+# partial workbooks, publishes its state (exit 3 = SucceededWithIssues) and resumes on the next run.
 #
 # Overlap: with `always: true` Azure DevOps starts the next scheduled run even if the previous one is still
 # running (batch only suppresses overlap when always is false). Keep the schedule interval longer than a run,
@@ -94,6 +96,10 @@ parameters:
     displayName: Job timeout (360 = hosted paid cap; 0 = unlimited on self-hosted)
     type: number
     default: 360
+  - name: timeBudgetMinutes
+    displayName: ImpactIQ time budget in minutes (0 = unlimited; 55 on the free hosted tier, 350 with a paid parallel job) - stops cleanly, exit 3, resumed by the next run
+    type: number
+    default: 0
   - name: restoreState
     displayName: Restore State\ from the previous run (turn off on a self-hosted agent whose workspace persists)
     type: boolean
@@ -138,6 +144,7 @@ jobs:
           stages: ${{ parameters.stages }}
           extraArgs: ${{ parameters.extraArgs }}
           publishBackups: ${{ parameters.publishBackups }}
+          timeBudgetMinutes: ${{ parameters.timeBudgetMinutes }}
           commitOutputs: ${{ parameters.commitOutputs }}
           outputsBranch: ${{ parameters.outputsBranch }}
           sharePointSyncPath: ${{ parameters.sharePointSyncPath }}

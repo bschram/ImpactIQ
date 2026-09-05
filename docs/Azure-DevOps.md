@@ -111,19 +111,25 @@ checkout  ->  restore impactiq-state (previous run)  ->  install modules  ->  Ru
   `condition: always()` and the job has `cancelTimeoutInMinutes: 15` - the state is captured even when the job is
   killed at the 360-minute mark, and the following run resumes it.
 * **Resume**: `ImpactIQ.ps1 -Resume Auto` (the template's default) resumes today's run if its manifest is not
-  `Completed`, otherwise the newest run of the last 3 days with status `Running`, `Failed` or `CompletedWithErrors`,
-  otherwise starts a fresh run for today. Completed stages are skipped (except `Assemble`, always rebuilt), completed
+  `Completed`, otherwise the newest run of the last 3 days with status `Running`, `Paused`, `Failed` or
+  `CompletedWithErrors`, otherwise starts a fresh run for today. Completed stages are skipped (except `Assemble`, always rebuilt), completed
   items are skipped inside stages, failed items are retried. Details in Headless-and-Resume.md section 4.
 * **Exit codes** (from the "Run ImpactIQ" step): `0` -> Succeeded; `2` -> `##vso[task.complete
-  result=SucceededWithIssues;]` (orange run; check the Failures sheet / `manifest.json`); `1` -> Failed (auth, scope,
-  inventory or an unhandled error - the log tells which). A failed run still publishes its state, so the next run
-  continues where it stopped.
+  result=SucceededWithIssues;]` (orange run; check the Failures sheet / `manifest.json`); `3` -> SucceededWithIssues
+  as well (the run **paused** because `timeBudgetMinutes` was reached; partial workbooks were published and the next
+  scheduled run resumes it); `1` -> Failed (auth, scope, inventory or an unhandled error - the log tells which). A
+  failed run still publishes its state, so the next run continues where it stopped.
+* **Time budget**: set `timeBudgetMinutes` (pipeline parameter -> `-TimeBudgetMinutes`) a few minutes below the job
+  cap - `55` on the free hosted tier, `350` with a paid parallel job. ImpactIQ then stops between items 2 minutes before
+  the budget, still runs `Assemble`, publishes state + outputs and exits `3` instead of being killed mid-item (a killed
+  job loses the last item and, on the free tier, may not even publish its artifacts). Headless-and-Resume.md section 10.
 * **Summary**: the "Stage artifacts" step writes `impactiq-summary.md` from `manifest.json` and uploads it with
   `##vso[task.uploadsummary]` - the run's Summary tab shows stages, counts and the first 50 failures.
 * **Backups** (`publishBackups: true`) publishes only backup date-folders written in the last 3 days, so a persistent
   self-hosted workspace does not re-upload months of `.pbix`/`.bim` files every night.
-* **Big tenants on hosted agents**: a run that needs more than 6 hours simply spans several scheduled runs (each
-  resumes the previous). If you need it in one go, use a self-hosted agent.
+* **Big tenants on hosted agents**: a run that needs more than 6 hours (or 1 hour on the free tier) simply spans several
+  scheduled runs (each resumes the previous; use `timeBudgetMinutes` so every run ends cleanly with exit 3). If you need
+  it in one go, use a self-hosted agent.
 
 ## 6. Getting the outputs into Power BI
 
@@ -222,12 +228,13 @@ the folder that the local `.pbit` reads. No Service refresh in that case.
 | `runMode` | `Workspaces` | `Workspaces` / `Reports` (`extraArgs: -ReportId a,b`) / `Models` (`extraArgs: -DatasetId a,b`) |
 | `workspaceNames` | `*` | semicolon-separated, wildcards (`-like`): `Finance*;HR;*Sales*`; `*` = `-AllWorkspaces` |
 | `stages` | `` (all) | comma-separated subset of `Inventory,ModelBackup,ReportBackup,ReportDetail,ModelDetail,Dataflows,Extras,Assemble` |
-| `extraArgs` | `` | appended verbatim, e.g. `-IncludeMyWorkspace -IncludeUsageMetrics -IncludeAdminApis -ActivityDays 7 -MaxParallelExtracts 3 -ModelDetailMethod Dax -Force` |
+| `extraArgs` | `` | appended verbatim, e.g. `-IncludeMyWorkspace -IncludeUsageMetrics -IncludeAdminApis -ActivityDays 7 -MaxParallelExtracts 3 -ModelDetailMethod Dax -DefinitionTimeoutMinutes 20 -Force` |
 | `publishBackups` | `false` | publish `impactiq-backups` (recent `Model/Report/Dataflow Backups` date folders) |
 | `commitOutputs` / `outputsBranch` | `false` / `data` | section 6.1 |
 | `sharePointSyncPath` | `` | section 7 |
 | `variableGroup` | `` | Library variable group holding the `IMPACTIQ_*` secrets |
 | `timeoutInMinutes` | `360` | `0` = unlimited (self-hosted) |
+| `timeBudgetMinutes` | `0` | `-TimeBudgetMinutes`: stop cleanly N minutes after the start (2-minute grace), exit `3`, resumed by the next run. Use `55` on the free hosted tier, `350` with a paid parallel job, `0` (unlimited) on self-hosted |
 | `restoreState` | `true` | `false` on self-hosted agents whose workspace persists |
 | `skipToolUpdate` | `false` | do not contact GitHub for Tabular Editor / pbi-tools updates |
 | `usePwsh` | `false` | run under PowerShell 7 instead of Windows PowerShell 5.1 |
@@ -239,7 +246,8 @@ template. The exact command line is printed at the top of the "Run ImpactIQ" ste
 
 | Symptom | Cause / fix |
 |---|---|
-| Job cancelled at 60:00 | free hosted tier. Buy one parallel job **and** keep `timeoutInMinutes: 360` in the YAML (without it the 60-minute default still applies), or go self-hosted. The next run resumes. |
+| Job cancelled at 60:00 | free hosted tier. Set `timeBudgetMinutes: 55` so the run pauses itself (exit 3) and publishes its state before the cap; buy one parallel job **and** keep `timeoutInMinutes: 360` in the YAML (without it the 60-minute default still applies), or go self-hosted. The next run resumes. |
+| Run ends with `exit 3` (orange, "paused") | expected when `timeBudgetMinutes` is set and the tenant needs more than one run: the next scheduled run resumes from the checkpoints. If it never finishes, see Headless-and-Resume.md section 9 (budget smaller than a single item). |
 | `No builds currently exist in the build definition supplied` on the restore step | first run; harmless (`continueOnError`). |
 | Every run asks for a device code again | `IMPACTIQ_TOKEN_CACHE_KEY` not set (hosted agents) or changed; artifact retention shorter than the schedule gap; `restoreState: false` on a hosted agent; the refresh token was revoked (password change, CA). Look for `Token cache included` in the "Stage artifacts" log of the previous run. |
 | `AADSTS50076` / `53003` in Credential mode | MFA / Conditional Access - switch to DeviceCode (Auth-Options.md). |

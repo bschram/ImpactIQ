@@ -16,9 +16,9 @@
     open a dialog: every prompt has a parameter or IMPACTIQ_* environment-variable equivalent (docs/Headless-and-Resume.md).
 
     Exit codes: 0 = every stage Completed (or the user cancelled a dialog); 2 = finished with item failures or a
-    non-fatal stage failure (see manifest.failures / the Failures sheet); 1 = fatal (authentication, no scope,
-    Inventory failure, unhandled exception). The manifest (State\runs\<RunId>\manifest.json) describes what
-    succeeded, what failed and why.
+    non-fatal stage failure (see manifest.failures / the Failures sheet); 3 = Paused because -TimeBudgetMinutes was
+    reached (the next start resumes it); 1 = fatal (authentication, no scope, Inventory failure, unhandled
+    exception). The manifest (State\runs\<RunId>\manifest.json) describes what succeeded, what failed and why.
 
 .PARAMETER BaseFolder
     Root folder: contains Config\ (csx scripts, Blank Model.bim, TabularEditor\, PBI Tools\, Modules\) and receives
@@ -78,13 +78,22 @@
 .PARAMETER RefreshInventory
     On a resumed run, re-run the Inventory stage even though it completed.
 .PARAMETER ModelDetailMethod
-    Auto (default) | TabularEditor | Dax | Both - how Model Detail is produced.
+    Auto (default) | TabularEditor | Bim | Dax | Both - how Model Detail is produced. Auto tries the Tabular Editor csx
+    scripts (when TE2 works and a .bim exists), then the built-in .bim (TMSL) parser, then DAX INFO.* over
+    executeQueries; Bim = parser only; Dax = DAX only; Both = Tabular Editor then the fallbacks on failure.
 .PARAMETER MaxParallelExtracts
     Concurrent Tabular Editor / pbi-tools processes (default 2).
 .PARAMETER ToolTimeoutMinutes
     Timeout per external process (default 20; ReportDetail uses three times this).
 .PARAMETER MaxRetries
     HTTP retries for 5xx / network errors (default 5).
+.PARAMETER DefinitionTimeoutMinutes
+    Timeout for Fabric getDefinition long-running operations (report / dataflow / semantic-model definitions; default 10).
+.PARAMETER TimeBudgetMinutes
+    Stop cleanly after this many minutes (0 = unlimited). Between items every stage checks the elapsed time of this
+    process; when the budget minus a 2-minute grace is reached the stage stops, later stages are deferred, Assemble
+    still builds the (partial) workbooks, the manifest is marked Paused and the exit code is 3. The next start resumes
+    the run. Use 55 on free Microsoft-hosted Azure DevOps agents (60-minute job cap).
 .PARAMETER SkipToolUpdate
     Do not download Tabular Editor 2 / pbi-tools updates (same as IMPACTIQ_OFFLINE=1).
 .PARAMETER IncludeAdminApis
@@ -142,10 +151,12 @@ param(
     [Parameter(Mandatory = $false)][int]$ResumeMaxAgeDays = 3,
     [Parameter(Mandatory = $false)][switch]$Force,
     [Parameter(Mandatory = $false)][switch]$RefreshInventory,
-    [Parameter(Mandatory = $false)][ValidateSet('Auto', 'TabularEditor', 'Dax', 'Both')][string]$ModelDetailMethod = 'Auto',
+    [Parameter(Mandatory = $false)][ValidateSet('Auto', 'TabularEditor', 'Dax', 'Both', 'Bim')][string]$ModelDetailMethod = 'Auto',
     [Parameter(Mandatory = $false)][int]$MaxParallelExtracts = 2,
     [Parameter(Mandatory = $false)][int]$ToolTimeoutMinutes = 20,
     [Parameter(Mandatory = $false)][int]$MaxRetries = 5,
+    [Parameter(Mandatory = $false)][int]$DefinitionTimeoutMinutes = 10,
+    [Parameter(Mandatory = $false)][int]$TimeBudgetMinutes = 0,
     [Parameter(Mandatory = $false)][switch]$SkipToolUpdate,
     [Parameter(Mandatory = $false)][switch]$IncludeAdminApis,
     [Parameter(Mandatory = $false)][switch]$IncludeUsageMetrics,
@@ -239,7 +250,7 @@ function Resolve-IQEntryModuleFolder {
     $candidates = @()
     if (-not [string]::IsNullOrWhiteSpace($ScriptRoot)) { $candidates += (Join-Path (Join-Path $ScriptRoot 'Config') 'Modules') }
     $candidates += (Join-Path (Join-Path $BaseFolder 'Config') 'Modules')
-    $required = @('Common', 'Auth', 'Http', 'State', 'Tools', 'Interactive', 'Inventory', 'Dax', 'Models', 'Reports', 'Dataflows', 'Extras', 'Assemble')
+    $required = @('Common', 'Auth', 'Http', 'State', 'Tools', 'Interactive', 'Inventory', 'Dax', 'Bim', 'Models', 'Reports', 'Dataflows', 'Extras', 'Assemble')
     foreach ($folder in @($candidates | Select-Object -Unique)) {
         if (-not (Test-Path -LiteralPath $folder -PathType Container)) { continue }
         $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $folder ('ImpactIQ.' + $_ + '.ps1')) -PathType Leaf) })
@@ -345,7 +356,7 @@ function Get-IQEntryPersistedScopeManifest {
         if ($dir.Name -eq $effectiveRunId) { continue }
         $m = ConvertFrom-IQJsonFile -Path (Join-Path $dir.FullName 'manifest.json')
         if ($null -eq $m) { continue }
-        if ([string](Get-IQMemberValue -Object $m -Name 'status') -notin @('Running', 'Failed', 'CompletedWithErrors')) { continue }
+        if ([string](Get-IQMemberValue -Object $m -Name 'status') -notin @('Running', 'Paused', 'Failed', 'CompletedWithErrors')) { continue }
         $started = $null
         try { $started = ([datetime](Get-IQMemberValue -Object $m -Name 'startedUtc')).ToUniversalTime() } catch { $started = $null }
         if ($null -eq $started) { continue }
@@ -479,7 +490,7 @@ function Write-IQEntrySummary {
         $status = [string]$r.Status
         if ([string]::IsNullOrEmpty($status)) { $status = 'NotRun' }
         $level = 'Info'
-        if ($status -eq 'Completed') { $level = 'Success' } elseif ($status -eq 'CompletedWithErrors') { $level = 'Warn' } elseif ($status -eq 'Failed') { $level = 'Error' }
+        if ($status -eq 'Completed') { $level = 'Success' } elseif ($status -in @('CompletedWithErrors', 'Paused')) { $level = 'Warn' } elseif ($status -eq 'Failed') { $level = 'Error' }
         Write-IQEntryMessage -Level $level -Message ('{0,-14} {1,-20} {2,8} {3,8} {4,12}' -f $r.Stage, $status, $r.ItemsDone, $r.ItemsFailed, $dur)
     }
     $failures = @(Get-IQMemberValue -Object $Manifest -Name 'failures')
@@ -563,6 +574,8 @@ try {
         MaxParallelExtracts     = $MaxParallelExtracts
         ToolTimeoutMinutes      = $ToolTimeoutMinutes
         MaxRetries              = $MaxRetries
+        DefinitionTimeoutMinutes = $DefinitionTimeoutMinutes
+        TimeBudgetMinutes       = $TimeBudgetMinutes
         SkipToolUpdate          = [bool]$SkipToolUpdate
         IncludeAdminApis        = [bool]$IncludeAdminApis
         IncludeUsageMetrics     = [bool]$IncludeUsageMetrics
@@ -584,6 +597,7 @@ try {
     Write-IQEntryMessage -Level Info -Message ('ImpactIQ v3 starting. BaseFolder={0} PowerShell={1} Host={2} Interactive={3} AzureDevOps={4}' -f `
             $script:IQ.BaseFolder, $PSVersionTable.PSVersion, $Host.Name, $script:IQ.Interactive, $script:IQ.IsAzureDevOps)
     Write-IQEntryMessage -Level Info -Message ('Log file: {0}' -f $script:IQ.LogFile)
+    if ($TimeBudgetMinutes -gt 0) { Write-IQEntryMessage -Level Info -Message ('Time budget: {0} min (stages stop cleanly 2 min before it; the run is then Paused, exit code 3, and resumes on the next start).' -f $TimeBudgetMinutes) }
     if ($scriptRoot -and ([System.IO.Path]::GetFullPath($scriptRoot).TrimEnd('\', '/') -ne $script:IQ.BaseFolder.TrimEnd('\', '/'))) {
         Write-IQEntryMessage -Level Info -Message ('Modules loaded from {0}' -f $moduleFolder)
     }
@@ -591,7 +605,7 @@ try {
     # ---- 3. remaining modules in the prescribed order (Interactive only when interactive) --------------------------
     foreach ($m in @('Auth', 'Http', 'State', 'Tools')) { . (Join-Path $moduleFolder ('ImpactIQ.' + $m + '.ps1')) }
     if ($script:IQ.Interactive) { . (Join-Path $moduleFolder 'ImpactIQ.Interactive.ps1') }
-    foreach ($m in @('Inventory', 'Dax', 'Models', 'Reports', 'Dataflows', 'Extras', 'Assemble')) { . (Join-Path $moduleFolder ('ImpactIQ.' + $m + '.ps1')) }
+    foreach ($m in @('Inventory', 'Dax', 'Bim', 'Models', 'Reports', 'Dataflows', 'Extras', 'Assemble')) { . (Join-Path $moduleFolder ('ImpactIQ.' + $m + '.ps1')) }
 
     # ---- 4. stage list + early "no scope" check (fail before any sign-in when nothing could possibly run) ----------
     $stageList = @(Get-IQEntryStageList -Requested $Stages -Skipped $SkipStages)
@@ -725,6 +739,7 @@ else {
     switch ($exitCode) {
         0 { Write-IQEntryMessage -Level Success -Message 'ImpactIQ completed successfully (exit code 0).' }
         2 { Write-IQEntryMessage -Level Warn -Message 'ImpactIQ completed with errors (exit code 2) - the outputs were produced; check the Failures sheet and the log.' }
+        3 { Write-IQEntryMessage -Level Warn -Message ('ImpactIQ paused (exit code 3) - the time budget of {0} min was reached; partial workbooks were produced. Start it again (same parameters) to resume run {1}.' -f $TimeBudgetMinutes, $script:IQ.RunId) }
         default { Write-IQEntryMessage -Level Error -Message ('ImpactIQ ended with exit code {0}.' -f $exitCode) }
     }
 }

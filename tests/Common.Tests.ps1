@@ -208,12 +208,45 @@ Describe 'Get-IQDateFolder' {
     }
 }
 
+Describe 'Test-IQTimeBudget (time budget for capped agents)' {
+    BeforeEach { $script:IQ.BudgetExceeded = $false; $script:IQ.StartedUtc = [datetime]::UtcNow }
+    AfterAll { $script:IQ.Options.Remove('TimeBudgetMinutes'); $script:IQ.BudgetExceeded = $false; $script:IQ.StartedUtc = [datetime]::UtcNow }
+    It 'is false when no budget is configured (0 = unlimited)' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 0
+        $script:IQ.StartedUtc = [datetime]::UtcNow.AddHours(-5)
+        Test-IQTimeBudget -Stage 'Inventory' | Should -BeFalse
+        $script:IQ.BudgetExceeded | Should -BeFalse
+    }
+    It 'is false while budget minus the 2-minute grace has not elapsed' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 60
+        $script:IQ.StartedUtc = [datetime]::UtcNow.AddMinutes(-30)
+        Test-IQTimeBudget -Stage 'Inventory' | Should -BeFalse
+        $script:IQ.BudgetExceeded | Should -BeFalse
+    }
+    It 'is true once budget minus grace has elapsed, sets BudgetExceeded and logs once' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 60
+        $script:IQ.StartedUtc = [datetime]::UtcNow.AddMinutes(-58.5)
+        Test-IQTimeBudget -Stage 'ModelBackup' -Item 'WS ~ Model' | Should -BeTrue
+        $script:IQ.BudgetExceeded | Should -BeTrue
+        Test-IQTimeBudget -Stage 'ModelBackup' | Should -BeTrue -Because 'the flag is sticky for the rest of the process'
+        $lines = @(Get-Content -LiteralPath $script:IQ.LogFile | Where-Object { $_ -match 'Time budget of 60 min reached' })
+        $lines.Count | Should -Be 1
+    }
+    It 'stays true after the flag was set even when the clock says otherwise' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 60
+        $script:IQ.BudgetExceeded = $true
+        Test-IQTimeBudget | Should -BeTrue
+    }
+}
+
 Describe 'Get-IQExitCode (brief section 5.1)' {
     It 'maps <Status> to exit code <Expected>' -TestCases @(
         @{ Status = 'Completed'; Failures = @(); Stages = @{}; Expected = 0 }
         @{ Status = 'CompletedWithErrors'; Failures = @(); Stages = @{}; Expected = 2 }
         @{ Status = 'Failed'; Failures = @(); Stages = @{}; Expected = 1 }
         @{ Status = 'Running'; Failures = @(); Stages = @{}; Expected = 1 }
+        @{ Status = 'Paused'; Failures = @(); Stages = @{}; Expected = 3 }
+        @{ Status = 'Paused'; Failures = @(@{ stage = 'x' }); Stages = @{ Dataflows = @{ status = 'Paused' } }; Expected = 3 }
         @{ Status = 'Completed'; Failures = @(@{ stage = 'x' }); Stages = @{}; Expected = 2 }
         @{ Status = 'Completed'; Failures = @(); Stages = @{ Dataflows = @{ status = 'Failed' } }; Expected = 2 }
     ) {

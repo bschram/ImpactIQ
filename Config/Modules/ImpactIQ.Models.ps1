@@ -548,7 +548,7 @@ function Invoke-IQModelBackupStage {
     [CmdletBinding()]
     param()
     $stage = 'ModelBackup'
-    $summary = @{ Total = 0; Done = 0; Skipped = 0; Failed = 0; AlreadyDone = 0; ViaXmla = 0; ViaFabric = 0 }
+    $summary = @{ Total = 0; Done = 0; Skipped = 0; Failed = 0; AlreadyDone = 0; ViaXmla = 0; ViaFabric = 0; BudgetStop = $false }
     $runFolder = Get-IQModelRunFolder
     $work = @(Get-IQModelWorkList -RunFolder $runFolder)
     $summary.Total = $work.Count
@@ -564,12 +564,14 @@ function Invoke-IQModelBackupStage {
     $pending = New-Object System.Collections.Generic.List[object]
     $proMessage = 'Pro workspace - model extracted from PBIX in ReportBackup'
 
+    $budgetStop = $false
     foreach ($w in $work) {
         if (Test-IQItemDone -Stage $stage -ItemKey $w.Key) {
             $summary.AlreadyDone++
             Write-IQLog -Level Debug -Stage $stage -Item $w.Item -Message 'Already done (checkpoint); skipping'
             continue
         }
+        if (Test-IQTimeBudget -Stage $stage -Item $w.Item) { $budgetStop = $true; break }
         if ($w.NoAccess) {
             Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Skipped -Message 'No workspace access (shared report) - model cannot be exported' | Out-Null
             $summary.Skipped++
@@ -608,6 +610,11 @@ function Invoke-IQModelBackupStage {
         }
         $pending.Add($w)
     }
+    if ($budgetStop) {
+        Write-IQLog -Level Warn -Stage $stage -Message ("Time budget reached: model backup stopped after {0} export(s); the remaining models are exported on the next start." -f ($summary.Done + $summary.ViaFabric))
+        $summary.BudgetStop = $true
+        return $summary
+    }
     if ($pending.Count -eq 0) {
         Write-IQLog -Level Info -Stage $stage -Message ("Model backup: nothing to export via XMLA ({0} already done, {1} via Fabric, {2} skipped, {3} failed)" -f $summary.AlreadyDone, $summary.ViaFabric, $summary.Skipped, $summary.Failed)
         return $summary
@@ -631,6 +638,11 @@ function Invoke-IQModelBackupStage {
 
     $index = 0
     while ($index -lt $pending.Count) {
+        if (Test-IQTimeBudget -Stage $stage) {
+            Write-IQLog -Level Warn -Stage $stage -Message ("Time budget reached: {0} model(s) not exported via XMLA yet - they are exported on the next start." -f ($pending.Count - $index))
+            $summary.BudgetStop = $true
+            break
+        }
         $chunk = @()
         $last = [Math]::Min($index + $maxParallel, $pending.Count) - 1
         for ($i = $index; $i -le $last; $i++) { $chunk += $pending[$i] }
@@ -856,7 +868,19 @@ function Invoke-IQModelDetailTabularEditor {
         Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Extracting model detail via Tabular Editor from ' + $bim)
     }
     Write-IQLog -Level Info -Stage $stage -Message ("Running {0} Tabular Editor script job(s) for {1} model(s), {2} in parallel, {3} min timeout each" -f $jobs.Count, $Candidates.Count, $maxParallel, $timeout)
-    $results = Invoke-IQProcessBatch -Jobs $jobs -MaxParallel $maxParallel -TimeoutMinutes $timeout -Stage $stage
+    # The csx scripts honour IMPACTIQ_BASE / IMPACTIQ_DATE_FOLDER / IMPACTIQ_REPORT_DATE (audit X2-H1) so they write into
+    # THIS run's folder instead of the newest dated folder; the CWD-scanning behaviour stays their fallback.
+    $previousEnv = @{ IMPACTIQ_BASE = $env:IMPACTIQ_BASE; IMPACTIQ_DATE_FOLDER = $env:IMPACTIQ_DATE_FOLDER; IMPACTIQ_REPORT_DATE = $env:IMPACTIQ_REPORT_DATE }
+    $results = $null
+    try {
+        $env:IMPACTIQ_BASE = [string]$script:IQ.BaseFolder
+        $env:IMPACTIQ_DATE_FOLDER = [string]$RunFolder
+        $env:IMPACTIQ_REPORT_DATE = [string](Get-IQDaxModelAsOfDate)
+        $results = Invoke-IQProcessBatch -Jobs $jobs -MaxParallel $maxParallel -TimeoutMinutes $timeout -Stage $stage
+    }
+    finally {
+        foreach ($name in @($previousEnv.Keys)) { Set-Item -Path ('Env:' + $name) -Value $previousEnv[$name] -ErrorAction SilentlyContinue }
+    }
     $results = ConvertTo-IQModelResultList -Results $results
     $byKey = @{}
     foreach ($r in $results) { $byKey[[string](Get-IQModelMember -Object $r -Name 'ItemKey')] = Get-IQModelMember -Object $r -Name 'Result' }
@@ -935,7 +959,7 @@ function Invoke-IQModelDetailStage {
     [CmdletBinding()]
     param()
     $stage = 'ModelDetail'
-    $summary = @{ Total = 0; Done = 0; Failed = 0; Skipped = 0; AlreadyDone = 0; ViaTabularEditor = 0; ViaBim = 0; ViaDax = 0 }
+    $summary = @{ Total = 0; Done = 0; Failed = 0; Skipped = 0; AlreadyDone = 0; ViaTabularEditor = 0; ViaBim = 0; ViaDax = 0; BudgetStop = $false }
     $runFolder = Get-IQModelRunFolder
     $method = [string](Get-IQModelOption -Name 'ModelDetailMethod' -Default 'Auto')
     if ($method -notin @('Auto', 'TabularEditor', 'Dax', 'Both', 'Bim')) {
@@ -954,12 +978,14 @@ function Invoke-IQModelDetailStage {
     $bimByKey = @{}
     $noteByKey = @{}
     $teCandidates = @()
+    $budgetStop = $false
     foreach ($w in $work) {
         if (Test-IQItemDone -Stage $stage -ItemKey $w.Key) {
             $summary.AlreadyDone++
             Write-IQLog -Level Debug -Stage $stage -Item $w.Item -Message 'Already done (checkpoint); skipping'
             continue
         }
+        if (Test-IQTimeBudget -Stage $stage -Item $w.Item) { $budgetStop = $true; break }
         if ($w.NoAccess) {
             Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Skipped -Message 'No workspace access (shared report) - model detail unavailable' | Out-Null
             $summary.Skipped++
@@ -986,7 +1012,8 @@ function Invoke-IQModelDetailStage {
 
     # 1. Tabular Editor batch (all csx jobs in one pool).
     $queue = New-Object System.Collections.Generic.List[object]
-    if ($teCandidates.Count -gt 0) {
+    if ($teCandidates.Count -gt 0 -and -not $budgetStop -and (Test-IQTimeBudget -Stage $stage)) { $budgetStop = $true }
+    if ($teCandidates.Count -gt 0 -and -not $budgetStop) {
         $outcomes = Invoke-IQModelDetailTabularEditor -Candidates $teCandidates -RunFolder $runFolder
         foreach ($c in $teCandidates) {
             $w = $c.Work
@@ -1018,6 +1045,7 @@ function Invoke-IQModelDetailStage {
 
     # 2. Remaining steps per dataset, in plan order: Bim parser, then DAX.
     foreach ($w in $queue) {
+        if ($budgetStop -or (Test-IQTimeBudget -Stage $stage -Item $w.Item)) { $budgetStop = $true; break }
         $key = [string]$w.Key
         $steps = $plans[$key]
         $notes = $noteByKey[$key]
@@ -1071,6 +1099,10 @@ function Invoke-IQModelDetailStage {
         }
     }
 
+    if ($budgetStop) {
+        $summary.BudgetStop = $true
+        Write-IQLog -Level Warn -Stage $stage -Message 'Time budget reached: model detail stopped; the remaining models are processed on the next start.'
+    }
     Write-IQLog -Level Info -Stage $stage -Message ("Model detail finished: {0} done ({1} Tabular Editor, {2} Bim parser, {3} DAX), {4} failed, {5} skipped, {6} already done" -f $summary.Done, $summary.ViaTabularEditor, $summary.ViaBim, $summary.ViaDax, $summary.Failed, $summary.Skipped, $summary.AlreadyDone)
     return $summary
 }

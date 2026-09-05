@@ -10,6 +10,8 @@
         runs\<RunId>\done\<Stage>\<safeItemKey>.json     per-item checkpoint
         runs\<RunId>\extracts\...                        intermediate JSON
         runs\<RunId>\tool-logs\<Stage>\<safeItemKey>.out.txt / .err.txt
+    Run status values: Running | Completed | CompletedWithErrors | Paused (time budget, brief -TimeBudgetMinutes) |
+    Failed | Cancelled. Paused/Running/Failed/CompletedWithErrors runs are resumed by -Resume Auto.
     The in-memory manifest ($script:IQ.Manifest) is a nested [ordered] hashtable (a manifest loaded from disk is
     converted with ConvertTo-IQHashtable) so modules can read/write it uniformly: $IQ.Manifest.stages['Inventory'].status.
     Requires ImpactIQ.Common.ps1 to be dot-sourced first. Windows PowerShell 5.1 compatible.
@@ -192,7 +194,7 @@ function ConvertTo-IQDateTimeUtc {
 function Find-IQResumableRun {
     <#
     .SYNOPSIS
-        Newest run (by startedUtc) with status Running/Failed/CompletedWithErrors started within MaxAgeDays; returns @{RunId; Manifest} or $null.
+        Newest run (by startedUtc) with status Running/Paused/Failed/CompletedWithErrors started within MaxAgeDays; returns @{RunId; Manifest} or $null.
     #>
     [CmdletBinding()]
     param(
@@ -209,7 +211,7 @@ function Find-IQResumableRun {
         if (-not (Test-Path -LiteralPath $mPath)) { continue }
         $m = Read-IQManifestFile -Path $mPath
         if ($null -eq $m) { continue }
-        if ([string]$m['status'] -notin @('Running', 'Failed', 'CompletedWithErrors')) { continue }
+        if ([string]$m['status'] -notin @('Running', 'Paused', 'Failed', 'CompletedWithErrors')) { continue }
         $started = ConvertTo-IQDateTimeUtc -Value $m['startedUtc']
         if ($null -eq $started) { continue }
         $age = $now - $started
@@ -259,8 +261,9 @@ function Initialize-IQRun {
         Effective RunId: -RunId if given, else today's yyyy-MM-dd (Options.NowUtc overrides the clock for tests).
         -Force / -ResumePolicy Never => fresh run (run state and the three backup folders for <RunId> are cleared).
         Always => resume <RunId> when its manifest exists (any status), else fresh.
-        Auto => (1) manifest for <RunId> exists and status <> Completed => resume it; (2) else, when -RunId was not
-        given, the newest Running/Failed/CompletedWithErrors run started within -ResumeMaxAgeDays is resumed
+        Auto => (1) manifest for <RunId> exists and status <> Completed (Running, Paused, Failed, ...) => resume it;
+        (2) else, when -RunId was not given, the newest Running/Paused/Failed/CompletedWithErrors run started within
+        -ResumeMaxAgeDays is resumed
         (yesterday's pipeline run died); (3) else fresh (a Completed manifest for <RunId> is archived as
         manifest.<timestamp>.json and the backup folders for <RunId> are cleared - legacy re-run semantics).
         Sets $script:IQ.RunId, RunPath, IsResume, Manifest, RunPaths.
@@ -491,9 +494,11 @@ function Invoke-IQStage {
         Runs one stage body with manifest bookkeeping; skips stages already Completed in a resumed run (Assemble always re-runs).
     .DESCRIPTION
         Marks the stage Running, runs -Body in try/catch, then marks Completed / CompletedWithErrors (item failures
-        recorded during the stage) / Failed (exception). -Fatal rethrows the exception; otherwise the error is logged
-        and later stages still run. "Inventory" is re-run on resume when Options.RefreshInventory is set (its item
-        checkpoints are cleared first). Returns the stage status string.
+        recorded during the stage) / Failed (exception) / Paused (the body stopped because Test-IQTimeBudget set
+        $script:IQ.BudgetExceeded). Once the budget is exhausted every later stage except Assemble is marked Paused
+        without running (Assemble still runs so partial workbooks exist); Paused stages are re-run on resume. -Fatal
+        rethrows the exception; otherwise the error is logged and later stages still run. "Inventory" is re-run on
+        resume when Options.RefreshInventory is set (its item checkpoints are cleared first). Returns the stage status.
     #>
     [CmdletBinding()]
     param(
@@ -508,6 +513,13 @@ function Invoke-IQStage {
     if ($script:IQ.IsResume -and [string]$entry['status'] -eq 'Completed' -and $Name -ne 'Assemble' -and -not $refreshInventory) {
         Write-IQLog -Level Info -Stage $Name -Message "Stage already Completed in this run - skipping (resume)."
         return 'Completed'
+    }
+    if ($Name -ne 'Assemble' -and (Test-IQTimeBudget -Stage $Name)) {
+        Write-IQLog -Level Warn -Stage $Name -Message 'Time budget exhausted - stage not started (marked Paused; it runs on the next start, which resumes this run).'
+        $entry['status'] = 'Paused'
+        $entry['error'] = $null
+        Save-IQManifest
+        return 'Paused'
     }
     if ($refreshInventory -and $script:IQ.IsResume) {
         $doneFolder = Get-IQDoneFolder -Stage $Name
@@ -542,6 +554,7 @@ function Invoke-IQStage {
     $script:IQ.CurrentStage = $previousStage
     Update-IQStageCounter -Stage $Name | Out-Null
     if ($status -ne 'Failed' -and [int]$entry['itemsFailed'] -gt 0) { $status = 'CompletedWithErrors' }
+    if ($status -ne 'Failed' -and $Name -ne 'Assemble' -and $script:IQ.ContainsKey('BudgetExceeded') -and [bool]$script:IQ['BudgetExceeded']) { $status = 'Paused' }
     $entry['status'] = $status
     $entry['endedUtc'] = Get-IQUtcStamp
     $entry['durationSeconds'] = [math]::Round($sw.Elapsed.TotalSeconds, 1)
@@ -552,6 +565,7 @@ function Invoke-IQStage {
     switch ($status) {
         'Completed' { Write-IQLog -Level Success -Stage $Name -Message $summary }
         'CompletedWithErrors' { Write-IQLog -Level Warn -Stage $Name -Message $summary }
+        'Paused' { Write-IQLog -Level Warn -Stage $Name -Message ($summary + ' (time budget reached - the remaining items run on the next start)') }
         default {
             Write-IQLog -Level Error -Stage $Name -Message ("Stage failed: {0}" -f $caught.Exception.Message) -Exception $caught.Exception
             if ($caught.ScriptStackTrace) { Write-IQLog -Level Debug -Stage $Name -Message $caught.ScriptStackTrace }
@@ -771,18 +785,21 @@ function Get-IQAllWorkspaceInventories {
 function Get-IQRunStatus {
     <#
     .SYNOPSIS
-        Derives the run status from the manifest: Failed (fatal marker), CompletedWithErrors (any failures / non-Completed stage), else Completed.
+        Derives the run status from the manifest: Paused (time budget reached / any Paused stage), CompletedWithErrors (any failures / non-Completed stage), else Completed.
     #>
     [CmdletBinding()]
     param()
     $m = $script:IQ.Manifest
     if ($null -eq $m) { return 'Failed' }
     $withErrors = $false
+    $paused = ($script:IQ.ContainsKey('BudgetExceeded') -and [bool]$script:IQ['BudgetExceeded'])
     if (@($m['failures']).Count -gt 0) { $withErrors = $true }
     foreach ($name in @($m['stages'].Keys)) {
         $st = [string]$m['stages'][$name]['status']
         if ($st -in @('Failed', 'CompletedWithErrors')) { $withErrors = $true }
+        if ($st -eq 'Paused') { $paused = $true }
     }
+    if ($paused) { return 'Paused' }
     if ($withErrors) { return 'CompletedWithErrors' }
     return 'Completed'
 }
@@ -790,7 +807,7 @@ function Get-IQRunStatus {
 function Complete-IQRun {
     <#
     .SYNOPSIS
-        Sets endedUtc and the final status (Completed | CompletedWithErrors | Failed; derived when omitted) and saves the manifest.
+        Sets endedUtc and the final status (Completed | CompletedWithErrors | Paused | Failed; derived when omitted) and saves the manifest.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Status)
@@ -800,8 +817,9 @@ function Complete-IQRun {
     $script:IQ.Manifest['endedUtc'] = Get-IQUtcStamp
     Save-IQManifest
     $level = 'Success'
-    if ($Status -eq 'CompletedWithErrors') { $level = 'Warn' } elseif ($Status -ne 'Completed') { $level = 'Error' }
+    if ($Status -in @('CompletedWithErrors', 'Paused')) { $level = 'Warn' } elseif ($Status -ne 'Completed') { $level = 'Error' }
     Write-IQLog -Level $level -Message ("Run '{0}' finished with status {1} ({2} failure(s))." -f $script:IQ.RunId, $Status, @($script:IQ.Manifest['failures']).Count)
+    if ($Status -eq 'Paused') { Write-IQLog -Level Warn -Message ("Run '{0}' is PAUSED (time budget): start ImpactIQ again to resume it - completed items are skipped." -f $script:IQ.RunId) }
     return $Status
 }
 

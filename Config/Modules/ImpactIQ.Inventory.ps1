@@ -1961,6 +1961,7 @@ function Invoke-IQInventoryStage {
     $collected = 0
     $skipped = 0
     $failed = 0
+    $budgetStop = $false
     foreach ($ws in $realWorkspaces) {
         $index++
         $wsId = [string]$ws.WorkspaceId
@@ -1969,6 +1970,11 @@ function Invoke-IQInventoryStage {
             Write-IQLog -Level Info -Stage $stage -Item $wsName -Message ("Workspace {0}/{1} already inventoried - skipping (resume)." -f $index, $total)
             $skipped++
             continue
+        }
+        if (Test-IQTimeBudget -Stage $stage -Item $wsName) {
+            Write-IQLog -Level Warn -Stage $stage -Message ("Time budget reached: {0} of {1} workspace(s) not inventoried yet - they are collected on the next start." -f ($total - $index + 1), $total)
+            $budgetStop = $true
+            break
         }
         Write-IQLog -Level Info -Stage $stage -Item $wsName -Message ("Workspace {0}/{1} ({2})" -f $index, $total, $wsId)
         try {
@@ -1999,7 +2005,10 @@ function Invoke-IQInventoryStage {
 
     # ---- My Workspace ----
     $sharedFound = $false
-    if ($scope.IncludeMyWorkspace) {
+    if ($scope.IncludeMyWorkspace -and $budgetStop) {
+        Write-IQLog -Level Warn -Stage $stage -Item 'My Workspace' -Message 'Time budget reached - My Workspace is inventoried on the next start.'
+    }
+    elseif ($scope.IncludeMyWorkspace) {
         $myKey = 'My Workspace'
         if (Test-IQItemDone -Stage $stage -ItemKey $myKey) {
             Write-IQLog -Level Info -Stage $stage -Item $myKey -Message 'My Workspace already inventoried - skipping (resume).'
@@ -2043,7 +2052,7 @@ function Invoke-IQInventoryStage {
     }
     $workspacesPath = Save-IQInventory -Name 'workspaces' -Object $wsRows.ToArray()
 
-    $summary = @{ WorkspaceCount = $wsRows.Count; Collected = $collected; Skipped = $skipped; Failed = $failed; WorkspacesFile = $workspacesPath }
+    $summary = @{ WorkspaceCount = $wsRows.Count; Collected = $collected; Skipped = $skipped; Failed = $failed; WorkspacesFile = $workspacesPath; BudgetStop = $budgetStop }
     Write-IQLog -Level Success -Stage $stage -Message ("Inventory complete: {0} workspace(s) in scope, {1} collected, {2} skipped (resume), {3} failed." -f $wsRows.Count, $collected, $skipped, $failed)
     return $summary
 }

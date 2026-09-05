@@ -44,6 +44,9 @@ No service principal means a **user identity** has to sign in. The constraints t
   artifact. A device-code sign-in therefore only helps if the resulting refresh token is stored somewhere the next run
   can read: ImpactIQ encrypts it with your `IMPACTIQ_TOKEN_CACHE_KEY` and ships it in the `impactiq-state` artifact.
 * Microsoft-hosted agents are capped at **60 min per job on the free tier, 360 min with one paid parallel job**.
+  `-TimeBudgetMinutes` (pipeline parameter `timeBudgetMinutes`, e.g. `55`) makes ImpactIQ stop cleanly before the cap,
+  build partial workbooks, exit `3` (`Paused`) and resume on the next run - so even the free tier works for big tenants,
+  just over more runs.
   A large tenant takes longer - ImpactIQ simply resumes on the next run.
 * Username/password (ROPC) sign-in **dies with MFA / Conditional Access / federation**, and Microsoft is deprecating
   it. It only works for a cloud-only, MFA-exempt account.
@@ -114,7 +117,7 @@ switch to B or C (there is no workaround inside the tool).
 powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Power BI Backups\ImpactIQ.ps1" -BaseFolder "C:\Power BI Backups" -NonInteractive -Environment USGov -AuthMode DeviceCode -Stages Inventory -WorkspaceName "Finance"
 # then the task action (daily 06:00, "run whether user is logged on or not", "do not store password" unchecked):
 powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\Power BI Backups\ImpactIQ.ps1" -BaseFolder "C:\Power BI Backups" -NonInteractive -Environment USGov -AllWorkspaces -IncludeMyWorkspace
-# exit code 0 = ok, 2 = finished with item failures (see Failures sheet), 1 = fatal (see Logs\ImpactIQ_*.log)
+# exit code 0 = ok, 2 = finished with item failures (see Failures sheet), 3 = paused (-TimeBudgetMinutes reached; run it again), 1 = fatal (see Logs\ImpactIQ_*.log)
 ```
 
 ## 4. Environment variables (complete list)

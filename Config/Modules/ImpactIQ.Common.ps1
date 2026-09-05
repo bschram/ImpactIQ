@@ -80,6 +80,8 @@ function Initialize-IQContext {
         Manifest      = $null
         Scope         = $null
         CurrentStage  = $null
+        StartedUtc    = [datetime]::UtcNow
+        BudgetExceeded = $false
         Paths         = @{
             ModelBackups    = Join-Path $BaseFolder 'Model Backups'
             ReportBackups   = Join-Path $BaseFolder 'Report Backups'
@@ -406,6 +408,51 @@ function Test-IQInteractive {
     return $true
 }
 
+function Test-IQTimeBudget {
+    <#
+    .SYNOPSIS
+        $true when the run's time budget (Options.TimeBudgetMinutes, 0 = unlimited) minus a 2-minute grace has been used up by THIS process.
+    .DESCRIPTION
+        Elapsed time is measured from $script:IQ.StartedUtc (set by Initialize-IQContext in this process, so a resumed
+        run gets a full budget again). The first time the budget is found exhausted the function sets
+        $script:IQ.BudgetExceeded = $true and logs one Warn; afterwards it keeps returning $true without logging.
+        Stage bodies call it between items and stop cleanly; Invoke-IQStage then marks the stage Paused, Complete-IQRun
+        marks the run Paused (exit code 3) and the next start resumes it. Never throws.
+    .PARAMETER Stage
+        Stage name for the log line (defaults to the current stage).
+    .PARAMETER Item
+        Item name for the log line.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Stage,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Item
+    )
+    try {
+        if (-not $script:IQ) { return $false }
+        if ($script:IQ.ContainsKey('BudgetExceeded') -and [bool]$script:IQ['BudgetExceeded']) { return $true }
+        $budget = 0
+        if ($script:IQ.Options -and $script:IQ.Options.Contains('TimeBudgetMinutes') -and $null -ne $script:IQ.Options['TimeBudgetMinutes']) {
+            $budget = [int]$script:IQ.Options['TimeBudgetMinutes']
+        }
+        if ($budget -le 0) { return $false }
+        $started = $null
+        if ($script:IQ.ContainsKey('StartedUtc') -and $script:IQ['StartedUtc'] -is [datetime]) { $started = [datetime]$script:IQ['StartedUtc'] }
+        if ($null -eq $started) { return $false }
+        $elapsedMinutes = ([datetime]::UtcNow - $started.ToUniversalTime()).TotalMinutes
+        $limit = $budget - 2
+        if ($limit -le 0) { $limit = $budget }
+        if ($elapsedMinutes -lt $limit) { return $false }
+        $script:IQ['BudgetExceeded'] = $true
+        $logArgs = @{ Level = 'Warn'; Message = ('Time budget of {0} min reached ({1:N1} min elapsed, 2 min grace kept for shutdown): stopping cleanly after the current item. The run will be marked Paused (exit code 3) and resumed by the next start.' -f $budget, $elapsedMinutes) }
+        if (-not [string]::IsNullOrWhiteSpace($Stage)) { $logArgs['Stage'] = $Stage }
+        if (-not [string]::IsNullOrWhiteSpace($Item)) { $logArgs['Item'] = $Item }
+        Write-IQLog @logArgs
+        return $true
+    }
+    catch { return $false }
+}
+
 function Get-IQEnvironmentSettings {
     <#
     .SYNOPSIS
@@ -522,7 +569,7 @@ function Get-IQEnvironmentSettings {
 function Get-IQExitCode {
     <#
     .SYNOPSIS
-        Maps a run manifest to the process exit code: 0 Completed, 2 CompletedWithErrors (item/non-fatal stage failures), 1 fatal.
+        Maps a run manifest to the process exit code: 0 Completed, 2 CompletedWithErrors (item/non-fatal stage failures), 3 Paused (time budget), 1 fatal.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false, Position = 0)][AllowNull()]$Manifest)
@@ -541,6 +588,7 @@ function Get-IQExitCode {
             return 0
         }
         'CompletedWithErrors' { return 2 }
+        'Paused' { return 3 }
         default { return 1 }
     }
 }

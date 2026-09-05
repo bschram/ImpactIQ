@@ -1050,7 +1050,7 @@ function Invoke-IQDataflowsStage {
     [CmdletBinding()]
     param()
     $stage = 'Dataflows'
-    $summary = @{ Total = 0; Done = 0; Failed = 0; AlreadyDone = 0; Gen1 = 0; Gen2 = 0; Queries = 0; RunFolder = $null; ExtractFolder = $null }
+    $summary = @{ Total = 0; Done = 0; Failed = 0; AlreadyDone = 0; Gen1 = 0; Gen2 = 0; Queries = 0; RunFolder = $null; ExtractFolder = $null; BudgetStop = $false }
     $runFolder = Get-IQDataflowRunFolder
     $extractFolder = Get-IQDataflowExtractFolder
     $summary.RunFolder = $runFolder
@@ -1069,6 +1069,11 @@ function Invoke-IQDataflowsStage {
             $summary.AlreadyDone++
             Write-IQLog -Level Debug -Stage $stage -Item $w.Item -Message 'Already done (checkpoint); skipping'
             continue
+        }
+        if (Test-IQTimeBudget -Stage $stage -Item $w.Item) {
+            Write-IQLog -Level Warn -Stage $stage -Message ("Time budget reached: {0} of {1} dataflow(s) not backed up yet - they are exported on the next start." -f ($work.Count - $index + 1), $work.Count)
+            $summary.BudgetStop = $true
+            break
         }
         Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ("[{0}/{1}] Exporting {2} dataflow" -f $index, $work.Count, $w.Generation)
         $result = $null

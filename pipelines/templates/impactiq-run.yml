@@ -12,7 +12,8 @@
 #   1. checkout (self)
 #   2. restore State\ (runs + encrypted token cache) from the latest run of THIS pipeline   [restoreState]
 #   3. install PowerShell modules (ImportExcel by default)
-#   4. run ImpactIQ.ps1 headless; exit code 2 -> SucceededWithIssues, 1 -> Failed
+#   4. run ImpactIQ.ps1 headless; exit code 2 (item failures) and 3 (paused: time budget reached, resumed by the
+#      next run) -> SucceededWithIssues, 1 -> Failed
 #   5. stage artifacts (always) and upload a run summary to the pipeline UI
 #   6. publish impactiq-state / impactiq-outputs / impactiq-logs (always) and impactiq-backups [publishBackups]
 #   7. optionally commit the workbooks to an outputs branch (Azure Repos -> Power BI via Web.Contents + PAT)
@@ -67,6 +68,9 @@ parameters:
   - name: usePwsh
     type: boolean
     default: false
+  - name: timeBudgetMinutes
+    type: number
+    default: 0
 
 steps:
   - checkout: self
@@ -148,6 +152,9 @@ steps:
         $parts.Add('-RunMode ' + (ConvertTo-PsLiteral $env:IMPACTIQ_P_RUNMODE))
         $parts.Add('-Resume Auto')
         if ($env:IMPACTIQ_P_SKIPTOOLUPDATE -eq 'True') { $parts.Add('-SkipToolUpdate') }
+        $budget = 0
+        if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_P_TIMEBUDGETMINUTES)) { $budget = [int]$env:IMPACTIQ_P_TIMEBUDGETMINUTES }
+        if ($budget -gt 0) { $parts.Add('-TimeBudgetMinutes ' + $budget) }
 
         $names = @()
         foreach ($n in (($env:IMPACTIQ_P_WORKSPACENAMES) -split ';')) { if (-not [string]::IsNullOrWhiteSpace($n)) { $names += $n.Trim() } }
@@ -186,6 +193,11 @@ steps:
           Write-Host "##vso[task.complete result=SucceededWithIssues;]ImpactIQ completed with errors (exit 2)"
           exit 0
         }
+        if ($exit -eq 3) {
+          Write-Host "##vso[task.logissue type=warning]ImpactIQ paused (exit 3): the time budget (-TimeBudgetMinutes) was reached; partial workbooks were produced and the next scheduled run resumes this run from its checkpoints."
+          Write-Host "##vso[task.complete result=SucceededWithIssues;]ImpactIQ paused - time budget reached (exit 3)"
+          exit 0
+        }
         Write-Host "##vso[task.logissue type=error]ImpactIQ failed (exit $exit). Check the log in the impactiq-logs artifact; the run will be resumed by the next scheduled run."
         exit $exit
     env:
@@ -196,6 +208,7 @@ steps:
       IMPACTIQ_P_WORKSPACENAMES: ${{ parameters.workspaceNames }}
       IMPACTIQ_P_STAGES: ${{ parameters.stages }}
       IMPACTIQ_P_EXTRAARGS: ${{ parameters.extraArgs }}
+      IMPACTIQ_P_TIMEBUDGETMINUTES: ${{ parameters.timeBudgetMinutes }}
       IMPACTIQ_P_SKIPTOOLUPDATE: ${{ parameters.skipToolUpdate }}
       IMPACTIQ_P_USEPWSH: ${{ parameters.usePwsh }}
       IMPACTIQ_ENVIRONMENT: ${{ parameters.environment }}

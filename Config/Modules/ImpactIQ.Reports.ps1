@@ -1189,7 +1189,7 @@ function Invoke-IQReportBackupStage {
     [CmdletBinding()]
     param()
     $stage = 'ReportBackup'
-    $summary = @{ Total = 0; Done = 0; Skipped = 0; Failed = 0; AlreadyDone = 0; ModelsExtracted = 0 }
+    $summary = @{ Total = 0; Done = 0; Skipped = 0; Failed = 0; AlreadyDone = 0; ModelsExtracted = 0; BudgetStop = $false }
     $runFolder = Get-IQReportRunFolder
     $modelFolder = Get-IQReportModelFolder
     $work = @(Get-IQReportWorkList -RunFolder $runFolder -ModelFolder $modelFolder)
@@ -1218,6 +1218,11 @@ function Invoke-IQReportBackupStage {
                 $summary.AlreadyDone++
                 Write-IQLog -Level Debug -Stage $stage -Item $item -Message 'Already done (checkpoint); skipping'
                 continue
+            }
+            if (Test-IQTimeBudget -Stage $stage -Item $item) {
+                Write-IQLog -Level Warn -Stage $stage -Message ("Time budget reached: {0} of {1} report(s) not exported yet - they are exported on the next start." -f ($work.Count - $index + 1), $work.Count)
+                $summary.BudgetStop = $true
+                break
             }
             if ($w.NoAccess) {
                 Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $item -Status Skipped -Message 'No workspace access (shared report) - cannot be exported' -Data @{ ReportId = $w.ReportId; ReportName = $w.ReportName; WorkspaceId = $w.WorkspaceId; WorkspaceName = $w.WorkspaceName; DatasetId = $w.DatasetId; ReportType = $w.ReportType; FileName = $w.FileName } | Out-Null
@@ -1513,6 +1518,12 @@ function Invoke-IQReportDetailStage {
         return $summary
     }
     Write-IQReportExportSummary -RunFolder $runFolder | Out-Null   # keep ReportExports.txt current even if ReportBackup crashed
+    if (Test-IQTimeBudget -Stage $stage -Item 'Report Detail') {
+        Write-IQLog -Level Warn -Stage $stage -Message 'Time budget reached - the Report Detail csx scripts run on the next start.'
+        $summary.Status = 'Paused'
+        $summary.Message = 'Time budget reached'
+        return $summary
+    }
     $pbixFiles = @(Get-ChildItem -LiteralPath $runFolder -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ieq '.pbix' -or $_.Extension -ieq '.pbit' })
     $summary.PbixCount = $pbixFiles.Count
     Write-IQLog -Level Info -Stage $stage -Message ("Report detail extraction: {0} PBIX/PBIT file(s) in {1}" -f $pbixFiles.Count, $runFolder)
@@ -1543,13 +1554,6 @@ function Invoke-IQReportDetailStage {
         $summary.Status = 'Failed'; $summary.Message = $message
         return $summary
     }
-    try {
-        if ((Select-String -LiteralPath $script2 -Pattern 'Expresssion' -SimpleMatch -Quiet)) {
-            Write-IQLog -Level Warn -Stage $stage -Message "'Report Detail Extract Script.csx' still contains the misspelled JSON path 'Expresssion' (audit X3-B2); some column/measure lineage rows will be missing"
-        }
-    }
-    catch { $null = $null }
-
     $timeout = 20
     try { $timeout = [int](Get-IQReportOption -Name 'ToolTimeoutMinutes' -Default 20) } catch { $timeout = 20 }
     if ($timeout -lt 1) { $timeout = 1 }

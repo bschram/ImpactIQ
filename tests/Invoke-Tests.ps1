@@ -140,7 +140,10 @@ if (-not $SkipPester) {
         Write-Host ('Pester ' + $pesterVersion)
         $paths = @()
         if ($TestName -and $TestName.Count -gt 0) {
-            foreach ($n in $TestName) {
+            # "-File ... -TestName Common,State" arrives as ONE string on Windows PowerShell / pwsh -File: split it here.
+            $names = @()
+            foreach ($n in $TestName) { foreach ($part in ([string]$n -split '[,;]')) { if ($part.Trim()) { $names += $part.Trim() } } }
+            foreach ($n in $names) {
                 $stem = $n -replace '\.Tests\.ps1$', ''
                 $candidate = Join-Path $testsRoot ($stem + '.Tests.ps1')
                 if (Test-Path -LiteralPath $candidate) { $paths += $candidate } else { Write-Host ('  unknown test file: ' + $n) -ForegroundColor Yellow }
