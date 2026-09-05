@@ -1,0 +1,26 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 800,
+              "[TableID]": 2,
+              "[Name]": "Calendar",
+              "[Description]": "Year > Date",
+              "[IsHidden]": false,
+              "[State]": 1,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[StructureModifiedTime]": "2026-08-01T00:00:00",
+              "[RefreshedTime]": null,
+              "[DisplayFolder]": "Hierarchies",
+              "[HideMembers]": 0,
+              "[LineageTag]": "lh-800"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

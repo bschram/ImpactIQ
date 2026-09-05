@@ -1,0 +1,17 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "60000000-0000-4000-8000-000000000001",
+      "displayName": "Premium P1",
+      "sku": "P1",
+      "state": "Active",
+      "region": "US Gov Virginia",
+      "admins": [
+        "admin@contoso.gov",
+        "capadmin@contoso.gov"
+      ],
+      "capacityUserAccessRight": "Admin"
+    }
+  ]
+}

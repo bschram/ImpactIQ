@@ -1213,7 +1213,6 @@ function Get-IQModelDetailViaDax {
         return $m
     }
     $tableNameById = $shape.TableNameById
-    $tableIndex = Get-IQDaxIndex -Rows $data['tables']
     $hierarchyIndex = Get-IQDaxIndex -Rows $data['hierarchies']
     $roleIndex = Get-IQDaxIndex -Rows $data['roles']
     $calcGroupById = @{}

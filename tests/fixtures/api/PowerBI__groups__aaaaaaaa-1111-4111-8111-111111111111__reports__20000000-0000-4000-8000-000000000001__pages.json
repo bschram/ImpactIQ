@@ -1,0 +1,15 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "name": "ReportSection1",
+      "displayName": "Overview",
+      "order": 0
+    },
+    {
+      "name": "ReportSection2",
+      "displayName": "Detail",
+      "order": 1
+    }
+  ]
+}

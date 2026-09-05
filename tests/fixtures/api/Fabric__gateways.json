@@ -1,0 +1,12 @@
+{
+  "value": [
+    {
+      "id": "90000000-0000-4000-8000-000000000001",
+      "displayName": "FIN-GW-01",
+      "type": "OnPremises",
+      "version": "3000.230.5",
+      "numberOfMemberGateways": 2,
+      "loadBalancingSetting": "DistributeEvenly"
+    }
+  ]
+}

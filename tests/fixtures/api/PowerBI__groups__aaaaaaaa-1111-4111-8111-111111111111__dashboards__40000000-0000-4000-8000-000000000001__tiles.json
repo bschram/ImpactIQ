@@ -1,0 +1,15 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "f1000000-0000-4000-8000-000000000001",
+      "title": "Revenue YTD",
+      "subTitle": "vs plan",
+      "rowSpan": 2,
+      "colSpan": 3,
+      "embedUrl": "https://app.powerbi.com/embed?dashboardId=x&tileId=y",
+      "reportId": "20000000-0000-4000-8000-000000000001",
+      "datasetId": "10000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

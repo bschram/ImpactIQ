@@ -1,0 +1,22 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 500,
+              "[RoleID]": 400,
+              "[TableID]": 1,
+              "[FilterExpression]": "[Region] = \"West\"",
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[State]": 1,
+              "[ErrorMessage]": null,
+              "[MetadataPermission]": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

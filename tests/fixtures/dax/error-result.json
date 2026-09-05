@@ -1,0 +1,16 @@
+{
+  "results": [
+    {
+      "error": {
+        "code": "DaxQueryFailure",
+        "message": "Query (1, 10) The syntax for 'INFO' is incorrect.",
+        "details": [
+          {
+            "code": "ErrorCode",
+            "message": "3239575574"
+          }
+        ]
+      }
+    }
+  ]
+}

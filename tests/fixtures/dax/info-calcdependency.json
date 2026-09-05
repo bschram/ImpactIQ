@@ -1,0 +1,132 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "MEASURE",
+              "[TABLE]": "Sales",
+              "[OBJECT]": "Total Sales",
+              "[EXPRESSION]": "SUM(Sales[Amount])",
+              "[REFERENCED_OBJECT_TYPE]": "COLUMN",
+              "[REFERENCED_TABLE]": "Sales",
+              "[REFERENCED_OBJECT]": "Amount",
+              "[REFERENCED_EXPRESSION]": null,
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "MEASURE",
+              "[TABLE]": "Sales",
+              "[OBJECT]": "Total Cost",
+              "[EXPRESSION]": "SUM('Sales'[Cost])",
+              "[REFERENCED_OBJECT_TYPE]": "COLUMN",
+              "[REFERENCED_TABLE]": "Sales",
+              "[REFERENCED_OBJECT]": "Cost",
+              "[REFERENCED_EXPRESSION]": null,
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "MEASURE",
+              "[TABLE]": "Sales",
+              "[OBJECT]": "Margin %",
+              "[EXPRESSION]": "DIVIDE([Total Sales] - [Total Cost], [Total Sales])",
+              "[REFERENCED_OBJECT_TYPE]": "MEASURE",
+              "[REFERENCED_TABLE]": "Sales",
+              "[REFERENCED_OBJECT]": "Total Sales",
+              "[REFERENCED_EXPRESSION]": "SUM(Sales[Amount])",
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "MEASURE",
+              "[TABLE]": "Sales",
+              "[OBJECT]": "Margin %",
+              "[EXPRESSION]": "DIVIDE([Total Sales] - [Total Cost], [Total Sales])",
+              "[REFERENCED_OBJECT_TYPE]": "MEASURE",
+              "[REFERENCED_TABLE]": "Sales",
+              "[REFERENCED_OBJECT]": "Total Cost",
+              "[REFERENCED_EXPRESSION]": "SUM('Sales'[Cost])",
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "CALC_COLUMN",
+              "[TABLE]": "Sales",
+              "[OBJECT]": "Margin",
+              "[EXPRESSION]": "Sales[Amount] - Sales[Cost]",
+              "[REFERENCED_OBJECT_TYPE]": "COLUMN",
+              "[REFERENCED_TABLE]": "Sales",
+              "[REFERENCED_OBJECT]": "Amount",
+              "[REFERENCED_EXPRESSION]": null,
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "CALC_COLUMN",
+              "[TABLE]": "Sales",
+              "[OBJECT]": "Margin",
+              "[EXPRESSION]": "Sales[Amount] - Sales[Cost]",
+              "[REFERENCED_OBJECT_TYPE]": "COLUMN",
+              "[REFERENCED_TABLE]": "Sales",
+              "[REFERENCED_OBJECT]": "Cost",
+              "[REFERENCED_EXPRESSION]": null,
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "CALCULATION_ITEM",
+              "[TABLE]": "Time Intelligence",
+              "[OBJECT]": "YTD",
+              "[EXPRESSION]": "CALCULATE(SELECTEDMEASURE(), DATESYTD('Date'[Date]))",
+              "[REFERENCED_OBJECT_TYPE]": "COLUMN",
+              "[REFERENCED_TABLE]": "Date",
+              "[REFERENCED_OBJECT]": "Date",
+              "[REFERENCED_EXPRESSION]": null,
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "CALCULATION_ITEM",
+              "[TABLE]": "Time Intelligence",
+              "[OBJECT]": "YTD",
+              "[EXPRESSION]": "CALCULATE(SELECTEDMEASURE(), DATESYTD('Date'[Date]))",
+              "[REFERENCED_OBJECT_TYPE]": "TABLE",
+              "[REFERENCED_TABLE]": "Date",
+              "[REFERENCED_OBJECT]": "Date",
+              "[REFERENCED_EXPRESSION]": null,
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "ROWS_ALLOWED",
+              "[TABLE]": "Sales",
+              "[OBJECT]": "Region Manager",
+              "[EXPRESSION]": "[Region] = \"West\"",
+              "[REFERENCED_OBJECT_TYPE]": "COLUMN",
+              "[REFERENCED_TABLE]": "Sales",
+              "[REFERENCED_OBJECT]": "Region",
+              "[REFERENCED_EXPRESSION]": null,
+              "[QUERY]": null
+            },
+            {
+              "[DATABASE_NAME]": "Finance Model",
+              "[OBJECT_TYPE]": "ACTIVE_RELATIONSHIP",
+              "[TABLE]": "Sales",
+              "[OBJECT]": "DateKey",
+              "[EXPRESSION]": null,
+              "[REFERENCED_OBJECT_TYPE]": "COLUMN",
+              "[REFERENCED_TABLE]": "Date",
+              "[REFERENCED_OBJECT]": "Date",
+              "[REFERENCED_EXPRESSION]": null,
+              "[QUERY]": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

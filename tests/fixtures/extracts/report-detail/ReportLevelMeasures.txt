@@ -1,0 +1,2 @@
+ReportName	ReportID	ModelID	TableName	ObjectName	ObjectType	ReportDate	HiddenFlag	FormatString	Expression	DataType	DataCategory
+Finance Report	20000000-0000-4000-8000-000000000001		Sales	Local Measure	Measure	2026-09-04	false	#,0	=SUM('Sales'[Amount])		

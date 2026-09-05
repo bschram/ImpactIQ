@@ -1,0 +1,24 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "10000000-0000-4000-8000-000000000003",
+      "name": "Sales Model",
+      "webUrl": "https://app.powerbi.com/groups/bbbbbbbb-2222-4222-8222-222222222222/datasets/10000000-0000-4000-8000-000000000003",
+      "addRowsAPIEnabled": false,
+      "configuredBy": "analyst@contoso.gov",
+      "isRefreshable": true,
+      "isEffectiveIdentityRequired": false,
+      "isEffectiveIdentityRolesRequired": false,
+      "isOnPremGatewayRequired": false,
+      "targetStorageMode": "Abf",
+      "createdDate": "2025-01-15T10:22:33.123Z",
+      "upstreamDatasets": [],
+      "users": [],
+      "queryScaleOutSettings": {
+        "autoSyncReadOnlyReplicas": true,
+        "maxReadOnlyReplicas": 0
+      }
+    }
+  ]
+}

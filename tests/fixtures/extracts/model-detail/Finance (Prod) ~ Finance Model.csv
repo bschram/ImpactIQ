@@ -1,0 +1,6 @@
+"Type","Table","Name","FormatString","DisplayFolder","Description","IsHidden","TableStorageMode","Expression","ModelAsOfDate","ModelName","ModelID","RelationshipFromTable","RelationshipFromColumn","RelationshipToTable","RelationshipToColumn","RelationshipStatus","RelationshipFromCardinality","RelationshipToCardinality","RelationshipCrossFilteringBehavior"
+"Table","Sales","Sales","","","","False","Import","","2026-09-04","Finance (Prod) ~ Finance Model","10000000-0000-4000-8000-000000000001","","","","","","","",""
+"Column","Sales","Amount","#,0.00","Money","Sales ""amount"" in USD","False","","","2026-09-04","Finance (Prod) ~ Finance Model","10000000-0000-4000-8000-000000000001","","","","","","","",""
+"CalculatedColumn","Sales","Margin","#,0.00","","","False","","Sales[Amount] - Sales[Cost]","2026-09-04","Finance (Prod) ~ Finance Model","10000000-0000-4000-8000-000000000001","","","","","","","",""
+"Measure","Sales","Total Sales","#,0","KPIs","Über total","False","","SUM(Sales[Amount])","2026-09-04","Finance (Prod) ~ Finance Model","10000000-0000-4000-8000-000000000001","","","","","","","",""
+"Relationship","Sales","DateKey","","","","","","e1a2b3c4-0000-4000-8000-000000000200","2026-09-04","Finance (Prod) ~ Finance Model","10000000-0000-4000-8000-000000000001","Sales","DateKey","Date","Date","True","Many","One","OneDirection"

@@ -1,0 +1,13 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "requestId": "c1000000-0000-4000-8000-000000000003",
+      "id": 1003,
+      "refreshType": "OnDemand",
+      "startTime": "2026-09-01T09:00:00.000Z",
+      "endTime": "2026-09-01T09:02:00.000Z",
+      "status": "Completed"
+    }
+  ]
+}

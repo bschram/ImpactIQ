@@ -1,0 +1,18 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "20000000-0000-4000-8000-000000000009",
+      "reportType": "PowerBIReport",
+      "name": "Other Report",
+      "webUrl": "https://app.powerbi.com/groups/dddddddd-4444-4444-8444-444444444444/reports/20000000-0000-4000-8000-000000000009",
+      "embedUrl": "https://app.powerbi.com/reportEmbed?reportId=20000000-0000-4000-8000-000000000009&groupId=dddddddd-4444-4444-8444-444444444444",
+      "isFromPbix": true,
+      "isOwnedByMe": true,
+      "datasetId": "10000000-0000-4000-8000-000000000001",
+      "datasetWorkspaceId": "aaaaaaaa-1111-4111-8111-111111111111",
+      "users": [],
+      "subscriptions": []
+    }
+  ]
+}

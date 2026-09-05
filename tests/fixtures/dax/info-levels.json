@@ -1,0 +1,32 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 900,
+              "[HierarchyID]": 800,
+              "[Ordinal]": 0,
+              "[Name]": "Year",
+              "[Description]": null,
+              "[ColumnID]": 21,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[LineageTag]": "ll-900"
+            },
+            {
+              "[ID]": 901,
+              "[HierarchyID]": 800,
+              "[Ordinal]": 1,
+              "[Name]": "Date",
+              "[Description]": "Day",
+              "[ColumnID]": 20,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[LineageTag]": "ll-901"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

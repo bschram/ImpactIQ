@@ -1,0 +1,20 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "emailAddress": "admin@contoso.gov",
+      "groupUserAccessRight": "Admin",
+      "displayName": "Workspace Admin",
+      "identifier": "admin@contoso.gov",
+      "graphId": "e1000000-0000-4000-8000-000000000002",
+      "principalType": "User"
+    },
+    {
+      "groupUserAccessRight": "Viewer",
+      "displayName": "Finance Readers",
+      "identifier": "e1000000-0000-4000-8000-000000000003",
+      "graphId": "e1000000-0000-4000-8000-000000000003",
+      "principalType": "Group"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "__status": 403,
+  "note": "not an admin of this workspace -> $null -> empty WorkspaceUsers"
+}

@@ -1,0 +1,87 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 300,
+              "[TableID]": 1,
+              "[Name]": "Sales",
+              "[Description]": null,
+              "[DataSourceID]": null,
+              "[QueryDefinition]": "let\n    Source = Sql.Database(\"sql-finance.contoso.gov\", \"Ledger\"),\n    dbo_Sales = Source{[Schema=\"dbo\",Item=\"Sales\"]}[Data]\nin\n    dbo_Sales",
+              "[State]": 1,
+              "[Type]": 4,
+              "[PartitionStorageID]": 1,
+              "[Mode]": 0,
+              "[DataView]": 0,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[RefreshedTime]": "2026-09-03T01:05:00",
+              "[SystemFlags]": 0,
+              "[ErrorMessage]": null,
+              "[RetainDataTillForceCalculate]": false,
+              "[RangeStart]": null,
+              "[RangeEnd]": null,
+              "[RangeGranularity]": null,
+              "[RefreshBookmark]": null,
+              "[QueryGroupID]": null,
+              "[ExpressionSourceID]": null,
+              "[MAttributes]": null
+            },
+            {
+              "[ID]": 301,
+              "[TableID]": 2,
+              "[Name]": "Date",
+              "[Description]": null,
+              "[DataSourceID]": null,
+              "[QueryDefinition]": "CALENDARAUTO()",
+              "[State]": 1,
+              "[Type]": 2,
+              "[PartitionStorageID]": 2,
+              "[Mode]": 0,
+              "[DataView]": 0,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[RefreshedTime]": "2026-09-03T01:05:00",
+              "[SystemFlags]": 0,
+              "[ErrorMessage]": null,
+              "[RetainDataTillForceCalculate]": false,
+              "[RangeStart]": null,
+              "[RangeEnd]": null,
+              "[RangeGranularity]": null,
+              "[RefreshBookmark]": null,
+              "[QueryGroupID]": null,
+              "[ExpressionSourceID]": null,
+              "[MAttributes]": null
+            },
+            {
+              "[ID]": 302,
+              "[TableID]": 3,
+              "[Name]": "Time Intelligence",
+              "[Description]": null,
+              "[DataSourceID]": null,
+              "[QueryDefinition]": null,
+              "[State]": 1,
+              "[Type]": 7,
+              "[PartitionStorageID]": 3,
+              "[Mode]": 0,
+              "[DataView]": 0,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[RefreshedTime]": null,
+              "[SystemFlags]": 0,
+              "[ErrorMessage]": null,
+              "[RetainDataTillForceCalculate]": false,
+              "[RangeStart]": null,
+              "[RangeEnd]": null,
+              "[RangeGranularity]": null,
+              "[RefreshBookmark]": null,
+              "[QueryGroupID]": null,
+              "[ExpressionSourceID]": null,
+              "[MAttributes]": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

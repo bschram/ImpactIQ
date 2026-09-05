@@ -1,0 +1,12 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "t1000000-0000-4000-8000-000000000001",
+      "refreshType": "Scheduled",
+      "startTime": "2026-09-03T02:00:00.000Z",
+      "endTime": "2026-09-03T02:03:00.000Z",
+      "status": "Success"
+    }
+  ]
+}

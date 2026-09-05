@@ -909,7 +909,7 @@ function Get-IQModelDetailPlan {
     switch ($Method) {
         'TabularEditor' { if ($teEligible) { $steps = @('TabularEditor') } }
         'Dax' { $steps = @('Dax') }
-        'Bim' { if ($hasBim) { $steps = @('Bim') } else { $why += 'no .bim available for this dataset' } }
+        'Bim' { if ($hasBim) { $steps = @('Bim') } elseif ($why -notcontains 'no .bim available for this dataset') { $why += 'no .bim available for this dataset' } }
         default {
             if ($teEligible) { $steps += 'TabularEditor' }
             if ($hasBim) { $steps += 'Bim' }
@@ -1006,6 +1006,11 @@ function Invoke-IQModelDetailStage {
             $noteByKey[$key].Add('Tabular Editor failed: ' + $o.Message)
             if ($plans[$key].Count -gt 0) {
                 Write-IQLog -Level Warn -Stage $stage -Item $w.Item -Message ('Tabular Editor extraction failed (' + $o.Message + '); falling back to ' + $plans[$key][0])
+            }
+            else {
+                Set-IQItemDone -Stage $stage -ItemKey $key -Item $w.Item -Status Failed -Method 'TabularEditor' -Message ($noteByKey[$key] -join '; ') -Data @{ BaseName = $w.BaseName; BimPath = $c.BimPath; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId } | Out-Null
+                $summary.Failed++
+                $plans.Remove($key)
             }
         }
     }

@@ -1,0 +1,24 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "10000000-0000-4000-8000-000000000004",
+      "name": "HR Model",
+      "webUrl": "https://app.powerbi.com/groups/cccccccc-3333-4333-8333-333333333333/datasets/10000000-0000-4000-8000-000000000004",
+      "addRowsAPIEnabled": false,
+      "configuredBy": "analyst@contoso.gov",
+      "isRefreshable": true,
+      "isEffectiveIdentityRequired": false,
+      "isEffectiveIdentityRolesRequired": false,
+      "isOnPremGatewayRequired": false,
+      "targetStorageMode": "Abf",
+      "createdDate": "2025-01-15T10:22:33.123Z",
+      "upstreamDatasets": [],
+      "users": [],
+      "queryScaleOutSettings": {
+        "autoSyncReadOnlyReplicas": true,
+        "maxReadOnlyReplicas": 0
+      }
+    }
+  ]
+}

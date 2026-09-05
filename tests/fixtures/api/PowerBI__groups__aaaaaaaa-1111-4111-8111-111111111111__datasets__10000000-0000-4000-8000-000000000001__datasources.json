@@ -1,0 +1,14 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "datasourceType": "Sql",
+      "connectionDetails": {
+        "server": "sql-finance.contoso.gov",
+        "database": "Ledger"
+      },
+      "datasourceId": "a1b2c3d4-0000-4000-8000-0000000000aa",
+      "gatewayId": "90000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

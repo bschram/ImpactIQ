@@ -1,0 +1,29 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 200,
+              "[Name]": "e1a2b3c4-0000-4000-8000-000000000200",
+              "[Relationship]": "'Sales'[DateKey] *-1 'Date'[Date]",
+              "[Model]": "10000000-0000-4000-8000-000000000001",
+              "[IsActive]": true,
+              "[CrossFilteringBehavior]": "OneDirection",
+              "[RelyOnReferentialIntegrity]": false,
+              "[FromTable]": "Sales",
+              "[FromColumn]": "DateKey",
+              "[FromCardinality]": "Many",
+              "[ToTable]": "Date",
+              "[ToColumn]": "Date",
+              "[ToCardinality]": "One",
+              "[State]": "Ready",
+              "[SecurityFilteringBehavior]": "OneDirection"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

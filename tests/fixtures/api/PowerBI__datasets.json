@@ -1,0 +1,24 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "70000000-0000-4000-8000-000000000001",
+      "name": "My Model",
+      "webUrl": "https://app.powerbi.com/groups/me/datasets/70000000-0000-4000-8000-000000000001",
+      "addRowsAPIEnabled": false,
+      "configuredBy": "analyst@contoso.gov",
+      "isRefreshable": true,
+      "isEffectiveIdentityRequired": false,
+      "isEffectiveIdentityRolesRequired": false,
+      "isOnPremGatewayRequired": false,
+      "targetStorageMode": "Abf",
+      "createdDate": "2025-01-15T10:22:33.123Z",
+      "upstreamDatasets": [],
+      "users": [],
+      "queryScaleOutSettings": {
+        "autoSyncReadOnlyReplicas": true,
+        "maxReadOnlyReplicas": 0
+      }
+    }
+  ]
+}

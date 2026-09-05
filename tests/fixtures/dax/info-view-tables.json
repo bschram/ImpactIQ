@@ -1,0 +1,57 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 1,
+              "[Name]": "Sales",
+              "[Model]": "10000000-0000-4000-8000-000000000001",
+              "[DataCategory]": null,
+              "[Description]": "Fact table",
+              "[IsHidden]": false,
+              "[StorageMode]": "Import",
+              "[TableStorage]": "Sales",
+              "[Expression]": null,
+              "[ShowAsVariationOnly]": false,
+              "[IsPrivate]": false,
+              "[CalculationGroupPrecedence]": null,
+              "[LineageTag]": "lt-1"
+            },
+            {
+              "[ID]": 2,
+              "[Name]": "Date",
+              "[Model]": "10000000-0000-4000-8000-000000000001",
+              "[DataCategory]": "Time",
+              "[Description]": null,
+              "[IsHidden]": false,
+              "[StorageMode]": "Import",
+              "[TableStorage]": "Date",
+              "[Expression]": null,
+              "[ShowAsVariationOnly]": false,
+              "[IsPrivate]": false,
+              "[CalculationGroupPrecedence]": null,
+              "[LineageTag]": "lt-2"
+            },
+            {
+              "[ID]": 3,
+              "[Name]": "Time Intelligence",
+              "[Model]": "10000000-0000-4000-8000-000000000001",
+              "[DataCategory]": null,
+              "[Description]": "Calc group",
+              "[IsHidden]": false,
+              "[StorageMode]": "Import",
+              "[TableStorage]": "Time Intelligence",
+              "[Expression]": null,
+              "[ShowAsVariationOnly]": false,
+              "[IsPrivate]": false,
+              "[CalculationGroupPrecedence]": 10,
+              "[LineageTag]": "lt-3"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "formatVersion": "202502",
+  "computeEngineSettings": {},
+  "name": "Sales Gen2",
+  "queriesMetadata": {
+    "Sales": {
+      "queryId": "a",
+      "queryName": "Sales",
+      "loadEnabled": true,
+      "isHidden": false
+    },
+    "Customers 2024": {
+      "queryId": "b",
+      "queryName": "Customers 2024",
+      "loadEnabled": true,
+      "isHidden": true
+    },
+    "Sales_DataDestination": {
+      "queryId": "c",
+      "queryName": "Sales_DataDestination",
+      "isHidden": true
+    }
+  },
+  "connections": [
+    {
+      "path": "sql-finance.contoso.gov;Ledger",
+      "kind": "SQL"
+    }
+  ]
+}

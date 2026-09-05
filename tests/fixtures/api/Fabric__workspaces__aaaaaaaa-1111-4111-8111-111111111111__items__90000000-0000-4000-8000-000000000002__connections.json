@@ -1,0 +1,14 @@
+{
+  "value": [
+    {
+      "id": "90000000-0000-4000-8000-000000000003",
+      "displayName": "Finance SQL",
+      "gatewayId": "90000000-0000-4000-8000-000000000001",
+      "connectivityType": "OnPremisesGateway",
+      "connectionDetails": {
+        "type": "SQL",
+        "path": "sql-finance.contoso.gov;Ledger"
+      }
+    }
+  ]
+}

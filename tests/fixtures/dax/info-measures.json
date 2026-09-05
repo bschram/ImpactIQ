@@ -1,0 +1,75 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 100,
+              "[TableID]": 1,
+              "[Name]": "Total Sales",
+              "[Description]": "Sum of amount",
+              "[DataType]": 10,
+              "[Expression]": "SUM(Sales[Amount])",
+              "[FormatString]": "#,0",
+              "[IsHidden]": false,
+              "[State]": 1,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[StructureModifiedTime]": "2026-08-01T00:00:00",
+              "[KPIID]": null,
+              "[IsSimpleMeasure]": false,
+              "[ErrorMessage]": null,
+              "[DisplayFolder]": "KPIs",
+              "[DetailRowsDefinitionID]": null,
+              "[DataCategory]": null,
+              "[LineageTag]": "lm-100",
+              "[SourceLineageTag]": null
+            },
+            {
+              "[ID]": 101,
+              "[TableID]": 1,
+              "[Name]": "Total Cost",
+              "[Description]": null,
+              "[DataType]": 10,
+              "[Expression]": "SUM('Sales'[Cost])",
+              "[FormatString]": "#,0",
+              "[IsHidden]": true,
+              "[State]": 1,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[StructureModifiedTime]": "2026-08-01T00:00:00",
+              "[KPIID]": null,
+              "[IsSimpleMeasure]": false,
+              "[ErrorMessage]": null,
+              "[DisplayFolder]": null,
+              "[DetailRowsDefinitionID]": null,
+              "[DataCategory]": null,
+              "[LineageTag]": "lm-101",
+              "[SourceLineageTag]": null
+            },
+            {
+              "[ID]": 102,
+              "[TableID]": 1,
+              "[Name]": "Margin %",
+              "[Description]": "Margin over sales",
+              "[DataType]": 8,
+              "[Expression]": "DIVIDE([Total Sales] - [Total Cost], [Total Sales])",
+              "[FormatString]": "0.0%",
+              "[IsHidden]": false,
+              "[State]": 1,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[StructureModifiedTime]": "2026-08-01T00:00:00",
+              "[KPIID]": null,
+              "[IsSimpleMeasure]": false,
+              "[ErrorMessage]": null,
+              "[DisplayFolder]": "KPIs",
+              "[DetailRowsDefinitionID]": null,
+              "[DataCategory]": null,
+              "[LineageTag]": "lm-102",
+              "[SourceLineageTag]": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 100,
+              "[Name]": "Total Sales",
+              "[Table]": "Sales",
+              "[Description]": "Sum of amount",
+              "[DataType]": "Decimal",
+              "[Expression]": "SUM(Sales[Amount])",
+              "[FormatString]": "#,0",
+              "[IsHidden]": false,
+              "[State]": "Ready",
+              "[KPIID]": null,
+              "[IsSimpleMeasure]": false,
+              "[DisplayFolder]": "KPIs",
+              "[DetailRowsDefinition]": null,
+              "[DataCategory]": null,
+              "[FormatStringDefinition]": null,
+              "[LineageTag]": "lm-100"
+            },
+            {
+              "[ID]": 101,
+              "[Name]": "Total Cost",
+              "[Table]": "Sales",
+              "[Description]": null,
+              "[DataType]": "Decimal",
+              "[Expression]": "SUM('Sales'[Cost])",
+              "[FormatString]": "#,0",
+              "[IsHidden]": true,
+              "[State]": "Ready",
+              "[KPIID]": null,
+              "[IsSimpleMeasure]": false,
+              "[DisplayFolder]": null,
+              "[DetailRowsDefinition]": null,
+              "[DataCategory]": null,
+              "[FormatStringDefinition]": null,
+              "[LineageTag]": "lm-101"
+            },
+            {
+              "[ID]": 102,
+              "[Name]": "Margin %",
+              "[Table]": "Sales",
+              "[Description]": "Margin over sales",
+              "[DataType]": "Double",
+              "[Expression]": "DIVIDE([Total Sales] - [Total Cost], [Total Sales])",
+              "[FormatString]": "0.0%",
+              "[IsHidden]": false,
+              "[State]": "Ready",
+              "[KPIID]": null,
+              "[IsSimpleMeasure]": false,
+              "[DisplayFolder]": "KPIs",
+              "[DetailRowsDefinition]": null,
+              "[DataCategory]": null,
+              "[FormatStringDefinition]": null,
+              "[LineageTag]": "lm-102"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
