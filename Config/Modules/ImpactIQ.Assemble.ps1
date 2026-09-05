@@ -17,7 +17,12 @@
     Rules applied (audit findings C6-13/14/15/16, C8-04/05/06/09/11/15, C9-05/11):
       - every sheet listed in Config\SheetContract.json exists even when empty; missing contract columns are added as
         empty cells (Ensure-IQSheetColumns); an empty collection becomes a header row plus ONE row of empty strings
-        (the monolith's Dataflow "dummy row" behaviour, generalised - the PBIT filters nulls/empties);
+        (the monolith's Dataflow "dummy row" behaviour, generalised - the PBIT filters nulls/empties). NOTE: EPPlus
+        does not store empty-string cells, so on disk such a sheet is header-only (row 2 is an empty <row> element);
+        Import-Excel returns zero rows for it - read the header with Import-Excel -NoHeader or Open-ExcelPackage;
+      - real DateTime values (PowerShell 7 parses ISO date-times in JSON into DateTime, 5.1 keeps ISO text) are
+        written as Excel dates (built-in date-time format, so Import-Excel/EPPlus read them back as [datetime]);
+        -NoNumberConversion * is always passed;
       - the column set of a sheet is the UNION of every row's properties (first-appearance order), so heterogeneous
         rows no longer lose properties;
       - values go through a typed System.Data.DataTable and Export-Excel -InputObject (EPPlus LoadFromDataTable):
@@ -124,6 +129,9 @@ function Get-IQAsmMember {
     <#
     .SYNOPSIS
         Reads a named member from a dictionary or an object property; $null when absent (private).
+    .DESCRIPTION
+        Standard PowerShell output semantics apply: an array member is emitted element by element, so wrap the call
+        in @( ) when a list is expected. Use Test-IQAsmArrayMember when the question is "is this member an array".
     #>
     [CmdletBinding()]
     param(
@@ -138,6 +146,41 @@ function Get-IQAsmMember {
     $prop = $Object.PSObject.Properties[$Name]
     if ($null -ne $prop) { return $prop.Value }
     return $null
+}
+
+function Test-IQAsmHasMember {
+    <#
+    .SYNOPSIS
+        $true when the dictionary key / object property exists (even with a $null or empty value) (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if ($null -eq $Object) { return $false }
+    if ($Object -is [System.Collections.IDictionary]) { return [bool]$Object.Contains($Name) }
+    if ($Object -is [string] -or $Object -is [System.ValueType]) { return $false }
+    return ($null -ne $Object.PSObject.Properties[$Name])
+}
+
+function Test-IQAsmArrayMember {
+    <#
+    .SYNOPSIS
+        $true when the named member holds an array/list (also when it is empty); avoids the pipeline unrolling of Get-IQAsmMember (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if (-not (Test-IQAsmHasMember -Object $Object -Name $Name)) { return $false }
+    $value = $null
+    if ($Object -is [System.Collections.IDictionary]) { $value = $Object[$Name] }
+    else { $value = $Object.PSObject.Properties[$Name].Value }
+    if ($null -eq $value) { return $false }
+    if ($value -is [string]) { return $false }
+    return (($value -is [System.Array]) -or ($value -is [System.Collections.IList]))
 }
 
 function Get-IQAsmMemberName {
@@ -351,24 +394,41 @@ function Get-IQContractColumn {
 function Ensure-IQSheetColumns {
     <#
     .SYNOPSIS
-        Adds every column of Config\SheetContract.json that a sheet table lacks (as empty text cells); returns the added names.
+        Adds every column of Config\SheetContract.json that a sheet lacks (as empty text cells).
     .DESCRIPTION
-        Works on the System.Data.DataTable built by ConvertTo-IQSheetTable. Existing columns keep their order; missing
-        contract columns are appended in contract order. With -Contract omitted the contract is loaded from
-        Config\SheetContract.json. The name "Ensure-IQSheetColumns" is fixed by the brief (section 6.4/9).
+        -Table (the DataTable built by ConvertTo-IQSheetTable): columns are appended in contract order, existing
+        columns keep their order; returns the names that were added.
+        -Rows (plain row objects / dictionaries): returns new [PSCustomObject] rows that carry every contract column
+        (missing ones as ''); wrap in @( ). An empty -Rows input yields no rows (the caller decides about placeholders).
+        With -Contract omitted the contract is loaded from Config\SheetContract.json. The name "Ensure-IQSheetColumns"
+        is fixed by the brief (section 6.4/9).
     #>
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Table')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '', Justification = 'Function name mandated by the implementation brief.')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '', Justification = 'Function name mandated by the implementation brief.')]
     param(
-        [Parameter(Mandatory = $true)][System.Data.DataTable]$Table,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Table')][System.Data.DataTable]$Table,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Rows')][AllowNull()][AllowEmptyCollection()][object[]]$Rows,
         [Parameter(Mandatory = $true)][string]$Workbook,
         [Parameter(Mandatory = $true)][string]$SheetName,
         [Parameter(Mandatory = $false)][AllowNull()]$Contract
     )
     if ($null -eq $Contract) { $Contract = Get-IQSheetContract }
+    $contractColumns = @(Get-IQContractColumn -Workbook $Workbook -SheetName $SheetName -Contract $Contract)
+
+    if ($PSCmdlet.ParameterSetName -eq 'Rows') {
+        $out = New-Object System.Collections.Generic.List[object]
+        foreach ($row in @($Rows)) {
+            if ($null -eq $row) { continue }
+            $map = ConvertTo-IQAsmRowMap -Row $row
+            foreach ($col in $contractColumns) { if (-not $map.Contains($col)) { $map[$col] = '' } }
+            $out.Add([PSCustomObject]$map)
+        }
+        return $out.ToArray()
+    }
+
     $added = @()
-    foreach ($col in @(Get-IQContractColumn -Workbook $Workbook -SheetName $SheetName -Contract $Contract)) {
+    foreach ($col in $contractColumns) {
         if ($Table.Columns.Contains($col)) { continue }
         $newCol = New-Object System.Data.DataColumn($col, [string])
         $newCol.DefaultValue = ''
@@ -565,7 +625,7 @@ function Write-IQWorkbook {
                 continue
             }
             if ($table.Columns.Count -eq 0) {
-                Write-IQLog -Level Debug -Stage 'Assemble' -Item ([string]$name) -Message 'Sheet skipped: no columns known.'
+                Write-IQLog -Level Info -Stage 'Assemble' -Item ([string]$name) -Message 'Sheet not written: no rows and no column list (nothing to put in a header).'
                 continue
             }
             $sheetName = Get-IQSafeSheetName -Name ([string]$name)
@@ -582,10 +642,15 @@ function Write-IQWorkbook {
                 Write-IQLog -Level Debug -Stage 'Assemble' -Item ([string]$name) -Message ("Worksheet name written as '{0}' (Excel naming rules)." -f $sheetName)
             }
 
-            $params = @{ InputObject = $table; WorksheetName = $sheetName; PassThru = $true }
+            # -NoNumberConversion '*' (audit C8-15 / X1-22): the DataTable path already writes strings verbatim, the
+            # switch keeps that guarantee if the input path ever changes (piped objects).
+            $params = @{ InputObject = $table; WorksheetName = $sheetName; PassThru = $true; NoNumberConversion = @('*') }
             if ($null -eq $pkg) { $params['Path'] = $tmp } else { $params['ExcelPackage'] = $pkg }
             if ($useAutoSize) { $params['AutoSize'] = $true }
             if ($AutoNameRange) { $params['AutoNameRange'] = $true }
+            # DateTime-typed columns are written as real Excel dates with ImportExcel's built-in date-time number format
+            # (NumFmtId 22); a custom format string must NOT be used here - EPPlus/Import-Excel only read a numeric cell
+            # back as [datetime] when its number format is a built-in date format.
             $pkg = Export-Excel @params
             $finalNames += $sheetName
             $totalRows += $table.Rows.Count
@@ -895,19 +960,33 @@ function Get-IQAssembleInventoryErrorRow {
 function Get-IQExtraSheetMap {
     <#
     .SYNOPSIS
-        Ordered dictionary sheetName -> rows for every inventory\extras-*.json written by the Extras stage (sheet name = collector name).
+        Sheets from every inventory\extras-*.json written by the Extras stage (sheet name = collector name): @{ Sheets = <ordered name -> rows>; Columns = @{ name -> string[] } }.
     .DESCRIPTION
-        Accepted file shapes: a JSON array of rows (sheet named from the file, canonical casing restored for the known
-        collectors); an object with Rows/Items/Value and an optional SheetName/Sheet/Collector/Name; or an object whose
-        properties are arrays (one sheet per property, property name = sheet name).
+        Accepted file shapes:
+          - the Extras module's sheet object { SheetName; Collector; Columns[]; Rows[] } (Rows may be empty - the
+            Columns list then still yields a header row);
+          - a bare JSON array of rows (sheet named from the file name, canonical casing restored for the known
+            collectors);
+          - an object whose properties are arrays (one sheet per property, property name = sheet name);
+          - anything else becomes a one-row sheet.
+        Rows of two files that resolve to the same sheet name are concatenated.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$InventoryFolder)
     $map = [ordered]@{}
+    $columns = @{}
+    $result = @{ Sheets = $map; Columns = $columns }
     if ([string]::IsNullOrWhiteSpace($InventoryFolder)) { $InventoryFolder = Get-IQAsmRunPath -SubFolder 'Inventory' }
-    if ([string]::IsNullOrWhiteSpace($InventoryFolder) -or -not (Test-Path -LiteralPath $InventoryFolder)) { return $map }
+    if ([string]::IsNullOrWhiteSpace($InventoryFolder) -or -not (Test-Path -LiteralPath $InventoryFolder)) { return $result }
     $canonical = @{}
     foreach ($n in $script:IQExtrasSheetNames) { $canonical[$n.ToLowerInvariant()] = $n }
+
+    $addRows = {
+        param([string]$sheetName, [object[]]$rows, [string[]]$cols)
+        if ($map.Contains($sheetName)) { $map[$sheetName] = @($map[$sheetName]) + @($rows) }
+        else { $map[$sheetName] = @($rows) }
+        if ($null -ne $cols -and $cols.Count -gt 0 -and -not $columns.ContainsKey($sheetName)) { $columns[$sheetName] = @($cols) }
+    }
 
     foreach ($f in @(Get-ChildItem -LiteralPath $InventoryFolder -Filter 'extras-*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
         $stem = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
@@ -916,35 +995,54 @@ function Get-IQExtraSheetMap {
         if ($canonical.ContainsKey($rawName.ToLowerInvariant())) { $defaultName = $canonical[$rawName.ToLowerInvariant()] }
         if ([string]::IsNullOrWhiteSpace($defaultName)) { $defaultName = $stem }
         try {
-            $obj = ConvertFrom-IQJsonFile -Path $f.FullName
-            if ($null -eq $obj) { $map[$defaultName] = @(); continue }
-            if ($obj -is [System.Array]) { $map[$defaultName] = @($obj); continue }
-            if ($obj -is [string] -or $obj -is [System.ValueType]) { $map[$defaultName] = @([PSCustomObject]@{ Value = $obj }); continue }
-
-            $rowsMember = $null
-            foreach ($candidate in @('Rows', 'rows', 'Items', 'items', 'Value', 'value')) {
-                $v = Get-IQAsmMember -Object $obj -Name $candidate
-                if ($null -ne $v) { $rowsMember = $v; break }
+            # A top-level JSON array is unrolled by ConvertFrom-IQJsonFile (1 element -> the element, 0 -> $null), so the
+            # shape is decided from the first non-blank character of the file, not from the parsed value.
+            $text = [System.IO.File]::ReadAllText($f.FullName)
+            $firstChar = ''
+            $m = [regex]::Match($text, '^\uFEFF?\s*(\S)')
+            if ($m.Success) { $firstChar = $m.Groups[1].Value }
+            if ($firstChar -eq '[') {
+                & $addRows $defaultName @(ConvertFrom-IQJsonFile -Path $f.FullName | Where-Object { $null -ne $_ }) @()
+                continue
             }
-            if ($null -ne $rowsMember) {
+            $obj = ConvertFrom-IQJsonFile -Path $f.FullName
+            if ($null -eq $obj) { & $addRows $defaultName @() @(); continue }
+            if ($obj -is [string] -or $obj -is [System.ValueType]) { & $addRows $defaultName @([PSCustomObject]@{ Value = $obj }) @(); continue }
+
+            # Shape 1: { SheetName; Columns; Rows } (Rows/Items may be empty)
+            $rowsName = $null
+            foreach ($candidate in @('Rows', 'rows', 'Items', 'items')) {
+                if (Test-IQAsmHasMember -Object $obj -Name $candidate) { $rowsName = $candidate; break }
+            }
+            if ($null -ne $rowsName) {
                 $sheetName = $defaultName
                 foreach ($candidate in @('SheetName', 'sheetName', 'Sheet', 'sheet', 'Collector', 'collector', 'Name', 'name')) {
                     $v = Get-IQAsmMember -Object $obj -Name $candidate
-                    if (-not [string]::IsNullOrWhiteSpace([string]$v)) { $sheetName = [string]$v; break }
+                    if ($v -is [string] -and -not [string]::IsNullOrWhiteSpace($v)) { $sheetName = $v; break }
                 }
-                $map[$sheetName] = @($rowsMember)
+                $cols = @()
+                foreach ($candidate in @('Columns', 'columns')) {
+                    if (Test-IQAsmHasMember -Object $obj -Name $candidate) {
+                        foreach ($c in @(Get-IQAsmMember -Object $obj -Name $candidate)) { if (-not [string]::IsNullOrWhiteSpace([string]$c)) { $cols += [string]$c } }
+                        break
+                    }
+                }
+                & $addRows $sheetName @(Get-IQAsmMember -Object $obj -Name $rowsName | Where-Object { $null -ne $_ }) $cols
                 continue
             }
+
+            # Shape 2: object of arrays (one sheet per array property)
             $arrayProps = @()
             foreach ($name in @(Get-IQAsmMemberName -Object $obj)) {
-                $v = Get-IQAsmMember -Object $obj -Name $name
-                if ($v -is [System.Array]) { $arrayProps += $name }
+                if (Test-IQAsmArrayMember -Object $obj -Name $name) { $arrayProps += $name }
             }
             if ($arrayProps.Count -gt 0) {
-                foreach ($name in $arrayProps) { $map[$name] = @(Get-IQAsmMember -Object $obj -Name $name) }
+                foreach ($name in $arrayProps) { & $addRows $name @(Get-IQAsmMember -Object $obj -Name $name | Where-Object { $null -ne $_ }) @() }
                 continue
             }
-            $map[$defaultName] = @($obj)
+
+            # Shape 3: a single row object
+            & $addRows $defaultName @($obj) @()
         }
         catch {
             Write-IQLog -Level Warn -Stage 'Assemble' -Item $f.Name -Message ("Could not read extras file '{0}': {1}" -f $f.FullName, $_.Exception.Message) -Exception $_.Exception
@@ -953,7 +1051,7 @@ function Get-IQExtraSheetMap {
     if ($map.Count -gt 0) {
         Write-IQLog -Level Info -Stage 'Assemble' -Message ("Extras sheets found: {0}" -f (@($map.Keys) -join ', '))
     }
-    return $map
+    return $result
 }
 
 function Get-IQEnvironmentSheetMap {
@@ -1011,13 +1109,15 @@ function Get-IQEnvironmentSheetMap {
 
     $extras = Get-IQExtraSheetMap -InventoryFolder $inventoryFolder
     $extraNames = @()
-    foreach ($name in @($extras.Keys)) {
+    $extraColumns = @{}
+    foreach ($name in @($extras.Sheets.Keys)) {
         $target = [string]$name
-        if ($sheets.Contains($target)) { $target = 'Extras' + $target }
-        $sheets[$target] = @($extras[$name])
+        if ($sheets.Contains($target)) { $target = 'Extras' + $target }   # never overwrite a core sheet
+        $sheets[$target] = @($extras.Sheets[$name])
+        if ($extras.Columns.ContainsKey([string]$name)) { $extraColumns[$target] = @($extras.Columns[[string]$name]) }
         $extraNames += $target
     }
-    return @{ Sheets = $sheets; Extras = $extraNames }
+    return @{ Sheets = $sheets; Extras = $extraNames; Columns = $extraColumns }
 }
 
 # =====================================================================================================================
@@ -1042,6 +1142,7 @@ function Build-IQEnvironmentWorkbook {
     foreach ($name in @($source.Sheets.Keys)) {
         $defaults = $null
         if ($script:IQAssembleDefaultColumns.ContainsKey([string]$name)) { $defaults = $script:IQAssembleDefaultColumns[[string]$name] }
+        elseif ($source.Columns.ContainsKey([string]$name)) { $defaults = @($source.Columns[[string]$name]) }   # extras sheet: header from the collector's Columns[]
         $tables[$name] = New-IQSheetTable -Workbook $workbook -SheetName ([string]$name) -Rows $source.Sheets[$name] -Contract $Contract -DefaultColumns $defaults
     }
     # Every contract sheet must exist even if the source map did not produce it (defensive).

@@ -1,9 +1,12 @@
-# ImpactIQ.Dax.ps1 - executeQueries client, INFO.* model-detail fallback and usage-metrics queries.
+# ImpactIQ.Dax.ps1 - executeQueries client, INFO.VIEW.* / INFO.* model-detail fallback, DAX reference extractor and usage metrics.
 #
-# Contract: brief sections 2.7, 7.3, 8.4 and 13.
+# Contract: brief sections 2.7, 7.3, 8.4 and 13 (+ task models-revise).
 #   Invoke-IQDaxQuery -WorkspaceId -DatasetId -Dax [-Impersonate]  -> array of flattened row objects (throws on error)
 #   Get-IQModelDetailViaDax -Dataset -OutputFolder                   -> writes "<CleanWs> ~ <CleanModel>.csv" and "..._MD.csv"
 #   Get-IQModelBackupFileName -Dataset                               -> "<CleanWs> ~ <CleanModel>" (the base name used everywhere)
+#   Get-IQDaxReferences -Expression -KnownTables -KnownMeasures      -> approximate direct DAX references (tables/columns/measures)
+#   ConvertTo-IQMeasureDependencyRows / Write-IQCsvFile / New-IQModelDetailRow / Get-IQModelDetailHeader /
+#   Get-IQMeasureDependencyHeader                                    -> CSV building blocks shared with ImpactIQ.Bim.ps1
 #   Get-IQUsageMetrics -WorkspaceId -WorkspaceName [-Days 30]        -> usage-metrics rows for the Extras stage
 #
 # Windows PowerShell 5.1 and PowerShell 7 compatible. Loaded by dot-sourcing from ImpactIQ.ps1, so $script:IQ is the
@@ -13,16 +16,22 @@
 # ConvertTo-IQJsonFile, ConvertFrom-IQJsonFile. Private helpers are prefixed *-IQDax* / *-IQCsv* and are not part of
 # the contract.
 #
-# TOM / TMSCHEMA enum codes reproduced as strings (Tabular Object Model enumerations; INFO.* returns the integer codes):
+# executeQueries facts that shape Get-IQModelDetailViaDax (audit research-dax.md): the JSON endpoint officially supports
+# only DAX (raw INFO.* / DMV queries are rejected with HTTP 400, engine error 3239575574, on most tenants since 2025),
+# while INFO.VIEW.TABLES/COLUMNS/MEASURES/RELATIONSHIPS are widely reported to work with Build permission (Pro included).
+# [Expression] columns are blank unless the caller has write permission on the model; INFO.CALCDEPENDENCY,
+# INFO.TABLEPERMISSIONS and INFO.ANNOTATIONS need write permission even over XMLA.
+#
+# TOM / TMSCHEMA enum codes reproduced as strings (raw INFO.* returns the integer codes; INFO.VIEW.* returns the names):
 #   RelationshipEndCardinality  0=None 1=One 2=Many
 #   CrossFilteringBehavior      1=OneDirection 2=BothDirections 3=Automatic
 #   SecurityFilteringBehavior   1=OneDirection 2=BothDirections 3=None
-#   ModeType (partition Mode)   0=Default 1=Import 2=DirectQuery 3=Push 4=Dual 5=DirectLake
+#   ModeType (partition Mode)   0=Import 1=DirectQuery 2=Default 3=Push 4=Dual 5=DirectLake
 #   PartitionSourceType (Type)  1=Query 2=Calculated 3=None 4=M 5=Entity 6=PolicyRange 7=CalculationGroup 8=Inferred
-#   ColumnType (Type)           1=RowNumber 2=Data 3=Calculated 4=CalculatedTableColumn
+#   ColumnType (Type)           1=Data 2=Calculated 3=RowNumber 4=CalculatedTableColumn
 #   ModelPermission (roles)     1=None 2=Read 3=ReadRefresh 4=Refresh 5=Administrator
 #   MetadataPermission          1=Default 2=None 3=Read
-# Newer engines may already return the names instead of the codes; ConvertTo-IQDaxEnumName accepts both.
+# ConvertTo-IQDaxEnumName accepts both the code and the name.
 
 function Get-IQModelBackupFileName {
     <#
@@ -563,16 +572,512 @@ function Get-IQDaxColumnName {
     return ''
 }
 
+function ConvertTo-IQDaxCodeOnly {
+    <#
+    .SYNOPSIS
+    Blanks string literals and comments in a DAX expression so identifier regexes only see code (private).
+    .DESCRIPTION
+    "..." literals ("" escapes) become a single space; // and -- line comments and /* */ block comments are removed;
+    'Table' and [Name] identifiers are copied verbatim ('' and ]] escapes honoured) so comment markers inside them
+    are not mistaken for comments.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false, Position = 0)][AllowNull()][AllowEmptyString()][string]$Expression)
+    if ([string]::IsNullOrEmpty($Expression)) { return '' }
+    $sb = New-Object System.Text.StringBuilder
+    $text = $Expression
+    $n = $text.Length
+    $i = 0
+    while ($i -lt $n) {
+        $c = $text[$i]
+        $next = [char]0
+        if ($i + 1 -lt $n) { $next = $text[$i + 1] }
+        if ($c -eq '"') {
+            $i++
+            while ($i -lt $n) {
+                if ($text[$i] -eq '"') {
+                    if ($i + 1 -lt $n -and $text[$i + 1] -eq '"') { $i += 2; continue }
+                    $i++
+                    break
+                }
+                $i++
+            }
+            [void]$sb.Append(' ')
+            continue
+        }
+        if ($c -eq "'" -or $c -eq '[') {
+            $close = "'"
+            if ($c -eq '[') { $close = ']' }
+            $start = $i
+            $i++
+            while ($i -lt $n) {
+                if ($text[$i] -eq $close) {
+                    if ($i + 1 -lt $n -and $text[$i + 1] -eq $close) { $i += 2; continue }
+                    $i++
+                    break
+                }
+                $i++
+            }
+            [void]$sb.Append($text.Substring($start, $i - $start))
+            continue
+        }
+        if (($c -eq '/' -and $next -eq '/') -or ($c -eq '-' -and $next -eq '-')) {
+            while ($i -lt $n -and $text[$i] -ne "`n" -and $text[$i] -ne "`r") { $i++ }
+            [void]$sb.Append(' ')
+            continue
+        }
+        if ($c -eq '/' -and $next -eq '*') {
+            $end = $text.IndexOf('*/', $i + 2)
+            if ($end -lt 0) { $i = $n } else { $i = $end + 2 }
+            [void]$sb.Append(' ')
+            continue
+        }
+        [void]$sb.Append($c)
+        $i++
+    }
+    return $sb.ToString()
+}
+
+function Get-IQDaxReferences {
+    <#
+    .SYNOPSIS
+    Approximate DAX reference extractor: the tables, columns and measures a DAX expression refers to directly (regex based).
+    .DESCRIPTION
+    Stand-in for Tabular Editor's DependsOn when TE2 cannot run (Bim parser path, DAX fallback without INFO.CALCDEPENDENCY).
+    String literals and comments are ignored (ConvertTo-IQDaxCodeOnly); then 'Table'[Name], Table[Name], [Name] and
+    standalone 'Table' / Table references are matched. Resolution (identifiers are case-insensitive, like DAX):
+      - 'Table'[Name] / Table[Name]: a column of that table, unless Name is a known measure (then Measure [Name]).
+      - [Name]: a known measure first; else a column of -CurrentTable; else a column that exists in exactly one known
+        table; else ignored.
+      - standalone 'Table' or an unquoted identifier that is a known table and is not followed by "(" or "[" and is not
+        a VAR declared in the expression: a Table dependency (DependsOnType CalculationGroupTable when the table is a
+        calculation group).
+    Approximate by design: variables shadowing table names that are not declared with VAR in the same expression,
+    references built dynamically (TREATAS, string concatenation, user hierarchies), function-name collisions and
+    indirect (transitive) dependencies are not resolved. Only DIRECT references are returned, matching the csx.
+    Output objects: @{ DependsOn (TE2 DaxObjectFullName: 'Table'[Column], [Measure], 'Table'); DependsOnType
+    (Column|Measure|Table|CalculationGroupTable); Table; Name }, de-duplicated, in order of first appearance.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false, Position = 0)][AllowNull()][AllowEmptyString()][string]$Expression,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][string[]]$KnownTables,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][string[]]$KnownMeasures,
+        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$KnownColumns,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$CurrentTable,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][string[]]$CalculationGroupTables
+    )
+    $out = New-Object System.Collections.Generic.List[object]
+    if ([string]::IsNullOrWhiteSpace($Expression)) { return $out.ToArray() }
+
+    # Case-insensitive lookups (original spelling preserved for output).
+    $tableCase = @{}
+    foreach ($t in @($KnownTables)) { if (-not [string]::IsNullOrEmpty($t)) { $tableCase[$t.ToLowerInvariant()] = $t } }
+    $measureCase = @{}
+    foreach ($m in @($KnownMeasures)) { if (-not [string]::IsNullOrEmpty($m)) { $measureCase[$m.ToLowerInvariant()] = $m } }
+    $calcGroupSet = @{}
+    foreach ($cg in @($CalculationGroupTables)) { if (-not [string]::IsNullOrEmpty($cg)) { $calcGroupSet[$cg.ToLowerInvariant()] = $true } }
+    $columnsByTable = @{}
+    $ownersByColumn = @{}
+    $haveColumns = $false
+    if ($null -ne $KnownColumns) {
+        foreach ($tk in $KnownColumns.Keys) {
+            $tName = [string]$tk
+            if ($tName -eq '') { continue }
+            $haveColumns = $true
+            $lt = $tName.ToLowerInvariant()
+            if (-not $tableCase.ContainsKey($lt)) { $tableCase[$lt] = $tName }
+            $map = @{}
+            foreach ($cn in @($KnownColumns[$tk])) {
+                if ([string]::IsNullOrEmpty($cn)) { continue }
+                $lc = ([string]$cn).ToLowerInvariant()
+                $map[$lc] = [string]$cn
+                if (-not $ownersByColumn.ContainsKey($lc)) { $ownersByColumn[$lc] = New-Object System.Collections.Generic.List[string] }
+                $ownersByColumn[$lc].Add($tName)
+            }
+            $columnsByTable[$lt] = $map
+        }
+    }
+    $currentLower = ''
+    if (-not [string]::IsNullOrEmpty($CurrentTable)) { $currentLower = $CurrentTable.ToLowerInvariant() }
+
+    $code = ConvertTo-IQDaxCodeOnly -Expression $Expression
+    # VAR names shadow tables inside the expression (approximation: any VAR declared anywhere in the expression).
+    $varNames = @{}
+    foreach ($vm in [regex]::Matches($code, '(?i)\bVAR\s+([A-Za-z_]\w*)')) { $varNames[$vm.Groups[1].Value.ToLowerInvariant()] = $true }
+
+    $seen = @{}
+    $add = {
+        param($type, $table, $name)
+        $full = ''
+        $depType = $type
+        switch ($type) {
+            'Measure' { $full = ConvertTo-IQDaxBracketRef -Name $name }
+            'Column' { $full = (ConvertTo-IQDaxTableRef -Table $table) + (ConvertTo-IQDaxBracketRef -Name $name) }
+            'Table' {
+                $full = ConvertTo-IQDaxTableRef -Table $table
+                if ($calcGroupSet.ContainsKey($table.ToLowerInvariant())) { $depType = 'CalculationGroupTable' }
+            }
+        }
+        $key = $depType + '|' + $full
+        if ($seen.ContainsKey($key)) { return }
+        $seen[$key] = $true
+        $out.Add([PSCustomObject]@{ DependsOn = $full; DependsOnType = $depType; Table = $table; Name = $name })
+    }
+    $resolveTableName = {
+        param($raw)
+        $lt = $raw.ToLowerInvariant()
+        if ($tableCase.ContainsKey($lt)) { return $tableCase[$lt] }
+        return $raw
+    }
+    $resolveColumnName = {
+        param($table, $raw)
+        $lt = $table.ToLowerInvariant()
+        $lc = $raw.ToLowerInvariant()
+        if ($columnsByTable.ContainsKey($lt) -and $columnsByTable[$lt].ContainsKey($lc)) { return $columnsByTable[$lt][$lc] }
+        return $raw
+    }
+    $tableHasColumn = {
+        param($table, $raw)
+        $lt = $table.ToLowerInvariant()
+        return ($columnsByTable.ContainsKey($lt) -and $columnsByTable[$lt].ContainsKey($raw.ToLowerInvariant()))
+    }
+
+    $pattern = "(?<qt>'(?:[^']|'')+')(?:\s*\[(?<qc>(?:[^\]]|\]\])+)\])?|(?<![\w\]\)'`"\.])(?<ut>[A-Za-z_]\w*)(?:\s*\[(?<uc>(?:[^\]]|\]\])+)\])?|\[(?<bc>(?:[^\]]|\]\])+)\]"
+    foreach ($m in [regex]::Matches($code, $pattern)) {
+        $tableRaw = $null
+        $bracketRaw = $null
+        $quotedTable = $false
+        if ($m.Groups['qt'].Success) {
+            $q = $m.Groups['qt'].Value
+            $tableRaw = $q.Substring(1, $q.Length - 2).Replace("''", "'")
+            $quotedTable = $true
+            if ($m.Groups['qc'].Success) { $bracketRaw = $m.Groups['qc'].Value.Replace(']]', ']') }
+        }
+        elseif ($m.Groups['ut'].Success) {
+            $tableRaw = $m.Groups['ut'].Value
+            if ($m.Groups['uc'].Success) { $bracketRaw = $m.Groups['uc'].Value.Replace(']]', ']') }
+        }
+        elseif ($m.Groups['bc'].Success) {
+            $bracketRaw = $m.Groups['bc'].Value.Replace(']]', ']')
+        }
+
+        if ($null -ne $tableRaw -and -not $quotedTable) {
+            # Unquoted identifier: only a table when known (and not a VAR); otherwise it is a function/keyword/variable.
+            $lt = $tableRaw.ToLowerInvariant()
+            if ($varNames.ContainsKey($lt) -or -not $tableCase.ContainsKey($lt)) {
+                if ($null -ne $bracketRaw) { $tableRaw = $null } else { continue }
+            }
+        }
+
+        if ($null -ne $tableRaw -and $null -ne $bracketRaw) {
+            $table = & $resolveTableName $tableRaw
+            $lb = $bracketRaw.ToLowerInvariant()
+            if ((& $tableHasColumn $table $bracketRaw)) { & $add 'Column' $table (& $resolveColumnName $table $bracketRaw) }
+            elseif ($measureCase.ContainsKey($lb)) { & $add 'Measure' $table $measureCase[$lb] }
+            else { & $add 'Column' $table $bracketRaw }
+            continue
+        }
+        if ($null -ne $tableRaw) {
+            # Standalone table reference: not when followed by "(" (function) or "[" (handled above).
+            $rest = $code.Substring($m.Index + $m.Length).TrimStart()
+            if ($rest.Length -gt 0 -and ($rest[0] -eq '(' -or $rest[0] -eq '[')) { continue }
+            if (-not $quotedTable -and $rest.Length -gt 0 -and $rest[0] -eq '.') { continue }
+            $table = & $resolveTableName $tableRaw
+            if ($quotedTable -or $tableCase.ContainsKey($tableRaw.ToLowerInvariant())) { & $add 'Table' $table $table }
+            continue
+        }
+        if ($null -ne $bracketRaw) {
+            $lb = $bracketRaw.ToLowerInvariant()
+            if ($measureCase.ContainsKey($lb)) { & $add 'Measure' '' $measureCase[$lb]; continue }
+            if ($currentLower -ne '' -and (& $tableHasColumn $CurrentTable $bracketRaw)) { & $add 'Column' (& $resolveTableName $CurrentTable) (& $resolveColumnName $CurrentTable $bracketRaw); continue }
+            if ($ownersByColumn.ContainsKey($lb) -and $ownersByColumn[$lb].Count -eq 1) {
+                $owner = $ownersByColumn[$lb][0]
+                & $add 'Column' $owner (& $resolveColumnName $owner $bracketRaw)
+                continue
+            }
+            if (-not $haveColumns -and $currentLower -ne '' -and $measureCase.Count -gt 0) {
+                # No column catalogue: a bracket that is not a known measure is assumed to be a column of the current table.
+                & $add 'Column' (& $resolveTableName $CurrentTable) $bracketRaw
+            }
+        }
+    }
+    return $out.ToArray()
+}
+
+function ConvertTo-IQMeasureDependencyRows {
+    <#
+    .SYNOPSIS
+    Builds "_MD.csv" rows (Get-IQMeasureDependencyHeader order) for measures / calculated columns / calculation items via Get-IQDaxReferences.
+    .DESCRIPTION
+    -Objects is an array of @{ ObjectName; ObjectType (Measure|CalculatedColumn|CalculationItem); Table; Expression }
+    in the csx emission order (measures, calculated columns, calculation items). Returns ordered dictionaries with
+    ObjectName, ObjectType, DependsOn, DependsOnType, ModelAsOfDate, ModelName, ModelID (from -Common).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()]$Objects,
+        [Parameter(Mandatory = $true)][hashtable]$Common,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][string[]]$KnownTables,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][string[]]$KnownMeasures,
+        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$KnownColumns,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][string[]]$CalculationGroupTables
+    )
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($o in @($Objects)) {
+        if ($null -eq $o) { continue }
+        $expr = [string](Get-IQDaxMember -Object $o -Name 'Expression')
+        if ([string]::IsNullOrWhiteSpace($expr)) { continue }
+        $refs = @(Get-IQDaxReferences -Expression $expr -KnownTables $KnownTables -KnownMeasures $KnownMeasures -KnownColumns $KnownColumns -CurrentTable ([string](Get-IQDaxMember -Object $o -Name 'Table')) -CalculationGroupTables $CalculationGroupTables)
+        foreach ($r in $refs) {
+            $rows.Add([ordered]@{
+                    ObjectName = [string](Get-IQDaxMember -Object $o -Name 'ObjectName'); ObjectType = [string](Get-IQDaxMember -Object $o -Name 'ObjectType')
+                    DependsOn = $r.DependsOn; DependsOnType = $r.DependsOnType
+                    ModelAsOfDate = $Common.ModelAsOfDate; ModelName = $Common.ModelName; ModelID = $Common.ModelID
+                })
+        }
+    }
+    return $rows.ToArray()
+}
+
+function Test-IQDaxInfoUnsupportedMessage {
+    <#
+    .SYNOPSIS
+    True when an executeQueries error text looks like "INFO functions are not supported here" (HTTP 400 / engine 3239575574) (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false, Position = 0)][AllowNull()][AllowEmptyString()][string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
+    return ($Message -match '(?i)\bINFO\b|not supported|unsupported|3239575574|Failed to execute the DAX query|HTTP 400|no response')
+}
+
+function Get-IQDaxShapeBool {
+    <#
+    .SYNOPSIS
+    Normalises a bool-ish INFO value ("true"/1/$true) to $true/$false, $null when unknown (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false, Position = 0)][AllowNull()]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [bool]) { return $Value }
+    $t = ([string]$Value).Trim()
+    if ($t -ieq 'true' -or $t -eq '1') { return $true }
+    if ($t -ieq 'false' -or $t -eq '0') { return $false }
+    if ($t -eq '') { return $null }
+    try { return [System.Convert]::ToBoolean($Value) } catch { return $null }
+}
+
+function ConvertTo-IQDaxModelShape {
+    <#
+    .SYNOPSIS
+    Normalises INFO.VIEW.* rows (or raw INFO.* rows joined on IDs) into one name-keyed model shape (private).
+    .DESCRIPTION
+    Returns @{ Tables; Columns; Measures; Relationships; TableNameById; ColumnNameById }. Tables: @{ ID; Name; Description;
+    IsHidden; StorageMode; IsCalculationGroup; Expression }. Columns: @{ ID; Table; Name; Type (Data|Calculated|
+    CalculatedTableColumn|RowNumber); FormatString; DisplayFolder; Description; IsHidden; Expression }. Measures: @{ ID; Table;
+    Name; Expression; FormatString; DisplayFolder; Description; IsHidden }. Relationships: @{ ID; Name; FromTable; FromColumn;
+    ToTable; ToColumn; FromCardinality; ToCardinality; CrossFilteringBehavior; IsActive } with TOM enum names.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Data,
+        [Parameter(Mandatory = $true)][bool]$ViewMode
+    )
+    $cardinalityMap = @{ 0 = 'None'; 1 = 'One'; 2 = 'Many' }
+    $crossFilterMap = @{ 1 = 'OneDirection'; 2 = 'BothDirections'; 3 = 'Automatic' }
+    $columnTypeMap = @{ 1 = 'Data'; 2 = 'Calculated'; 3 = 'RowNumber'; 4 = 'CalculatedTableColumn' }
+    $modeMap = @{ 0 = 'Import'; 1 = 'DirectQuery'; 2 = 'Default'; 3 = 'Push'; 4 = 'Dual'; 5 = 'DirectLake' }
+    $shape = @{ Tables = @(); Columns = @(); Measures = @(); Relationships = @(); TableNameById = @{}; ColumnNameById = @{} }
+    $tables = New-Object System.Collections.Generic.List[object]
+    $columns = New-Object System.Collections.Generic.List[object]
+    $measures = New-Object System.Collections.Generic.List[object]
+    $relationships = New-Object System.Collections.Generic.List[object]
+
+    if ($ViewMode) {
+        foreach ($t in @($Data['tables'])) {
+            if ($null -eq $t) { continue }
+            $id = [string](Get-IQDaxMember -Object $t -Name 'ID')
+            $name = [string](Get-IQDaxMember -Object $t -Name 'Name')
+            if ($id -ne '') { $shape.TableNameById[$id] = $name }
+            $prec = Get-IQDaxMember -Object $t -Name 'CalculationGroupPrecedence'
+            $tables.Add(@{
+                    ID = $id; Name = $name; Description = (Get-IQDaxMember -Object $t -Name 'Description'); IsHidden = (Get-IQDaxShapeBool (Get-IQDaxMember -Object $t -Name 'IsHidden'))
+                    StorageMode = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $t -Name 'StorageMode') -Map $modeMap -Default '')
+                    IsCalculationGroup = ($null -ne $prec -and ([string]$prec).Trim() -ne ''); Expression = (Get-IQDaxMember -Object $t -Name 'Expression')
+                })
+        }
+        foreach ($c in @($Data['columns'])) {
+            if ($null -eq $c) { continue }
+            $id = [string](Get-IQDaxMember -Object $c -Name 'ID')
+            $name = [string](Get-IQDaxMember -Object $c -Name 'Name')
+            if ($id -ne '') { $shape.ColumnNameById[$id] = $name }
+            $type = ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $c -Name 'Type') -Map $columnTypeMap -Default 'Data'
+            if ([string](Get-IQDaxMember -Object $c -Name 'DataCategory') -eq 'RowNumber') { $type = 'RowNumber' }
+            $columns.Add(@{
+                    ID = $id; Table = [string](Get-IQDaxMember -Object $c -Name 'Table'); Name = $name; Type = $type
+                    FormatString = (Get-IQDaxMember -Object $c -Name 'FormatString'); DisplayFolder = (Get-IQDaxMember -Object $c -Name 'DisplayFolder')
+                    Description = (Get-IQDaxMember -Object $c -Name 'Description'); IsHidden = (Get-IQDaxShapeBool (Get-IQDaxMember -Object $c -Name 'IsHidden'))
+                    Expression = (Get-IQDaxMember -Object $c -Name 'Expression')
+                })
+        }
+        foreach ($m in @($Data['measures'])) {
+            if ($null -eq $m) { continue }
+            $measures.Add(@{
+                    ID = [string](Get-IQDaxMember -Object $m -Name 'ID'); Table = [string](Get-IQDaxMember -Object $m -Name 'Table'); Name = [string](Get-IQDaxMember -Object $m -Name 'Name')
+                    Expression = (Get-IQDaxMember -Object $m -Name 'Expression'); FormatString = (Get-IQDaxMember -Object $m -Name 'FormatString')
+                    DisplayFolder = (Get-IQDaxMember -Object $m -Name 'DisplayFolder'); Description = (Get-IQDaxMember -Object $m -Name 'Description')
+                    IsHidden = (Get-IQDaxShapeBool (Get-IQDaxMember -Object $m -Name 'IsHidden'))
+                })
+        }
+        foreach ($r in @($Data['relationships'])) {
+            if ($null -eq $r) { continue }
+            $relationships.Add(@{
+                    ID = [string](Get-IQDaxMember -Object $r -Name 'ID'); Name = [string](Get-IQDaxMember -Object $r -Name 'Name')
+                    FromTable = [string](Get-IQDaxMember -Object $r -Name 'FromTable'); FromColumn = [string](Get-IQDaxMember -Object $r -Name 'FromColumn')
+                    ToTable = [string](Get-IQDaxMember -Object $r -Name 'ToTable'); ToColumn = [string](Get-IQDaxMember -Object $r -Name 'ToColumn')
+                    FromCardinality = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'FromCardinality') -Map $cardinalityMap)
+                    ToCardinality = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'ToCardinality') -Map $cardinalityMap)
+                    CrossFilteringBehavior = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'CrossFilteringBehavior') -Map $crossFilterMap)
+                    IsActive = (Get-IQDaxShapeBool (Get-IQDaxMember -Object $r -Name 'IsActive'))
+                })
+        }
+    }
+    else {
+        $tableIndex = Get-IQDaxIndex -Rows $Data['tables']
+        $columnIndex = Get-IQDaxIndex -Rows $Data['columns']
+        foreach ($t in @($Data['tables'])) {
+            if ($null -eq $t) { continue }
+            $id = [string](Get-IQDaxMember -Object $t -Name 'ID')
+            $name = [string](Get-IQDaxMember -Object $t -Name 'Name')
+            if ($id -ne '') { $shape.TableNameById[$id] = $name }
+            $cgId = Get-IQDaxMember -Object $t -Name 'CalculationGroupID'
+            $tables.Add(@{
+                    ID = $id; Name = $name; Description = (Get-IQDaxMember -Object $t -Name 'Description'); IsHidden = (Get-IQDaxShapeBool (Get-IQDaxMember -Object $t -Name 'IsHidden'))
+                    StorageMode = ''; IsCalculationGroup = ($null -ne $cgId -and ([string]$cgId).Trim() -ne ''); Expression = $null
+                })
+        }
+        foreach ($c in @($Data['columns'])) {
+            if ($null -eq $c) { continue }
+            $id = [string](Get-IQDaxMember -Object $c -Name 'ID')
+            $name = Get-IQDaxColumnName -Column $c
+            if ($id -ne '') { $shape.ColumnNameById[$id] = $name }
+            $columns.Add(@{
+                    ID = $id; Table = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $c -Name 'TableID')); Name = $name
+                    Type = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $c -Name 'Type') -Map $columnTypeMap -Default 'Data')
+                    FormatString = (Get-IQDaxMember -Object $c -Name 'FormatString'); DisplayFolder = (Get-IQDaxMember -Object $c -Name 'DisplayFolder')
+                    Description = (Get-IQDaxMember -Object $c -Name 'Description'); IsHidden = (Get-IQDaxShapeBool (Get-IQDaxMember -Object $c -Name 'IsHidden'))
+                    Expression = (Get-IQDaxMember -Object $c -Name 'Expression')
+                })
+        }
+        foreach ($m in @($Data['measures'])) {
+            if ($null -eq $m) { continue }
+            $measures.Add(@{
+                    ID = [string](Get-IQDaxMember -Object $m -Name 'ID'); Table = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $m -Name 'TableID')); Name = [string](Get-IQDaxMember -Object $m -Name 'Name')
+                    Expression = (Get-IQDaxMember -Object $m -Name 'Expression'); FormatString = (Get-IQDaxMember -Object $m -Name 'FormatString')
+                    DisplayFolder = (Get-IQDaxMember -Object $m -Name 'DisplayFolder'); Description = (Get-IQDaxMember -Object $m -Name 'Description')
+                    IsHidden = (Get-IQDaxShapeBool (Get-IQDaxMember -Object $m -Name 'IsHidden'))
+                })
+        }
+        foreach ($r in @($Data['relationships'])) {
+            if ($null -eq $r) { continue }
+            $fromColumn = ''
+            $toColumn = ''
+            $fcid = [string](Get-IQDaxMember -Object $r -Name 'FromColumnID')
+            $tcid = [string](Get-IQDaxMember -Object $r -Name 'ToColumnID')
+            if ($columnIndex.ContainsKey($fcid)) { $fromColumn = Get-IQDaxColumnName -Column $columnIndex[$fcid] }
+            if ($columnIndex.ContainsKey($tcid)) { $toColumn = Get-IQDaxColumnName -Column $columnIndex[$tcid] }
+            $relationships.Add(@{
+                    ID = [string](Get-IQDaxMember -Object $r -Name 'ID'); Name = [string](Get-IQDaxMember -Object $r -Name 'Name')
+                    FromTable = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $r -Name 'FromTableID')); FromColumn = $fromColumn
+                    ToTable = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $r -Name 'ToTableID')); ToColumn = $toColumn
+                    FromCardinality = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'FromCardinality') -Map $cardinalityMap)
+                    ToCardinality = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'ToCardinality') -Map $cardinalityMap)
+                    CrossFilteringBehavior = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'CrossFilteringBehavior') -Map $crossFilterMap)
+                    IsActive = (Get-IQDaxShapeBool (Get-IQDaxMember -Object $r -Name 'IsActive'))
+                })
+        }
+    }
+    $shape.Tables = $tables.ToArray()
+    $shape.Columns = $columns.ToArray()
+    $shape.Measures = $measures.ToArray()
+    $shape.Relationships = $relationships.ToArray()
+    return $shape
+}
+
+function ConvertTo-IQDaxCalcDependencyRows {
+    <#
+    .SYNOPSIS
+    Maps INFO.CALCDEPENDENCY() rows to "_MD.csv" rows (brief section 13 mapping; direct dependencies only) (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()]$Rows,
+        [Parameter(Mandatory = $true)][hashtable]$Common,
+        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$CalcGroupTableNames
+    )
+    if ($null -eq $CalcGroupTableNames) { $CalcGroupTableNames = @{} }
+    $objectTypeMap = @{ 'MEASURE' = 'Measure'; 'CALC_COLUMN' = 'CalculatedColumn'; 'CALCULATION_ITEM' = 'CalculationItem'; 'CALC_ITEM' = 'CalculationItem' }
+    $mdRows = New-Object System.Collections.Generic.List[object]
+    $mdSeen = @{}
+    foreach ($d in @($Rows)) {
+        if ($null -eq $d) { continue }
+        $objType = ([string](Get-IQDaxMember -Object $d -Name 'OBJECT_TYPE')).Trim().ToUpperInvariant()
+        if (-not $objectTypeMap.ContainsKey($objType)) { continue }
+        $refType = ([string](Get-IQDaxMember -Object $d -Name 'REFERENCED_OBJECT_TYPE')).Trim().ToUpperInvariant()
+        $refTable = [string](Get-IQDaxMember -Object $d -Name 'REFERENCED_TABLE')
+        $refObject = [string](Get-IQDaxMember -Object $d -Name 'REFERENCED_OBJECT')
+        $dependsOn = $null
+        $dependsOnType = $null
+        switch ($refType) {
+            'MEASURE' { $dependsOn = ConvertTo-IQDaxBracketRef -Name $refObject; $dependsOnType = 'Measure' }
+            'COLUMN' { $dependsOn = (ConvertTo-IQDaxTableRef -Table $refTable) + (ConvertTo-IQDaxBracketRef -Name $refObject); $dependsOnType = 'Column' }
+            'CALC_COLUMN' { $dependsOn = (ConvertTo-IQDaxTableRef -Table $refTable) + (ConvertTo-IQDaxBracketRef -Name $refObject); $dependsOnType = 'Column' }
+            'TABLE' {
+                $dependsOn = ConvertTo-IQDaxTableRef -Table $refTable
+                if ($CalcGroupTableNames.ContainsKey($refTable)) { $dependsOnType = 'CalculationGroupTable' } else { $dependsOnType = 'Table' }
+            }
+            'CALC_TABLE' {
+                $dependsOn = ConvertTo-IQDaxTableRef -Table $refTable
+                if ($CalcGroupTableNames.ContainsKey($refTable)) { $dependsOnType = 'CalculationGroupTable' } else { $dependsOnType = 'Table' }
+            }
+            'CALCULATION_ITEM' { $dependsOn = (ConvertTo-IQDaxTableRef -Table $refTable) + (ConvertTo-IQDaxBracketRef -Name $refObject); $dependsOnType = 'CalculationItem' }
+            'CALC_ITEM' { $dependsOn = (ConvertTo-IQDaxTableRef -Table $refTable) + (ConvertTo-IQDaxBracketRef -Name $refObject); $dependsOnType = 'CalculationItem' }
+            default { $dependsOn = $null }
+        }
+        if ($null -eq $dependsOn) { continue }
+        $objectName = [string](Get-IQDaxMember -Object $d -Name 'OBJECT')
+        $objectTable = [string](Get-IQDaxMember -Object $d -Name 'TABLE')
+        $dedupeKey = ($objType + '|' + $objectTable + '|' + $objectName + '|' + $dependsOn + '|' + $dependsOnType)
+        if ($mdSeen.ContainsKey($dedupeKey)) { continue }
+        $mdSeen[$dedupeKey] = $true
+        $mdRows.Add([ordered]@{
+                ObjectName = $objectName; ObjectType = $objectTypeMap[$objType]; DependsOn = $dependsOn; DependsOnType = $dependsOnType
+                ModelAsOfDate = $Common.ModelAsOfDate; ModelName = $Common.ModelName; ModelID = $Common.ModelID
+            })
+    }
+    return $mdRows.ToArray()
+}
+
 function Get-IQModelDetailViaDax {
     <#
     .SYNOPSIS
-    Produces "<CleanWs> ~ <CleanModel>.csv" and "..._MD.csv" for a dataset from INFO.* DAX queries (executeQueries).
+    Produces "<CleanWs> ~ <CleanModel>.csv" and "..._MD.csv" for a dataset from INFO.VIEW.* / INFO.* DAX queries (executeQueries).
     .DESCRIPTION
-    Reproduces the rows of "Model Detail Extract Script.csx" and "Measure Dependency Extract Script.csx" (brief section 13)
-    from INFO.TABLES/COLUMNS/MEASURES/RELATIONSHIPS/PARTITIONS/ROLES/TABLEPERMISSIONS/CALCULATIONGROUPS/
-    CALCULATIONITEMS/HIERARCHIES/LEVELS/CALCDEPENDENCY (+ INFO.MODEL for the default storage mode). Raw results are
-    cached under extracts\dax\<datasetId>\*.json and reused on re-runs. Never throws; returns
-    @{ Success; Csv; MdCsv; Outputs; Message; InfoUnsupported; RowCount; DependencyRowCount; Method='Dax'; BaseName }.
+    Reproduces the rows of "Model Detail Extract Script.csx" and "Measure Dependency Extract Script.csx" (brief section 13).
+    Query plan (one executeQueries call per query, each guarded, raw results cached under extracts\dax\<datasetId>\*.json
+    and reused on re-runs):
+      1. INFO.VIEW.TABLES() (falls back to raw INFO.TABLES() on older engines); a failure of both = not available (Failed).
+      2. INFO.VIEW.COLUMNS / MEASURES / RELATIONSHIPS (or the raw INFO.* equivalents joined on IDs).
+      3. Best effort raw INFO.PARTITIONS / INFO.MODEL / INFO.ROLES / INFO.TABLEPERMISSIONS / INFO.CALCULATIONGROUPS /
+         INFO.CALCULATIONITEMS / INFO.HIERARCHIES / INFO.LEVELS / INFO.CALCDEPENDENCY. The JSON executeQueries endpoint
+         officially does not support raw INFO functions: the first HTTP 400 / "not supported" answer skips the remaining
+         raw queries with ONE Warn, the rows of those kinds are simply missing and the part names are returned in
+         Unavailable (and appended to Message, hence to the checkpoint).
+    Dependency rows: INFO.CALCDEPENDENCY() when it returned rows, else Get-IQDaxReferences over the measure / calculated
+    column / calculation item expressions that were returned. INFO.VIEW.MEASURES()[Expression] is blank unless the caller
+    has write permission on the model (Contributor+); then no dependency rows can be produced and Message says so.
+    Never throws; returns @{ Success; Csv; MdCsv; Outputs; Message; InfoUnsupported; RowCount; DependencyRowCount;
+    Method='Dax'; BaseName; Unavailable; DependencySource; ExpressionsMasked }.
     ModelName = "<CleanWs> ~ <CleanModel>"; ModelID = DatasetId for dedicated-capacity workspaces, else the same
     "<CleanWs> ~ <CleanModel>" string (what the PBIT joins on for Pro models); ModelAsOfDate = RunId when it is a date.
     #>
@@ -590,7 +1095,7 @@ function Get-IQModelDetailViaDax {
     $workspaceId = [string](Get-IQDaxMember -Object $Dataset -Name 'WorkspaceId')
     if ([string]::IsNullOrWhiteSpace($BaseName)) { $BaseName = Get-IQModelBackupFileName -Dataset $Dataset }
     $item = $BaseName
-    $result = @{ Success = $false; Csv = $null; MdCsv = $null; Outputs = @(); Message = ''; InfoUnsupported = $false; RowCount = 0; DependencyRowCount = 0; Method = 'Dax'; BaseName = $BaseName }
+    $result = @{ Success = $false; Csv = $null; MdCsv = $null; Outputs = @(); Message = ''; InfoUnsupported = $false; RowCount = 0; DependencyRowCount = 0; Method = 'Dax'; BaseName = $BaseName; Unavailable = @(); DependencySource = 'none'; ExpressionsMasked = $false }
     if ([string]::IsNullOrWhiteSpace($datasetId)) { $result.Message = 'Dataset has no DatasetId'; return $result }
 
     # Dedicated capacity decides the ModelID convention (brief section 13 / audit x1 section 4.1).
@@ -609,29 +1114,58 @@ function Get-IQModelDetailViaDax {
     $csvPath = Join-Path $OutputFolder ($BaseName + '.csv')
     $mdPath = Join-Path $OutputFolder ($BaseName + '_MD.csv')
     $extractFolder = Get-IQDaxExtractFolder -Key $datasetId
-
     $queryParams = @{ ExtractFolder = $extractFolder; WorkspaceId = $workspaceId; DatasetId = $datasetId; Refresh = $Refresh; Stage = $Stage; Item = $item }
+    $data = @{}
+    $warnings = @()
+    $unavailable = New-Object System.Collections.Generic.List[string]
 
-    # 1. INFO.TABLES first: an error here means INFO functions / executeQueries are unavailable for this model.
-    $tables = @()
+    # 1. Tables: INFO.VIEW.TABLES() first (works with Build permission on Pro and capacity), raw INFO.TABLES() as the fallback.
+    $viewMode = $true
     try {
-        $tables = @(Get-IQDaxInfoRowSet @queryParams -Name 'tables' -Dax 'EVALUATE INFO.TABLES()')
+        $data['tables'] = @(Get-IQDaxInfoRowSet @queryParams -Name 'view-tables' -Dax 'EVALUATE INFO.VIEW.TABLES()')
     }
     catch {
-        $msg = $_.Exception.Message
-        $result.Message = 'INFO.TABLES() failed: ' + $msg
-        if ($msg -match '(?i)\bINFO\b|not supported|Unsupported') { $result.InfoUnsupported = $true }
-        Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("DAX model detail unavailable: {0}" -f $result.Message)
-        return $result
+        $viewError = $_.Exception.Message
+        Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("INFO.VIEW.TABLES() failed ({0}); trying INFO.TABLES()" -f $viewError)
+        $viewMode = $false
+        try {
+            $data['tables'] = @(Get-IQDaxInfoRowSet @queryParams -Name 'tables' -Dax 'EVALUATE INFO.TABLES()')
+        }
+        catch {
+            $rawError = $_.Exception.Message
+            $result.Message = 'INFO.VIEW.TABLES() failed: ' + $viewError + ' | INFO.TABLES() failed: ' + $rawError
+            if ((Test-IQDaxInfoUnsupportedMessage -Message $viewError) -or (Test-IQDaxInfoUnsupportedMessage -Message $rawError)) { $result.InfoUnsupported = $true }
+            Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("DAX model detail unavailable: {0}" -f $result.Message)
+            return $result
+        }
     }
 
-    # 2. The remaining queries. Each is guarded: a missing INFO function (older engine) yields an empty set and a Warn.
-    $queries = [ordered]@{
-        model            = 'EVALUATE INFO.MODEL()'
-        columns          = 'EVALUATE INFO.COLUMNS()'
-        measures         = 'EVALUATE INFO.MEASURES()'
-        relationships    = 'EVALUATE INFO.RELATIONSHIPS()'
+    # 2. Columns, measures, relationships (each guarded: a failure yields no rows of that kind + a Warn).
+    $coreQueries = [ordered]@{}
+    if ($viewMode) {
+        $coreQueries['columns'] = @{ Name = 'view-columns'; Dax = 'EVALUATE INFO.VIEW.COLUMNS()' }
+        $coreQueries['measures'] = @{ Name = 'view-measures'; Dax = 'EVALUATE INFO.VIEW.MEASURES()' }
+        $coreQueries['relationships'] = @{ Name = 'view-relationships'; Dax = 'EVALUATE INFO.VIEW.RELATIONSHIPS()' }
+    }
+    else {
+        $coreQueries['columns'] = @{ Name = 'columns'; Dax = 'EVALUATE INFO.COLUMNS()' }
+        $coreQueries['measures'] = @{ Name = 'measures'; Dax = 'EVALUATE INFO.MEASURES()' }
+        $coreQueries['relationships'] = @{ Name = 'relationships'; Dax = 'EVALUATE INFO.RELATIONSHIPS()' }
+    }
+    foreach ($key in $coreQueries.Keys) {
+        $q = $coreQueries[$key]
+        try { $data[$key] = @(Get-IQDaxInfoRowSet @queryParams -Name $q.Name -Dax $q.Dax) }
+        catch {
+            $data[$key] = @()
+            $warnings += ('{0}: {1}' -f $key, $_.Exception.Message)
+            Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("{0} failed; rows of that kind will be missing: {1}" -f $q.Dax, $_.Exception.Message)
+        }
+    }
+
+    # 3. Best-effort raw INFO.* (officially unsupported on the JSON endpoint): stop at the first "not supported" answer.
+    $rawQueries = [ordered]@{
         partitions       = 'EVALUATE INFO.PARTITIONS()'
+        model            = 'EVALUATE INFO.MODEL()'
         roles            = 'EVALUATE INFO.ROLES()'
         tablepermissions = 'EVALUATE INFO.TABLEPERMISSIONS()'
         calcgroups       = 'EVALUATE INFO.CALCULATIONGROUPS()'
@@ -640,25 +1174,32 @@ function Get-IQModelDetailViaDax {
         levels           = 'EVALUATE INFO.LEVELS()'
         calcdependency   = 'EVALUATE INFO.CALCDEPENDENCY()'
     }
-    $data = @{ tables = $tables }
-    $warnings = @()
-    foreach ($name in $queries.Keys) {
-        try {
-            $data[$name] = @(Get-IQDaxInfoRowSet @queryParams -Name $name -Dax $queries[$name])
-        }
+    $rawBlocked = $false
+    $blockReason = ''
+    foreach ($name in $rawQueries.Keys) {
+        if ($rawBlocked) { $data[$name] = @(); if ($name -ne 'model') { $unavailable.Add($name) }; continue }
+        try { $data[$name] = @(Get-IQDaxInfoRowSet @queryParams -Name $name -Dax $rawQueries[$name]) }
         catch {
             $data[$name] = @()
-            $warnings += ('{0}: {1}' -f $name, $_.Exception.Message)
-            Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("{0} failed; rows of that kind will be missing: {1}" -f $queries[$name], $_.Exception.Message)
+            if ($name -ne 'model') { $unavailable.Add($name) }
+            if (Test-IQDaxInfoUnsupportedMessage -Message $_.Exception.Message) {
+                $rawBlocked = $true
+                $blockReason = $_.Exception.Message
+            }
+            else {
+                $warnings += ('{0}: {1}' -f $name, $_.Exception.Message)
+                Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("{0} failed; rows of that kind will be missing: {1}" -f $rawQueries[$name], $_.Exception.Message)
+            }
         }
     }
+    if ($rawBlocked) {
+        Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("Raw INFO.* functions are not available through executeQueries for this model; skipped: {0}. Partitions, roles/RLS filters, calculation items, hierarchies and INFO.CALCDEPENDENCY rows will be missing (engine: {1})" -f ($unavailable -join ', '), $blockReason)
+    }
+    $result.Unavailable = @($unavailable.ToArray())
 
-    # Enum maps.
-    $modeMap = @{ 0 = 'Default'; 1 = 'Import'; 2 = 'DirectQuery'; 3 = 'Push'; 4 = 'Dual'; 5 = 'DirectLake' }
-    $cardinalityMap = @{ 0 = 'None'; 1 = 'One'; 2 = 'Many' }
-    $crossFilterMap = @{ 1 = 'OneDirection'; 2 = 'BothDirections'; 3 = 'Automatic' }
-
-    # Default storage mode of the model (used when a partition inherits Mode=Default; audit X1-19).
+    # Shapes and indexes.
+    $shape = ConvertTo-IQDaxModelShape -Data $data -ViewMode $viewMode
+    $modeMap = @{ 0 = 'Import'; 1 = 'DirectQuery'; 2 = 'Default'; 3 = 'Push'; 4 = 'Dual'; 5 = 'DirectLake' }
     $defaultMode = 'Default'
     $modelRow = @($data['model'])
     if ($modelRow.Count -gt 0 -and $null -ne $modelRow[0]) {
@@ -671,202 +1212,155 @@ function Get-IQModelDetailViaDax {
         if ($m -eq 'Default') { return $defaultMode }
         return $m
     }
-
-    # Indexes.
+    $tableNameById = $shape.TableNameById
     $tableIndex = Get-IQDaxIndex -Rows $data['tables']
-    $columnIndex = Get-IQDaxIndex -Rows $data['columns']
     $hierarchyIndex = Get-IQDaxIndex -Rows $data['hierarchies']
     $roleIndex = Get-IQDaxIndex -Rows $data['roles']
-    $calcGroupTableIds = @{}
+    $calcGroupById = @{}
     foreach ($cg in @($data['calcgroups'])) {
-        $tid = Get-IQDaxMember -Object $cg -Name 'TableID'
-        if ($null -ne $tid) { $calcGroupTableIds[[string]$tid] = $true }
+        $tid = [string](Get-IQDaxMember -Object $cg -Name 'TableID')
+        if ($tableNameById.ContainsKey($tid)) { $calcGroupById[[string](Get-IQDaxMember -Object $cg -Name 'ID')] = $tableNameById[$tid] }
     }
     $calcGroupTableNames = @{}
-    foreach ($tid in $calcGroupTableIds.Keys) {
-        $n = Get-IQDaxIndexedName -Index $tableIndex -Id $tid
-        if ($n) { $calcGroupTableNames[$n] = $true }
-    }
-    # First (lowest ID) partition per table gives the table storage mode (TE takes Partitions[0]).
+    foreach ($t in $shape.Tables) { if ($t.IsCalculationGroup) { $calcGroupTableNames[$t.Name] = $true } }
+    foreach ($n in $calcGroupById.Values) { $calcGroupTableNames[[string]$n] = $true }
+    # First (lowest ID) partition per table gives the table storage mode when INFO.VIEW.TABLES() did not (TE takes Partitions[0]).
     $firstPartitionMode = @{}
     foreach ($p in (@($data['partitions']) | Sort-Object { [double](Get-IQDaxMember -Object $_ -Name 'ID') })) {
         $tid = [string](Get-IQDaxMember -Object $p -Name 'TableID')
-        if ($tid -eq '') { continue }
-        if (-not $firstPartitionMode.ContainsKey($tid)) { $firstPartitionMode[$tid] = (& $resolveMode (Get-IQDaxMember -Object $p -Name 'Mode')) }
+        if ($tid -eq '' -or -not $tableNameById.ContainsKey($tid)) { continue }
+        $tn = $tableNameById[$tid]
+        if (-not $firstPartitionMode.ContainsKey($tn)) { $firstPartitionMode[$tn] = (& $resolveMode (Get-IQDaxMember -Object $p -Name 'Mode')) }
     }
 
     $rows = New-Object System.Collections.Generic.List[object]
 
     # Tables (all, including calculation-group tables).
-    foreach ($t in @($data['tables'])) {
-        $tid = [string](Get-IQDaxMember -Object $t -Name 'ID')
-        $name = [string](Get-IQDaxMember -Object $t -Name 'Name')
-        $mode = ''
-        if ($firstPartitionMode.ContainsKey($tid)) { $mode = $firstPartitionMode[$tid] }
-        $rows.Add((New-IQModelDetailRow -Type 'Table' -Common $common -Fields @{
-                    Table = $name; Name = $name; IsHidden = (Get-IQDaxMember -Object $t -Name 'IsHidden'); TableStorageMode = $mode
-                    Description = (Get-IQDaxMember -Object $t -Name 'Description')
-                }))
+    foreach ($t in $shape.Tables) {
+        $mode = [string]$t.StorageMode
+        if ($mode -eq '' -and $firstPartitionMode.ContainsKey($t.Name)) { $mode = $firstPartitionMode[$t.Name] }
+        $rows.Add((New-IQModelDetailRow -Type 'Table' -Common $common -Fields @{ Table = $t.Name; Name = $t.Name; IsHidden = $t.IsHidden; TableStorageMode = $mode; Description = $t.Description }))
     }
 
     # Calculation groups (Table = Name = the calc-group table name) and their items.
-    foreach ($cg in @($data['calcgroups'])) {
-        $tid = [string](Get-IQDaxMember -Object $cg -Name 'TableID')
-        $tableRow = $null
-        if ($tableIndex.ContainsKey($tid)) { $tableRow = $tableIndex[$tid] }
-        $groupName = Get-IQDaxIndexedName -Index $tableIndex -Id $tid
-        $desc = Get-IQDaxMember -Object $cg -Name 'Description'
-        if (($null -eq $desc -or [string]$desc -eq '') -and $null -ne $tableRow) { $desc = Get-IQDaxMember -Object $tableRow -Name 'Description' }
+    $groupTables = New-Object System.Collections.Generic.List[string]
+    foreach ($t in $shape.Tables) { if ($t.IsCalculationGroup) { $groupTables.Add($t.Name) } }
+    foreach ($n in $calcGroupById.Values) { if (-not $groupTables.Contains([string]$n)) { $groupTables.Add([string]$n) } }
+    $calcItemObjects = New-Object System.Collections.Generic.List[object]
+    foreach ($groupName in $groupTables) {
+        $tableRow = @($shape.Tables | Where-Object { $_.Name -eq $groupName })
+        $desc = $null
         $hidden = $null
-        if ($null -ne $tableRow) { $hidden = Get-IQDaxMember -Object $tableRow -Name 'IsHidden' }
+        if ($tableRow.Count -gt 0) { $desc = $tableRow[0].Description; $hidden = $tableRow[0].IsHidden }
+        $cgRow = @($data['calcgroups'] | Where-Object { $null -ne $_ -and $calcGroupById.ContainsKey([string](Get-IQDaxMember -Object $_ -Name 'ID')) -and $calcGroupById[[string](Get-IQDaxMember -Object $_ -Name 'ID')] -eq $groupName })
+        if (($null -eq $desc -or [string]$desc -eq '') -and $cgRow.Count -gt 0) { $desc = Get-IQDaxMember -Object $cgRow[0] -Name 'Description' }
         $rows.Add((New-IQModelDetailRow -Type 'CalculationGroup' -Common $common -Fields @{ Table = $groupName; Name = $groupName; Description = $desc; IsHidden = $hidden }))
-        $cgId = [string](Get-IQDaxMember -Object $cg -Name 'ID')
-        foreach ($ci in @($data['calcitems'])) {
-            if ([string](Get-IQDaxMember -Object $ci -Name 'CalculationGroupID') -ne $cgId) { continue }
-            $rows.Add((New-IQModelDetailRow -Type 'CalculationItem' -Common $common -Fields @{
-                        Table = $groupName; Name = (Get-IQDaxMember -Object $ci -Name 'Name')
-                        Description = (Get-IQDaxMember -Object $ci -Name 'Description'); Expression = (Get-IQDaxMember -Object $ci -Name 'Expression')
-                    }))
+        if ($cgRow.Count -gt 0) {
+            $cgId = [string](Get-IQDaxMember -Object $cgRow[0] -Name 'ID')
+            foreach ($ci in (@($data['calcitems']) | Sort-Object { [double](Get-IQDaxMember -Object $_ -Name 'Ordinal') })) {
+                if ([string](Get-IQDaxMember -Object $ci -Name 'CalculationGroupID') -ne $cgId) { continue }
+                $ciName = Get-IQDaxMember -Object $ci -Name 'Name'
+                $ciExpr = Get-IQDaxMember -Object $ci -Name 'Expression'
+                $rows.Add((New-IQModelDetailRow -Type 'CalculationItem' -Common $common -Fields @{ Table = $groupName; Name = $ciName; Description = (Get-IQDaxMember -Object $ci -Name 'Description'); Expression = $ciExpr }))
+                $calcItemObjects.Add(@{ ObjectName = [string]$ciName; ObjectType = 'CalculationItem'; Table = $groupName; Expression = $ciExpr })
+            }
         }
     }
 
-    # Columns: every non-RowNumber column as "Column"; calculated columns (Type=3) again as "CalculatedColumn" (mirrors the csx).
-    $columnRows = @($data['columns'])
-    foreach ($c in $columnRows) {
-        $ctype = 0
-        try { $ctype = [int](Get-IQDaxMember -Object $c -Name 'Type') } catch { $ctype = 0 }
-        if ($ctype -eq 1) { continue }
-        $rows.Add((New-IQModelDetailRow -Type 'Column' -Common $common -Fields @{
-                    Table = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $c -Name 'TableID')); Name = (Get-IQDaxColumnName -Column $c)
-                    FormatString = (Get-IQDaxMember -Object $c -Name 'FormatString'); DisplayFolder = (Get-IQDaxMember -Object $c -Name 'DisplayFolder')
-                    Description = (Get-IQDaxMember -Object $c -Name 'Description'); IsHidden = (Get-IQDaxMember -Object $c -Name 'IsHidden')
-                }))
+    # Columns: every non-RowNumber column as "Column"; calculated columns again as "CalculatedColumn" (mirrors the csx).
+    $knownColumns = @{}
+    foreach ($c in $shape.Columns) {
+        if ($c.Type -eq 'RowNumber') { continue }
+        if (-not $knownColumns.ContainsKey($c.Table)) { $knownColumns[$c.Table] = @() }
+        $knownColumns[$c.Table] += $c.Name
+        $rows.Add((New-IQModelDetailRow -Type 'Column' -Common $common -Fields @{ Table = $c.Table; Name = $c.Name; FormatString = $c.FormatString; DisplayFolder = $c.DisplayFolder; Description = $c.Description; IsHidden = $c.IsHidden }))
     }
-    foreach ($c in $columnRows) {
-        $ctype = 0
-        try { $ctype = [int](Get-IQDaxMember -Object $c -Name 'Type') } catch { $ctype = 0 }
-        if ($ctype -ne 3) { continue }
-        $rows.Add((New-IQModelDetailRow -Type 'CalculatedColumn' -Common $common -Fields @{
-                    Table = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $c -Name 'TableID')); Name = (Get-IQDaxColumnName -Column $c)
-                    FormatString = (Get-IQDaxMember -Object $c -Name 'FormatString'); DisplayFolder = (Get-IQDaxMember -Object $c -Name 'DisplayFolder')
-                    Description = (Get-IQDaxMember -Object $c -Name 'Description'); IsHidden = (Get-IQDaxMember -Object $c -Name 'IsHidden')
-                    Expression = (Get-IQDaxMember -Object $c -Name 'Expression')
-                }))
+    $calcColumnObjects = New-Object System.Collections.Generic.List[object]
+    foreach ($c in $shape.Columns) {
+        if ($c.Type -ne 'Calculated') { continue }
+        $rows.Add((New-IQModelDetailRow -Type 'CalculatedColumn' -Common $common -Fields @{ Table = $c.Table; Name = $c.Name; FormatString = $c.FormatString; DisplayFolder = $c.DisplayFolder; Description = $c.Description; IsHidden = $c.IsHidden; Expression = $c.Expression }))
+        $calcColumnObjects.Add(@{ ObjectName = $c.Name; ObjectType = 'CalculatedColumn'; Table = $c.Table; Expression = $c.Expression })
     }
 
     # Measures.
-    foreach ($m in @($data['measures'])) {
-        $rows.Add((New-IQModelDetailRow -Type 'Measure' -Common $common -Fields @{
-                    Table = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $m -Name 'TableID')); Name = (Get-IQDaxMember -Object $m -Name 'Name')
-                    FormatString = (Get-IQDaxMember -Object $m -Name 'FormatString'); DisplayFolder = (Get-IQDaxMember -Object $m -Name 'DisplayFolder')
-                    Description = (Get-IQDaxMember -Object $m -Name 'Description'); IsHidden = (Get-IQDaxMember -Object $m -Name 'IsHidden')
-                    Expression = (Get-IQDaxMember -Object $m -Name 'Expression')
-                }))
+    $measureObjects = New-Object System.Collections.Generic.List[object]
+    $measureNames = @()
+    $blankExpressions = 0
+    foreach ($m in $shape.Measures) {
+        $rows.Add((New-IQModelDetailRow -Type 'Measure' -Common $common -Fields @{ Table = $m.Table; Name = $m.Name; FormatString = $m.FormatString; DisplayFolder = $m.DisplayFolder; Description = $m.Description; IsHidden = $m.IsHidden; Expression = $m.Expression }))
+        $measureObjects.Add(@{ ObjectName = $m.Name; ObjectType = 'Measure'; Table = $m.Table; Expression = $m.Expression })
+        $measureNames += $m.Name
+        if ([string]::IsNullOrWhiteSpace([string]$m.Expression)) { $blankExpressions++ }
+    }
+    if ($shape.Measures.Count -gt 0 -and $blankExpressions -eq $shape.Measures.Count) {
+        $result.ExpressionsMasked = $true
+        Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("All {0} measure expressions came back blank: INFO.VIEW.MEASURES()[Expression] is only populated for callers with write permission on the semantic model (workspace Contributor or above)" -f $shape.Measures.Count)
     }
 
-    # Hierarchies and levels.
+    # Hierarchies and levels (raw INFO.HIERARCHIES / INFO.LEVELS, when available).
     foreach ($h in @($data['hierarchies'])) {
-        $rows.Add((New-IQModelDetailRow -Type 'Hierarchy' -Common $common -Fields @{
-                    Table = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $h -Name 'TableID')); Name = (Get-IQDaxMember -Object $h -Name 'Name')
-                    DisplayFolder = (Get-IQDaxMember -Object $h -Name 'DisplayFolder'); Description = (Get-IQDaxMember -Object $h -Name 'Description')
-                    IsHidden = (Get-IQDaxMember -Object $h -Name 'IsHidden')
-                }))
+        $tn = ''
+        $tid = [string](Get-IQDaxMember -Object $h -Name 'TableID')
+        if ($tableNameById.ContainsKey($tid)) { $tn = $tableNameById[$tid] }
+        $rows.Add((New-IQModelDetailRow -Type 'Hierarchy' -Common $common -Fields @{ Table = $tn; Name = (Get-IQDaxMember -Object $h -Name 'Name'); DisplayFolder = (Get-IQDaxMember -Object $h -Name 'DisplayFolder'); Description = (Get-IQDaxMember -Object $h -Name 'Description'); IsHidden = (Get-IQDaxMember -Object $h -Name 'IsHidden') }))
     }
     foreach ($l in @($data['levels'])) {
         $hid = [string](Get-IQDaxMember -Object $l -Name 'HierarchyID')
         $tableName = ''
-        if ($hierarchyIndex.ContainsKey($hid)) { $tableName = Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $hierarchyIndex[$hid] -Name 'TableID') }
-        $rows.Add((New-IQModelDetailRow -Type 'Level' -Common $common -Fields @{
-                    Table = $tableName; Name = (Get-IQDaxMember -Object $l -Name 'Name'); Description = (Get-IQDaxMember -Object $l -Name 'Description')
-                }))
+        if ($hierarchyIndex.ContainsKey($hid)) {
+            $tid = [string](Get-IQDaxMember -Object $hierarchyIndex[$hid] -Name 'TableID')
+            if ($tableNameById.ContainsKey($tid)) { $tableName = $tableNameById[$tid] }
+        }
+        $rows.Add((New-IQModelDetailRow -Type 'Level' -Common $common -Fields @{ Table = $tableName; Name = (Get-IQDaxMember -Object $l -Name 'Name'); Description = (Get-IQDaxMember -Object $l -Name 'Description') }))
     }
 
     # Partitions (Expression = M / DAX / query text from QueryDefinition).
     foreach ($p in @($data['partitions'])) {
         $expr = Get-IQDaxMember -Object $p -Name 'QueryDefinition'
         if ($null -eq $expr -or [string]$expr -eq '') { $expr = Get-IQDaxMember -Object $p -Name 'Expression' }
-        $rows.Add((New-IQModelDetailRow -Type 'Partition' -Common $common -Fields @{
-                    Table = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $p -Name 'TableID')); Name = (Get-IQDaxMember -Object $p -Name 'Name')
-                    Description = (Get-IQDaxMember -Object $p -Name 'Description'); TableStorageMode = (& $resolveMode (Get-IQDaxMember -Object $p -Name 'Mode'))
-                    Expression = $expr
-                }))
+        $tn = ''
+        $tid = [string](Get-IQDaxMember -Object $p -Name 'TableID')
+        if ($tableNameById.ContainsKey($tid)) { $tn = $tableNameById[$tid] }
+        $rows.Add((New-IQModelDetailRow -Type 'Partition' -Common $common -Fields @{ Table = $tn; Name = (Get-IQDaxMember -Object $p -Name 'Name'); Description = (Get-IQDaxMember -Object $p -Name 'Description'); TableStorageMode = (& $resolveMode (Get-IQDaxMember -Object $p -Name 'Mode')); Expression = $expr }))
     }
 
     # RLS filters: one row per table permission, Name = role name.
     foreach ($tp in @($data['tablepermissions'])) {
         $roleName = Get-IQDaxIndexedName -Index $roleIndex -Id (Get-IQDaxMember -Object $tp -Name 'RoleID')
-        $rows.Add((New-IQModelDetailRow -Type 'RLSFilter' -Common $common -Fields @{
-                    Table = (Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $tp -Name 'TableID')); Name = $roleName
-                    Expression = (Get-IQDaxMember -Object $tp -Name 'FilterExpression')
-                }))
+        $tn = ''
+        $tid = [string](Get-IQDaxMember -Object $tp -Name 'TableID')
+        if ($tableNameById.ContainsKey($tid)) { $tn = $tableNameById[$tid] }
+        $rows.Add((New-IQModelDetailRow -Type 'RLSFilter' -Common $common -Fields @{ Table = $tn; Name = $roleName; Expression = (Get-IQDaxMember -Object $tp -Name 'FilterExpression') }))
     }
 
     # Relationships.
-    foreach ($r in @($data['relationships'])) {
-        $fromTable = Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $r -Name 'FromTableID')
-        $toTable = Get-IQDaxIndexedName -Index $tableIndex -Id (Get-IQDaxMember -Object $r -Name 'ToTableID')
-        $fromColumn = ''
-        $toColumn = ''
-        $fcid = [string](Get-IQDaxMember -Object $r -Name 'FromColumnID')
-        $tcid = [string](Get-IQDaxMember -Object $r -Name 'ToColumnID')
-        if ($columnIndex.ContainsKey($fcid)) { $fromColumn = Get-IQDaxColumnName -Column $columnIndex[$fcid] }
-        if ($columnIndex.ContainsKey($tcid)) { $toColumn = Get-IQDaxColumnName -Column $columnIndex[$tcid] }
-        $isActive = Get-IQDaxMember -Object $r -Name 'IsActive'
+    foreach ($r in $shape.Relationships) {
         $status = ''
-        if ($null -ne $isActive) { try { if ([System.Convert]::ToBoolean($isActive)) { $status = 'True' } else { $status = 'False' } } catch { $status = [string]$isActive } }
+        if ($null -ne $r.IsActive) { if ($r.IsActive) { $status = 'True' } else { $status = 'False' } }
         $rows.Add((New-IQModelDetailRow -Type 'Relationship' -Common $common -Fields @{
-                    Table = $fromTable; Name = $fromColumn; Expression = (Get-IQDaxMember -Object $r -Name 'Name')
-                    RelationshipFromTable = $fromTable; RelationshipFromColumn = $fromColumn; RelationshipToTable = $toTable; RelationshipToColumn = $toColumn
-                    RelationshipStatus = $status
-                    RelationshipFromCardinality = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'FromCardinality') -Map $cardinalityMap)
-                    RelationshipToCardinality = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'ToCardinality') -Map $cardinalityMap)
-                    RelationshipCrossFilteringBehavior = (ConvertTo-IQDaxEnumName -Value (Get-IQDaxMember -Object $r -Name 'CrossFilteringBehavior') -Map $crossFilterMap)
+                    Table = $r.FromTable; Name = $r.FromColumn; Expression = $r.Name
+                    RelationshipFromTable = $r.FromTable; RelationshipFromColumn = $r.FromColumn; RelationshipToTable = $r.ToTable; RelationshipToColumn = $r.ToColumn
+                    RelationshipStatus = $status; RelationshipFromCardinality = $r.FromCardinality; RelationshipToCardinality = $r.ToCardinality
+                    RelationshipCrossFilteringBehavior = $r.CrossFilteringBehavior
                 }))
     }
 
-    # Measure dependencies from INFO.CALCDEPENDENCY() (direct dependencies; brief section 13 mapping).
-    $objectTypeMap = @{ 'MEASURE' = 'Measure'; 'CALC_COLUMN' = 'CalculatedColumn'; 'CALCULATION_ITEM' = 'CalculationItem'; 'CALC_ITEM' = 'CalculationItem' }
-    $mdRows = New-Object System.Collections.Generic.List[object]
-    $mdSeen = @{}
-    foreach ($d in @($data['calcdependency'])) {
-        $objType = ([string](Get-IQDaxMember -Object $d -Name 'OBJECT_TYPE')).Trim().ToUpperInvariant()
-        if (-not $objectTypeMap.ContainsKey($objType)) { continue }
-        $refType = ([string](Get-IQDaxMember -Object $d -Name 'REFERENCED_OBJECT_TYPE')).Trim().ToUpperInvariant()
-        $refTable = [string](Get-IQDaxMember -Object $d -Name 'REFERENCED_TABLE')
-        $refObject = [string](Get-IQDaxMember -Object $d -Name 'REFERENCED_OBJECT')
-        $dependsOn = $null
-        $dependsOnType = $null
-        switch ($refType) {
-            'MEASURE' { $dependsOn = ConvertTo-IQDaxBracketRef -Name $refObject; $dependsOnType = 'Measure' }
-            'COLUMN' { $dependsOn = (ConvertTo-IQDaxTableRef -Table $refTable) + (ConvertTo-IQDaxBracketRef -Name $refObject); $dependsOnType = 'Column' }
-            'CALC_COLUMN' { $dependsOn = (ConvertTo-IQDaxTableRef -Table $refTable) + (ConvertTo-IQDaxBracketRef -Name $refObject); $dependsOnType = 'Column' }
-            'TABLE' {
-                $dependsOn = ConvertTo-IQDaxTableRef -Table $refTable
-                if ($calcGroupTableNames.ContainsKey($refTable)) { $dependsOnType = 'CalculationGroupTable' } else { $dependsOnType = 'Table' }
-            }
-            'CALC_TABLE' {
-                $dependsOn = ConvertTo-IQDaxTableRef -Table $refTable
-                if ($calcGroupTableNames.ContainsKey($refTable)) { $dependsOnType = 'CalculationGroupTable' } else { $dependsOnType = 'Table' }
-            }
-            'CALCULATION_ITEM' { $dependsOn = (ConvertTo-IQDaxTableRef -Table $refTable) + (ConvertTo-IQDaxBracketRef -Name $refObject); $dependsOnType = 'CalculationItem' }
-            'CALC_ITEM' { $dependsOn = (ConvertTo-IQDaxTableRef -Table $refTable) + (ConvertTo-IQDaxBracketRef -Name $refObject); $dependsOnType = 'CalculationItem' }
-            default { $dependsOn = $null }
-        }
-        if ($null -eq $dependsOn) { continue }
-        $objectName = [string](Get-IQDaxMember -Object $d -Name 'OBJECT')
-        $objectTable = [string](Get-IQDaxMember -Object $d -Name 'TABLE')
-        $dedupeKey = ($objType + '|' + $objectTable + '|' + $objectName + '|' + $dependsOn + '|' + $dependsOnType)
-        if ($mdSeen.ContainsKey($dedupeKey)) { continue }
-        $mdSeen[$dedupeKey] = $true
-        $mdRows.Add([ordered]@{
-                ObjectName = $objectName; ObjectType = $objectTypeMap[$objType]; DependsOn = $dependsOn; DependsOnType = $dependsOnType
-                ModelAsOfDate = $common.ModelAsOfDate; ModelName = $common.ModelName; ModelID = $common.ModelID
-            })
+    # Measure dependencies: INFO.CALCDEPENDENCY() when it returned rows, else the regex reference extractor.
+    $mdRows = @()
+    if (@($data['calcdependency']).Count -gt 0) {
+        $mdRows = @(ConvertTo-IQDaxCalcDependencyRows -Rows $data['calcdependency'] -Common $common -CalcGroupTableNames $calcGroupTableNames)
+        $result.DependencySource = 'INFO.CALCDEPENDENCY'
+    }
+    else {
+        $objects = @($measureObjects.ToArray()) + @($calcColumnObjects.ToArray()) + @($calcItemObjects.ToArray())
+        $tableNames = @($shape.Tables | ForEach-Object { $_.Name })
+        $mdRows = @(ConvertTo-IQMeasureDependencyRows -Objects $objects -Common $common -KnownTables $tableNames -KnownMeasures $measureNames -KnownColumns $knownColumns -CalculationGroupTables @($calcGroupTableNames.Keys))
+        if ($objects.Count -gt 0 -and -not $result.ExpressionsMasked) { $result.DependencySource = 'expression parsing (approximate)' }
     }
 
     try {
         $result.RowCount = Write-IQCsvFile -Path $csvPath -Header (Get-IQModelDetailHeader) -Rows $rows.ToArray()
-        $result.DependencyRowCount = Write-IQCsvFile -Path $mdPath -Header (Get-IQMeasureDependencyHeader) -Rows $mdRows.ToArray()
+        $result.DependencyRowCount = Write-IQCsvFile -Path $mdPath -Header (Get-IQMeasureDependencyHeader) -Rows $mdRows
     }
     catch {
         $result.Message = 'Could not write CSV files: ' + $_.Exception.Message
@@ -877,7 +1371,11 @@ function Get-IQModelDetailViaDax {
     $result.Csv = $csvPath
     $result.MdCsv = $mdPath
     $result.Outputs = @($csvPath, $mdPath)
-    $result.Message = ('{0} object rows, {1} dependency rows via DAX INFO.*' -f $result.RowCount, $result.DependencyRowCount)
+    $source = 'INFO.VIEW.*'
+    if (-not $viewMode) { $source = 'INFO.*' }
+    $result.Message = ('{0} object rows, {1} dependency rows via DAX {2} (dependencies: {3})' -f $result.RowCount, $result.DependencyRowCount, $source, $result.DependencySource)
+    if ($result.ExpressionsMasked) { $result.Message += '; measure expressions masked (write permission on the model required)' }
+    if ($unavailable.Count -gt 0) { $result.Message += ' (unavailable via REST: ' + ($unavailable -join ', ') + ')' }
     if ($warnings.Count -gt 0) { $result.Message += ' (partial: ' + ($warnings -join '; ') + ')' }
     Write-IQLog -Level Success -Stage $Stage -Item $item -Message $result.Message
     return $result

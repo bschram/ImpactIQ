@@ -14,7 +14,8 @@
 #                             (continuationUri paging), one item per UTC day for the last -ActivityDays days (max 28)
 #   usage-<workspaceId>       Get-IQUsageMetrics (ImpactIQ.Dax.ps1) per real workspace in scope
 # The admin collectors run only when GET admin/capacities?$top=1 succeeds (Fabric administrator); otherwise admin-groups
-# and admin-scan are checkpointed as Skipped with the reason and the run continues.
+# and admin-scan are checkpointed as Skipped with the reason and the run continues. A Skipped admin checkpoint is NOT
+# treated as final: when a later (resumed) run passes the probe, the collector runs for real.
 #
 # Raw JSON (never deleted by this module):
 #   extracts\admin\groups-<page>.json            one file per admin/groups page
@@ -385,8 +386,8 @@ function Get-IQExtrasUserRow {
         if ($null -ne $v) { $right = [string]$v; break }
     }
     $row[$AccessRightColumn] = $right
-    $profile = Get-IQExtrasMember -Object $User -Name 'profile'
-    if ($null -ne $profile) { $row['UserProfileJson'] = ConvertTo-IQExtrasScalar -Value $profile }
+    $userProfile = Get-IQExtrasMember -Object $User -Name 'profile'
+    if ($null -ne $userProfile) { $row['UserProfileJson'] = ConvertTo-IQExtrasScalar -Value $userProfile }
     return $row
 }
 
@@ -1364,8 +1365,14 @@ function Invoke-IQExtrasCollector {
         [Parameter(Mandatory = $false)][string]$Stage = 'Extras'
     )
     if (Test-IQItemDone -Stage $Stage -ItemKey $ItemKey) {
-        Write-IQLog -Level Info -Stage $Stage -Item $Item -Message 'Already collected (checkpoint); skipping'
-        return 'AlreadyDone'
+        $previous = Get-IQItemCheckpoint -Stage $Stage -ItemKey $ItemKey
+        $previousStatus = [string](Get-IQExtrasMember -Object $previous -Name 'status')
+        if ($previousStatus -ne 'Skipped') {
+            Write-IQLog -Level Info -Stage $Stage -Item $Item -Message 'Already collected (checkpoint); skipping'
+            return 'AlreadyDone'
+        }
+        # A Skipped checkpoint means the admin probe failed on an earlier run; now that it succeeded, collect for real.
+        Write-IQLog -Level Info -Stage $Stage -Item $Item -Message 'Previously skipped (admin probe failed); collecting now'
     }
     Write-IQLog -Level Info -Stage $Stage -Item $Item -Message 'Collecting'
     $result = $null

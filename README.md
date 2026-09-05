@@ -98,6 +98,25 @@ This automatically:
 
 🎉 That’s it — enjoy! 🎉
 
+---
+
+## 🤖 Automation / Headless (v3)
+
+Everything above still works exactly as before. v3 adds a **headless, resumable** entry point for scheduled runs — no pop-ups, no browser sign-in, and a run that dies at hour five picks up where it stopped.
+
+```powershell
+# unattended run against every workspace the account can see (GCC example); resumes an unfinished run automatically
+.\ImpactIQ.ps1 -BaseFolder "C:\Power BI Backups" -NonInteractive -Environment USGov -AllWorkspaces -IncludeMyWorkspace
+```
+
+- **Sign-in without a service principal**: `-AuthMode DeviceCode` prints a code once (also to a Teams/Slack webhook via `IMPACTIQ_DEVICECODE_WEBHOOK`), caches the refresh token encrypted (`IMPACTIQ_TOKEN_CACHE_KEY` or Windows DPAPI) and runs silently afterwards; `Credential` (`IMPACTIQ_USERNAME` / `IMPACTIQ_PASSWORD`) for MFA-exempt accounts; `AzContext` reuses an Az PowerShell login; `AccessToken` takes `IMPACTIQ_PBI_TOKEN`. → [docs/Auth-Options.md](docs/Auth-Options.md)
+- **Azure DevOps pipeline included**: `pipelines/azure-pipelines.yml` runs weekdays 06:00 UTC on a hosted or self-hosted Windows agent, restores the previous run's state, resumes, and publishes the four workbooks, the state and the logs as artifacts; optionally commits the workbooks to a branch so the Power BI template can read them from Azure Repos with a PAT (`Web.Contents`), or copies them to a SharePoint/OneDrive sync folder. → [docs/Azure-DevOps.md](docs/Azure-DevOps.md)
+- **Scope from the command line**: `-WorkspaceName "Finance*","HR"`, `-WorkspaceId`, `-AllWorkspaces`, `-RunMode Reports -ReportId ...`, `-RunMode Models -DatasetId ...`. Nothing selected headless = the run stops instead of scanning everything.
+- **Stages, checkpoints, exit codes**: `-Stages Inventory,ModelBackup,ReportBackup,ReportDetail,ModelDetail,Dataflows,Extras,Assemble`, `-Resume Auto|Always|Never`, `-Force`; exit `0` ok, `2` finished with item failures (see the new `Failures` sheet), `1` fatal. State lives under `State\runs\<yyyy-MM-dd>\` next to the backups. → [docs/Headless-and-Resume.md](docs/Headless-and-Resume.md)
+- **More data, same workbooks**: new sheets `Dashboards`, `DashboardTiles`, `Capacities`, `WorkspaceUsers`, `DatasetUsers`, `DatasetParameters`, `DatasetDQRefreshSchedule`, `RunSummary`, `Failures`, `InventoryErrors`, `ReportExports`; optional `-IncludeUsageMetrics` (per-workspace usage via DAX) and `-IncludeAdminApis` (Scanner API + activity events for Fabric admins); a DAX `INFO.*` fallback (`-ModelDetailMethod Dax`) documents models when Tabular Editor / XMLA is not available. → [docs/Data-Coverage.md](docs/Data-Coverage.md)
+- **Where to run it**: decision matrix (hosted agent + MFA-exempt account, hosted agent + device code with a cache key, self-hosted agent on any Windows box, local Task Scheduler) and five-minute setups. → [docs/Automation.md](docs/Automation.md)
+
+
 
 
 
@@ -108,6 +127,10 @@ This automatically:
 ---
 
 ### ℹ️ Additional Notes
+
+> 🤖 **Running it on a schedule?**  
+> Use `ImpactIQ.ps1 -NonInteractive` (see *Automation / Headless* above). The 55-minute re-login timer of v2 is gone: tokens are refreshed silently before they expire, every model/report/dataflow is checkpointed the moment it finishes, and a re-run skips what already succeeded. The environment prompt below only appears in interactive runs (`IMPACTIQ_ENVIRONMENT` or `-Environment` replaces it); its timeout is 60 seconds.
+
 
 > 🌐 **Sovereign Cloud Support**  
 > The script now supports Power BI in Government and International cloud environments:

@@ -27,7 +27,9 @@
 
     Audit items honoured: C7-01 (paginated detection via ReportType / ReportWebUrl, RDL branch reachable), C7-02 (group-less
     routes for pseudo workspaces, no Fabric fallback there), C7-03 (all output through Write-IQLog, per-item checkpoints),
-    C7-04/C7-13 (definition export verified, staging cleaned in finally), C7-06 (subst only as long-path fallback),
+    C7-04/C7-13 (definition export verified, staging cleaned in finally), C7-05 (pbi-tools needs Power BI Desktop: extraction
+    is attempted once and disabled for the rest of the run when pbi-tools reports a Desktop/msmdsrv problem; the report backup
+    itself always stays a success), C7-06 (subst only as long-path fallback),
     C7-07 (retry/backoff and bounded LRO polling come from the Http module), C7-08/C7-09 (no folder wipe, .partial downloads,
     resume via checkpoints, .bim moved immediately per report, existing .bim reused), C7-10 (name collisions get an id suffix,
     empty names get a fallback), C7-11 (pbi-tools only on real IncludeModel PBIX files), C7-12 (exit codes and tool output
@@ -299,14 +301,52 @@ function Test-IQReportPbiToolsAvailable {
         if ($probe) { return @{ Available = $false; Reason = ('pbi-tools probe failed: ' + $probe) } }
         return @{ Available = $false; Reason = 'pbi-tools probe did not pass' }
     }
+    $disabled = ''
+    try { if ($script:IQ.Tools.ContainsKey('PbiToolsExtractDisabled')) { $disabled = [string]$script:IQ.Tools.PbiToolsExtractDisabled } } catch { $disabled = '' }
+    if (-not [string]::IsNullOrWhiteSpace($disabled)) { return @{ Available = $false; Reason = ('model extraction disabled for the rest of this run: ' + $disabled) } }
+    # Power BI Desktop detection (Initialize-IQTools) is a heuristic: when it is negative we still try the first PBIX and
+    # disable extraction for the rest of the run only when pbi-tools itself reports a Desktop/msmdsrv problem (C7-05).
+    $desktopWarning = ''
     try {
         if ($script:IQ.Tools.ContainsKey('PbiDesktopFound')) {
             $desktop = ConvertTo-IQReportBool -Value $script:IQ.Tools.PbiDesktopFound
-            if ($desktop -eq $false) { return @{ Available = $false; Reason = 'Power BI Desktop is not installed on this host; pbi-tools cannot read the embedded model of a PBIX (ModelDetail falls back to DAX)' } }
+            if ($desktop -eq $false) { $desktopWarning = 'Power BI Desktop was not detected on this host; pbi-tools needs it to read the embedded model of a PBIX. Extraction is attempted once and disabled for the run if pbi-tools reports that problem (ModelDetail then falls back to DAX)' }
         }
     }
-    catch { $null = $null }
-    return @{ Available = $true; Reason = '' }
+    catch { $desktopWarning = '' }
+    return @{ Available = $true; Reason = ''; Warning = $desktopWarning }
+}
+
+function Disable-IQReportModelExtract {
+    <#
+    .SYNOPSIS
+    Disables pbi-tools model extraction for the rest of the run when a failure points at a missing Power BI Desktop / AS engine (private).
+    .DESCRIPTION
+    Returns $true when extraction was disabled. Triggers: the tool output mentions Power BI Desktop / msmdsrv / PBIDesktop,
+    or Power BI Desktop was not detected by Initialize-IQTools and the very first extraction failed. Later reports then
+    skip the pbi-tools round-trip in seconds instead of minutes (audit C7-05); their report backup still succeeds.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Output,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Reason,
+        [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup',
+        [Parameter(Mandatory = $false)][string]$Item
+    )
+    if (-not $script:IQ.Tools) { return $false }
+    $mentionsDesktop = (-not [string]::IsNullOrWhiteSpace($Output)) -and ($Output -match '(?i)Power ?BI ?Desktop|msmdsrv|PBIDesktop|Analysis Services instance|no .*desktop .*install')
+    $desktopMissing = $false
+    try { if ($script:IQ.Tools.ContainsKey('PbiDesktopFound')) { $desktopMissing = ((ConvertTo-IQReportBool -Value $script:IQ.Tools.PbiDesktopFound) -eq $false) } } catch { $desktopMissing = $false }
+    $firstAttempt = $true
+    try { if ($script:IQ.Tools.ContainsKey('PbiToolsExtractAttempts')) { $firstAttempt = ([int]$script:IQ.Tools.PbiToolsExtractAttempts -le 1) } } catch { $firstAttempt = $true }
+    if (-not ($mentionsDesktop -or ($desktopMissing -and $firstAttempt))) { return $false }
+    $why = 'pbi-tools cannot read embedded models on this host'
+    if ($mentionsDesktop) { $why += ' (its output mentions Power BI Desktop / msmdsrv)' }
+    elseif ($desktopMissing) { $why += ' (Power BI Desktop not detected and the first extraction failed)' }
+    if (-not [string]::IsNullOrWhiteSpace($Reason)) { $why += ': ' + $Reason }
+    $script:IQ.Tools.PbiToolsExtractDisabled = $why
+    Write-IQLog -Level Warn -Stage $Stage -Item $Item -Message ('Model extraction from PBIX files disabled for the rest of this run - ' + $why + '. Report backups continue; ModelDetail falls back to DAX for Pro models.')
+    return $true
 }
 
 # =====================================================================================================================
@@ -890,11 +930,15 @@ function Invoke-IQReportModelExtract {
         }
 
         Write-IQLog -Level Info -Stage $Stage -Item $item -Message ('Extracting model from ' + [string]$Work.FileName)
+        $attempts = 0
+        try { if ($script:IQ.Tools.ContainsKey('PbiToolsExtractAttempts')) { $attempts = [int]$script:IQ.Tools.PbiToolsExtractAttempts } } catch { $attempts = 0 }
+        $script:IQ.Tools.PbiToolsExtractAttempts = $attempts + 1
         $extractArgs = ('extract "{0}" -extractFolder "{1}" -modelSerialization Raw' -f [string]$Work.FilePath, $target)
         $r1 = Invoke-IQProcess -FilePath $pbiTools -ArgumentList $extractArgs -WorkingDirectory $tempRoot -TimeoutMinutes $timeout -LogName ('pbitools-extract-' + $safeKey) -Stage $Stage -Item $item
         if ($r1.TimedOut -or $r1.StartError -or [int]$r1.ExitCode -ne 0) {
             $out.Message = 'pbi-tools extract failed: ' + (Get-IQReportProcessSummary -Result $r1)
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message $out.Message
+            Disable-IQReportModelExtract -Output ([string]$r1.StdOut + "`n" + [string]$r1.StdErr) -Reason $out.Message -Stage $Stage -Item $item | Out-Null
             return $out
         }
         $bimArgs = ('generate-bim "{0}" -transforms RemovePBIDataSourceVersion' -f $target)
@@ -906,6 +950,7 @@ function Invoke-IQReportModelExtract {
         if ($bimFiles.Count -eq 0) {
             $out.Message = 'pbi-tools produced no .bim (the PBIX has no embedded model, or generate-bim failed: ' + (Get-IQReportProcessSummary -Result $r2) + ')'
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message $out.Message
+            Disable-IQReportModelExtract -Output ([string]$r1.StdOut + "`n" + [string]$r1.StdErr + "`n" + [string]$r2.StdOut + "`n" + [string]$r2.StdErr) -Reason $out.Message -Stage $Stage -Item $item | Out-Null
             return $out
         }
         $sourceBim = $bimFiles[0].FullName
@@ -1159,6 +1204,9 @@ function Invoke-IQReportBackupStage {
     if ($proCount -gt 0 -and -not $pbiToolsState.Available) {
         Write-IQLog -Level Warn -Stage $stage -Message ("{0} Pro-workspace report(s) in scope but models cannot be extracted from PBIX files: {1}. ModelDetail will use DAX for those models." -f $proCount, $pbiToolsState.Reason)
     }
+    elseif ($proCount -gt 0 -and $pbiToolsState.Warning) {
+        Write-IQLog -Level Warn -Stage $stage -Message ("{0} Pro-workspace report(s) in scope. {1}" -f $proCount, $pbiToolsState.Warning)
+    }
 
     $index = 0
     foreach ($w in $work) {
@@ -1386,10 +1434,19 @@ function New-IQReportDetailWorkingFolder {
     try {
         Remove-IQReportDetailWorkingFolder -Info @{ WorkingDirectory = $root; LinkPath = $link; Root = $root }
         New-Item -ItemType Directory -Path $backups -Force | Out-Null
-        $linkType = 'SymbolicLink'
-        if ($script:IQ.IsWindows) { $linkType = 'Junction' }
-        New-Item -ItemType $linkType -Path $link -Value $RunFolder -ErrorAction Stop | Out-Null
-        if (-not (Test-Path -LiteralPath $link)) { throw "link '$link' was not created" }
+        # Junction first on Windows (no admin / developer mode needed), symbolic link otherwise or as the fallback.
+        $linkTypes = @('SymbolicLink')
+        if ($script:IQ.IsWindows) { $linkTypes = @('Junction', 'SymbolicLink') }
+        $linkType = $null
+        $lastError = $null
+        foreach ($candidate in $linkTypes) {
+            try {
+                New-Item -ItemType $candidate -Path $link -Value $RunFolder -ErrorAction Stop | Out-Null
+                if (Test-Path -LiteralPath $link) { $linkType = $candidate; break }
+            }
+            catch { $lastError = $_.Exception.Message; Remove-IQReportDetailWorkingFolder -Info @{ WorkingDirectory = $root; LinkPath = $link; Root = $root }; New-Item -ItemType Directory -Path $backups -Force | Out-Null }
+        }
+        if (-not $linkType) { throw ("link '{0}' was not created ({1})" -f $link, $lastError) }
         Write-IQLog -Level Debug -Stage 'ReportDetail' -Message ("Working folder {0}: '{1}' -> '{2}' ({3})" -f $root, $link, $RunFolder, $linkType)
         return @{ WorkingDirectory = $root; LinkPath = $link; Root = $root }
     }

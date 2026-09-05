@@ -1,19 +1,31 @@
 # ImpactIQ.Models.ps1 - ModelBackup and ModelDetail stages.
 #
-# Contract: brief sections 2.7, 7.1, 7.2 and 13.
+# Contract: brief sections 2.7, 7.1, 7.2 and 13 (+ task models-revise).
 #   Invoke-IQModelBackupStage  - TE2 XMLA export of every dedicated-capacity dataset in scope to
 #                                "<Model Backups>\<RunId>\<CleanWs> ~ <CleanModel>.bim" (monolith lines 2545-2620), run through
-#                                Invoke-IQProcessBatch with a per-job rename script; Pro workspaces are recorded as Skipped.
+#                                Invoke-IQProcessBatch with a per-job rename script (Method XMLA). When TE2 is unavailable or an
+#                                export fails and a Fabric token exists, the TMSL definition is fetched with Fabric
+#                                semanticModels/{id}/getDefinition?format=TMSL and its model.bim saved under the same name
+#                                (Method FabricDefinition). Pro workspaces: Fabric best effort, else Skipped (ReportBackup/PBIX).
 #   Invoke-IQModelDetailStage  - "<CleanWs> ~ <CleanModel>.csv" / "_MD.csv" per dataset, via the two Tabular Editor csx scripts
-#                                (monolith lines 3140-3290) and/or the DAX INFO.* fallback (Get-IQModelDetailViaDax).
+#                                (monolith lines 3140-3290), the built-in TMSL parser (ImpactIQ.Bim.ps1) and/or the DAX
+#                                INFO.VIEW.* fallback (Get-IQModelDetailViaDax). ModelDetailMethod: Auto | TabularEditor | Bim |
+#                                Dax | Both (Auto/Both order: TabularEditor -> Bim -> Dax).
 #
 # Windows PowerShell 5.1 and PowerShell 7 compatible. Tabular Editor paths are Windows-only and guarded by
-# $script:IQ.IsWindows / $script:IQ.Tools.TabularEditorWorks; on other hosts the DAX path still runs.
+# $script:IQ.IsWindows / $script:IQ.Tools.TabularEditorWorks; on other hosts the Fabric, Bim and DAX paths still run.
 #
 # Cross-module functions used (brief section 2): Write-IQLog, Get-IQCleanName, Get-IQSafeKey, Get-IQToken,
-# Get-IQDateFolder, Invoke-IQProcessBatch, Test-IQItemDone, Set-IQItemDone, Get-IQItemCheckpoint,
-# Get-IQSelectedDatasets, Get-IQSelectedWorkspaces, Get-IQModelBackupFileName, Get-IQModelDetailViaDax.
-# Private helpers are prefixed *-IQModel* and are not part of the contract.
+# Get-IQDateFolder, Invoke-IQProcessBatch, Invoke-IQFabricLro, Test-IQItemDone, Set-IQItemDone, Get-IQItemCheckpoint,
+# ConvertFrom-IQJsonFile, Get-IQSelectedDatasets, Get-IQSelectedWorkspaces, Get-IQModelBackupFileName,
+# Get-IQModelDetailViaDax, Get-IQDaxModelAsOfDate, Export-IQModelDetailFromBim (ImpactIQ.Bim.ps1, loaded here when
+# ImpactIQ.ps1 has not dot-sourced it yet). Private helpers are prefixed *-IQModel* and are not part of the contract.
+
+if (-not (Get-Command -Name 'Export-IQModelDetailFromBim' -ErrorAction SilentlyContinue)) {
+    $iqModelsBimModule = Join-Path $PSScriptRoot 'ImpactIQ.Bim.ps1'
+    if (Test-Path -LiteralPath $iqModelsBimModule) { . $iqModelsBimModule }
+}
+
 
 function Get-IQModelOption {
     <#
@@ -342,11 +354,15 @@ function Complete-IQModelBackupJob {
     <#
     .SYNOPSIS
     Checkpoints one finished XMLA export job: Succeeded when the .bim exists and is non-empty, else Failed (private).
+    .DESCRIPTION
+    With -DeferFailure a missing/empty .bim is not checkpointed: the failure summary is stored on the work entry
+    (XmlaFailure) so the stage can try the Fabric getDefinition fallback after the batch and record one combined outcome.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]$Entry,
-        [Parameter(Mandatory = $true)][hashtable]$WorkMap
+        [Parameter(Mandatory = $true)][hashtable]$WorkMap,
+        [Parameter(Mandatory = $false)][switch]$DeferFailure
     )
     $key = [string](Get-IQModelMember -Object $Entry -Name 'ItemKey')
     if (-not $WorkMap.ContainsKey($key)) { return }
@@ -361,29 +377,178 @@ function Complete-IQModelBackupJob {
         try { $size = (Get-Item -LiteralPath $bim).Length } catch { $size = 0 }
         Set-IQItemDone -Stage 'ModelBackup' -ItemKey $key -Item $w.Item -Outputs @($bim) -Method 'XMLA' -Message $note -Data @{ BaseName = $w.BaseName; BimPath = $bim; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId; SizeBytes = $size } | Out-Null
         Write-IQLog -Level Success -Stage 'ModelBackup' -Item $w.Item -Message ("Exported {0} ({1:N0} bytes)" -f $bim, $size)
+        return
     }
-    else {
-        $message = 'XMLA export produced no .bim: ' + (Get-IQModelResultSummary -Result $result)
-        Set-IQItemDone -Stage 'ModelBackup' -ItemKey $key -Item $w.Item -Status Failed -Method 'XMLA' -Message $message -Data @{ BaseName = $w.BaseName; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
+    $message = 'XMLA export produced no .bim: ' + (Get-IQModelResultSummary -Result $result)
+    if ($DeferFailure) {
+        $w['XmlaFailure'] = $message
+        Write-IQLog -Level Warn -Stage 'ModelBackup' -Item $w.Item -Message ($message + '; trying the Fabric getDefinition fallback')
+        return
     }
+    Set-IQItemDone -Stage 'ModelBackup' -ItemKey $key -Item $w.Item -Status Failed -Method 'XMLA' -Message $message -Data @{ BaseName = $w.BaseName; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
+}
+
+function New-IQModelFabricState {
+    <#
+    .SYNOPSIS
+    Decides once per stage whether the Fabric semantic-model getDefinition fallback can be attempted (private).
+    .DESCRIPTION
+    Returns @{ Enabled; Reason; ConsecutiveFailures; MaxConsecutiveFailures }. Enabled when a Fabric token can be minted
+    (Get-IQToken -Resource Fabric returns a value; the Auth module returns $null when the provider cannot). Environments whose
+    Fabric endpoint is unverified (GCC, GCC High, DoD) are still attempted - the first failures disable the fallback for the
+    rest of the stage (circuit breaker) so a tenant without Fabric costs at most a few calls.
+    #>
+    [CmdletBinding()]
+    param()
+    $state = @{ Enabled = $false; Reason = ''; ConsecutiveFailures = 0; MaxConsecutiveFailures = 3 }
+    $token = $null
+    try { $token = Get-IQToken -Resource Fabric }
+    catch { $state.Reason = 'Fabric token unavailable: ' + $_.Exception.Message; return $state }
+    if ([string]::IsNullOrWhiteSpace([string]$token)) { $state.Reason = 'Fabric token unavailable for this sign-in mode'; return $state }
+    try {
+        if ($script:IQ.Endpoints -and $script:IQ.Endpoints.ContainsKey('FabricVerified') -and -not [bool]$script:IQ.Endpoints.FabricVerified) {
+            Write-IQLog -Level Debug -Stage 'ModelBackup' -Message ("Fabric endpoint {0} is unverified for environment {1}; getDefinition will be attempted and disabled after {2} consecutive failures" -f $script:IQ.Endpoints.FabricApiPrefix, $script:IQ.Environment, $state.MaxConsecutiveFailures)
+        }
+    }
+    catch { $null = $null }
+    $state.Enabled = $true
+    return $state
+}
+
+function Save-IQModelDefinitionFromFabric {
+    <#
+    .SYNOPSIS
+    Downloads a semantic model's TMSL definition through the Fabric API and saves its model.bim part as the backup .bim (private).
+    .DESCRIPTION
+    POST workspaces/{ws}/semanticModels/{id}/getDefinition?format=TMSL via Invoke-IQFabricLro (202 polling handled there),
+    decodes the InlineBase64 "model.bim" part, checks it is TMSL JSON with a "model" object and writes it atomically to
+    Work.BimPath. Needs read+write permission on the model (workspace Contributor+); blocked for encrypted sensitivity
+    labels. Never throws; returns @{ Success; BimPath; Message; SizeBytes }. Updates the circuit-breaker counters in -FabricState.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Work,
+        [Parameter(Mandatory = $true)][hashtable]$FabricState,
+        [Parameter(Mandatory = $false)][string]$Stage = 'ModelBackup'
+    )
+    $result = @{ Success = $false; BimPath = [string]$Work.BimPath; Message = ''; SizeBytes = 0 }
+    if (-not $FabricState.Enabled) { $result.Message = 'Fabric getDefinition not available: ' + $FabricState.Reason; return $result }
+    if (-not (Test-IQModelGuid -Value $Work.WorkspaceId)) { $result.Message = 'Fabric getDefinition needs a real workspace id (pseudo workspace)'; return $result }
+    $timeout = 10
+    try { $timeout = [int](Get-IQModelOption -Name 'DefinitionTimeoutMinutes' -Default 10) } catch { $timeout = 10 }
+    if ($timeout -lt 1) { $timeout = 1 }
+    $path = 'workspaces/' + $Work.WorkspaceId + '/semanticModels/' + $Work.DatasetId + '/getDefinition'
+    Write-IQLog -Level Info -Stage $Stage -Item $Work.Item -Message 'Requesting the TMSL definition via Fabric getDefinition'
+    $definition = $null
+    try { $definition = Invoke-IQFabricLro -Method POST -Path $path -Query @{ format = 'TMSL' } -TimeoutMinutes $timeout -Stage $Stage }
+    catch {
+        $result.Message = 'Fabric getDefinition failed: ' + $_.Exception.Message
+        Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message $result.Message
+    }
+    if ($null -eq $definition -and $result.Message -eq '') { $result.Message = 'Fabric getDefinition returned no definition (see previous warning; needs read+write on the model, unsupported for encrypted labels / this workspace type)' }
+    if ($null -eq $definition) {
+        $FabricState.ConsecutiveFailures = [int]$FabricState.ConsecutiveFailures + 1
+        if ($FabricState.ConsecutiveFailures -ge $FabricState.MaxConsecutiveFailures) {
+            $FabricState.Enabled = $false
+            $FabricState.Reason = ('disabled after {0} consecutive getDefinition failures (last: {1})' -f $FabricState.ConsecutiveFailures, $result.Message)
+            Write-IQLog -Level Warn -Stage $Stage -Message ('Fabric getDefinition fallback ' + $FabricState.Reason)
+        }
+        return $result
+    }
+    try {
+        $parts = @()
+        $def = Get-IQModelMember -Object $definition -Name 'definition'
+        if ($null -ne $def) { $parts = @(Get-IQModelMember -Object $def -Name 'parts') }
+        $parts = @($parts | Where-Object { $null -ne $_ })
+        $bimPart = $null
+        foreach ($p in $parts) {
+            $partPath = [string](Get-IQModelMember -Object $p -Name 'path')
+            if ($partPath -match '(?i)(^|[\\/])model\.bim$') { $bimPart = $p; break }
+        }
+        if ($null -eq $bimPart) { foreach ($p in $parts) { if ([string](Get-IQModelMember -Object $p -Name 'path') -match '(?i)\.bim$') { $bimPart = $p; break } } }
+        if ($null -eq $bimPart) { throw ('no model.bim part in the definition (' + $parts.Count + ' parts: ' + (@($parts | ForEach-Object { [string](Get-IQModelMember -Object $_ -Name 'path') }) -join ', ') + ')') }
+        $payloadType = [string](Get-IQModelMember -Object $bimPart -Name 'payloadType')
+        $payload = [string](Get-IQModelMember -Object $bimPart -Name 'payload')
+        $bytes = $null
+        if ($payloadType -ieq 'InlineBase64' -or [string]::IsNullOrEmpty($payloadType)) { $bytes = [System.Convert]::FromBase64String($payload) }
+        else { $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload) }
+        if ($null -eq $bytes -or $bytes.Length -eq 0) { throw 'model.bim part is empty' }
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes).TrimStart([char]0xFEFF)
+        if ($text -notmatch '"model"\s*:') { throw 'model.bim part is not TMSL JSON (no "model" object)' }
+        $folder = Split-Path -Path $result.BimPath -Parent
+        if ($folder -and -not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+        $tmp = $result.BimPath + '.tmp'
+        [System.IO.File]::WriteAllBytes($tmp, $bytes)
+        Move-Item -LiteralPath $tmp -Destination $result.BimPath -Force
+        $result.SizeBytes = $bytes.Length
+        $result.Success = $true
+        $result.Message = ('TMSL definition exported via Fabric getDefinition ({0:N0} bytes)' -f $bytes.Length)
+        $FabricState.ConsecutiveFailures = 0
+        Write-IQLog -Level Success -Stage $Stage -Item $Work.Item -Message ("Saved {0} ({1:N0} bytes) from Fabric getDefinition" -f $result.BimPath, $bytes.Length)
+    }
+    catch {
+        $result.Message = 'Fabric getDefinition definition could not be saved: ' + $_.Exception.Message
+        Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message $result.Message
+    }
+    return $result
+}
+
+function Complete-IQModelBackupViaFabric {
+    <#
+    .SYNOPSIS
+    Runs the Fabric getDefinition fallback for one dataset and writes its ModelBackup checkpoint (private).
+    .DESCRIPTION
+    Success: Succeeded with -Method FabricDefinition and the .bim as output. Failure: the -FallbackStatus (Failed for
+    dedicated models whose XMLA export was impossible or failed, Skipped for Pro models that ReportBackup covers) with
+    -FallbackMessage plus the Fabric reason. Returns the checkpoint status string.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Work,
+        [Parameter(Mandatory = $true)][hashtable]$FabricState,
+        [Parameter(Mandatory = $true)][ValidateSet('Failed', 'Skipped')][string]$FallbackStatus,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$FallbackMessage,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$FallbackMethod,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Prefix
+    )
+    $stage = 'ModelBackup'
+    $data = @{ BaseName = $Work.BaseName; WorkspaceId = $Work.WorkspaceId; DatasetId = $Work.DatasetId }
+    $fabric = Save-IQModelDefinitionFromFabric -Work $Work -FabricState $FabricState -Stage $stage
+    if ($fabric.Success) {
+        $message = $fabric.Message
+        if ($Prefix) { $message = $Prefix + '; ' + $message }
+        $data['BimPath'] = $fabric.BimPath
+        $data['SizeBytes'] = $fabric.SizeBytes
+        Set-IQItemDone -Stage $stage -ItemKey $Work.Key -Item $Work.Item -Outputs @($fabric.BimPath) -Method 'FabricDefinition' -Message $message -Data $data | Out-Null
+        return 'Succeeded'
+    }
+    $message = $FallbackMessage
+    if ($fabric.Message) { $message = $message + '; ' + $fabric.Message }
+    if ($FallbackStatus -eq 'Failed') { $message = $message + '; no .bim exported (ModelDetail can still use DAX)' }
+    Set-IQItemDone -Stage $stage -ItemKey $Work.Key -Item $Work.Item -Status $FallbackStatus -Method $FallbackMethod -Message $message -Data $data | Out-Null
+    return $FallbackStatus
 }
 
 function Invoke-IQModelBackupStage {
     <#
     .SYNOPSIS
-    ModelBackup stage body: Tabular Editor XMLA export of every dedicated-capacity dataset in scope (itemKey = DatasetId).
+    ModelBackup stage body: Tabular Editor XMLA export of every dedicated-capacity dataset in scope (itemKey = DatasetId), with a Fabric getDefinition fallback.
     .DESCRIPTION
     Port of monolith lines 2545-2620. Connection string "Provider=MSOLAP;Data Source=<XmlaPrefix>/v1.0/myorg/<url-encoded
     workspace>;Password=<token>", positional database = dataset name, -S <per-job rename script> -B "<Model Backups>\<RunId>\
     <CleanWs> ~ <CleanModel>.bim". Jobs run through Invoke-IQProcessBatch in chunks of MaxParallelExtracts so each chunk's
     token is fetched immediately before its processes start (brief section 4.4). Every dataset is checkpointed the moment
-    its process finishes; Pro / My Workspace datasets are recorded as Skipped ("model extracted from PBIX in ReportBackup");
-    datasets already done in a resumed run are skipped. Returns @{ Total; Done; Skipped; Failed; AlreadyDone }.
+    its process finishes (Method XMLA). When Tabular Editor is unavailable (non-Windows host, failed preflight) or an
+    export fails, and a Fabric token is available, the TMSL definition is fetched with Fabric
+    workspaces/{ws}/semanticModels/{id}/getDefinition?format=TMSL and its model.bim saved under the same name (Method
+    FabricDefinition). Pro / My Workspace datasets are recorded as Skipped ("model extracted from PBIX in ReportBackup") -
+    Pro datasets in real workspaces first try the Fabric definition too (best effort, unverified on shared capacity).
+    Datasets already done in a resumed run are skipped. Returns @{ Total; Done; Skipped; Failed; AlreadyDone; ViaXmla; ViaFabric }.
     #>
     [CmdletBinding()]
     param()
     $stage = 'ModelBackup'
-    $summary = @{ Total = 0; Done = 0; Skipped = 0; Failed = 0; AlreadyDone = 0 }
+    $summary = @{ Total = 0; Done = 0; Skipped = 0; Failed = 0; AlreadyDone = 0; ViaXmla = 0; ViaFabric = 0 }
     $runFolder = Get-IQModelRunFolder
     $work = @(Get-IQModelWorkList -RunFolder $runFolder)
     $summary.Total = $work.Count
@@ -393,7 +558,11 @@ function Invoke-IQModelBackupStage {
     $teAvailable = Test-IQModelTabularEditorAvailable
     $teReason = $null
     if (-not $teAvailable) { $teReason = Get-IQModelTabularEditorReason }
+    $fabricState = New-IQModelFabricState
+    if ($fabricState.Enabled) { Write-IQLog -Level Info -Stage $stage -Message 'Fabric getDefinition fallback available for models Tabular Editor cannot export' }
+    else { Write-IQLog -Level Debug -Stage $stage -Message ('Fabric getDefinition fallback not available: ' + $fabricState.Reason) }
     $pending = New-Object System.Collections.Generic.List[object]
+    $proMessage = 'Pro workspace - model extracted from PBIX in ReportBackup'
 
     foreach ($w in $work) {
         if (Test-IQItemDone -Stage $stage -ItemKey $w.Key) {
@@ -406,31 +575,41 @@ function Invoke-IQModelBackupStage {
             $summary.Skipped++
             continue
         }
-        if (-not $w.IsDedicated) {
-            Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Skipped -Method 'PBIX' -Message 'Pro workspace - model extracted from PBIX in ReportBackup' -Data @{ BaseName = $w.BaseName; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
-            $summary.Skipped++
-            continue
-        }
         # Resume: a complete .bim from an earlier attempt of this run (crash before its checkpoint) is reused (audit X1-09).
         if ($script:IQ.IsResume -and (Test-IQModelFileHasContent -Path $w.BimPath)) {
             Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Outputs @($w.BimPath) -Method 'XMLA' -Message 'Existing .bim from an earlier attempt of this run reused' -Data @{ BaseName = $w.BaseName; BimPath = $w.BimPath; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
             $summary.Done++
             continue
         }
-        if (-not $teAvailable) {
-            Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method 'XMLA' -Message ($teReason + '; no .bim exported (ModelDetail can still use DAX)') -Data @{ BaseName = $w.BaseName; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
-            $summary.Failed++
+        if (-not $w.IsDedicated) {
+            if ($fabricState.Enabled -and -not $w.IsPseudoWorkspace) {
+                $status = Complete-IQModelBackupViaFabric -Work $w -FabricState $fabricState -FallbackStatus Skipped -FallbackMessage $proMessage -FallbackMethod 'PBIX' -Prefix 'Pro workspace'
+                if ($status -eq 'Succeeded') { $summary.Done++; $summary.ViaFabric++ } else { $summary.Skipped++ }
+            }
+            else {
+                Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Skipped -Method 'PBIX' -Message $proMessage -Data @{ BaseName = $w.BaseName; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
+                $summary.Skipped++
+            }
             continue
         }
-        if ($w.WorkspaceName -match '["\;]' -or $w.DatasetName -match '"') {
-            Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method 'XMLA' -Message 'Workspace or dataset name contains a quote or semicolon that cannot be passed in the XMLA connection string' | Out-Null
-            $summary.Failed++
+        $blocker = $null
+        if (-not $teAvailable) { $blocker = $teReason }
+        elseif ($w.WorkspaceName -match '["\;]' -or $w.DatasetName -match '"') { $blocker = 'Workspace or dataset name contains a quote or semicolon that cannot be passed in the XMLA connection string' }
+        if ($blocker) {
+            if ($fabricState.Enabled) {
+                $status = Complete-IQModelBackupViaFabric -Work $w -FabricState $fabricState -FallbackStatus Failed -FallbackMessage $blocker -FallbackMethod 'XMLA' -Prefix ('XMLA export not possible (' + $blocker + ')')
+                if ($status -eq 'Succeeded') { $summary.Done++; $summary.ViaFabric++ } else { $summary.Failed++ }
+            }
+            else {
+                Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method 'XMLA' -Message ($blocker + '; no .bim exported (ModelDetail can still use DAX)') -Data @{ BaseName = $w.BaseName; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
+                $summary.Failed++
+            }
             continue
         }
         $pending.Add($w)
     }
     if ($pending.Count -eq 0) {
-        Write-IQLog -Level Info -Stage $stage -Message ("Model backup: nothing to export ({0} already done, {1} skipped, {2} failed)" -f $summary.AlreadyDone, $summary.Skipped, $summary.Failed)
+        Write-IQLog -Level Info -Stage $stage -Message ("Model backup: nothing to export via XMLA ({0} already done, {1} via Fabric, {2} skipped, {3} failed)" -f $summary.AlreadyDone, $summary.ViaFabric, $summary.Skipped, $summary.Failed)
         return $summary
     }
 
@@ -447,7 +626,8 @@ function Invoke-IQModelBackupStage {
 
     $workMap = @{}
     foreach ($w in $pending) { $workMap[[string]$w.Key] = $w }
-    $onDone = { param($iqEntry) Complete-IQModelBackupJob -Entry $iqEntry -WorkMap $workMap }.GetNewClosure()
+    $deferFailure = [bool]$fabricState.Enabled
+    $onDone = { param($iqEntry) Complete-IQModelBackupJob -Entry $iqEntry -WorkMap $workMap -DeferFailure:$deferFailure }.GetNewClosure()
 
     $index = 0
     while ($index -lt $pending.Count) {
@@ -483,17 +663,32 @@ function Invoke-IQModelBackupStage {
         if ($jobs.Count -gt 0) {
             $results = Invoke-IQProcessBatch -Jobs $jobs -MaxParallel $maxParallel -TimeoutMinutes $timeout -Stage $stage -OnJobComplete $onDone
             $results = ConvertTo-IQModelResultList -Results $results
-            # Safety net: any job the callback did not checkpoint (callback error) is checkpointed here.
             foreach ($r in $results) {
                 $key = [string](Get-IQModelMember -Object $r -Name 'ItemKey')
-                if (-not (Get-IQItemCheckpoint -Stage $stage -ItemKey $key)) { Complete-IQModelBackupJob -Entry $r -WorkMap $workMap }
+                if (-not (Get-IQItemCheckpoint -Stage $stage -ItemKey $key)) {
+                    $w = $null
+                    if ($workMap.ContainsKey($key)) { $w = $workMap[$key] }
+                    if ($null -ne $w -and $w.ContainsKey('XmlaFailure') -and $w.XmlaFailure) {
+                        # Deferred XMLA failure: Fabric getDefinition fallback, then one combined checkpoint.
+                        $status = Complete-IQModelBackupViaFabric -Work $w -FabricState $fabricState -FallbackStatus Failed -FallbackMessage ([string]$w.XmlaFailure) -FallbackMethod 'XMLA' -Prefix ([string]$w.XmlaFailure)
+                        if ($status -eq 'Succeeded') { $summary.ViaFabric++ }
+                    }
+                    else {
+                        # Safety net: a job the callback did not checkpoint (callback error) is checkpointed here.
+                        Complete-IQModelBackupJob -Entry $r -WorkMap $workMap
+                    }
+                }
                 $cp = Get-IQItemCheckpoint -Stage $stage -ItemKey $key
-                if ($cp -and [string](Get-IQModelMember -Object $cp -Name 'status') -eq 'Succeeded') { $summary.Done++ } else { $summary.Failed++ }
+                if ($cp -and [string](Get-IQModelMember -Object $cp -Name 'status') -eq 'Succeeded') {
+                    $summary.Done++
+                    if ([string](Get-IQModelMember -Object $cp -Name 'method') -eq 'XMLA') { $summary.ViaXmla++ }
+                }
+                else { $summary.Failed++ }
             }
         }
         foreach ($s in $scripts) { try { Remove-Item -LiteralPath $s -Force -ErrorAction SilentlyContinue } catch { $null = $null } }
     }
-    Write-IQLog -Level Info -Stage $stage -Message ("Model backup finished: {0} exported, {1} skipped, {2} failed, {3} already done" -f $summary.Done, $summary.Skipped, $summary.Failed, $summary.AlreadyDone)
+    Write-IQLog -Level Info -Stage $stage -Message ("Model backup finished: {0} exported ({1} XMLA, {2} Fabric), {3} skipped, {4} failed, {5} already done" -f $summary.Done, $summary.ViaXmla, $summary.ViaFabric, $summary.Skipped, $summary.Failed, $summary.AlreadyDone)
     return $summary
 }
 
@@ -684,24 +879,66 @@ function Invoke-IQModelDetailTabularEditor {
     return $outcomes
 }
 
+function Get-IQModelDetailPlan {
+    <#
+    .SYNOPSIS
+    Ordered list of extraction methods to try for one dataset given ModelDetailMethod, Tabular Editor availability and the .bim (private).
+    .DESCRIPTION
+    Auto / Both: TabularEditor (when TE2 works, a .bim exists and its database name equals the base name so the csx
+    scripts write the expected file) -> Bim (when a .bim exists) -> Dax. TabularEditor: TE2 only. Bim: parser only.
+    Dax: DAX only. Returns @{ Steps = @(...); Why = <reason TE2 / Bim were left out> }.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Method,
+        [Parameter(Mandatory = $true)][bool]$TabularEditorAvailable,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$BimPath,
+        [Parameter(Mandatory = $true)][string]$BaseName
+    )
+    $why = @()
+    $hasBim = -not [string]::IsNullOrWhiteSpace($BimPath)
+    $teEligible = $false
+    if (-not $TabularEditorAvailable) { $why += (Get-IQModelTabularEditorReason) }
+    elseif (-not $hasBim) { $why += 'no .bim available for this dataset' }
+    else {
+        $dbName = Get-IQModelDatabaseNameFromBim -BimPath $BimPath
+        if ($null -ne $dbName -and $dbName -ne $BaseName) { $why += ("the .bim database name '{0}' differs from the file name (Fabric/pbi-tools export); the csx scripts would misname the CSV, using the built-in parser" -f $dbName) }
+        else { $teEligible = $true }
+    }
+    $steps = @()
+    switch ($Method) {
+        'TabularEditor' { if ($teEligible) { $steps = @('TabularEditor') } }
+        'Dax' { $steps = @('Dax') }
+        'Bim' { if ($hasBim) { $steps = @('Bim') } else { $why += 'no .bim available for this dataset' } }
+        default {
+            if ($teEligible) { $steps += 'TabularEditor' }
+            if ($hasBim) { $steps += 'Bim' }
+            $steps += 'Dax'
+        }
+    }
+    return @{ Steps = @($steps); Why = ($why -join '; ') }
+}
+
 function Invoke-IQModelDetailStage {
     <#
     .SYNOPSIS
     ModelDetail stage body: "<CleanWs> ~ <CleanModel>.csv" and "_MD.csv" per dataset in scope (itemKey = DatasetId).
     .DESCRIPTION
-    Method selection from Options.ModelDetailMethod: TabularEditor = the two csx scripts against the .bim (batch, parallel;
-    no .bim / no TE2 = Failed); Dax = Get-IQModelDetailViaDax; Auto = Tabular Editor when a .bim exists and TE2 works, else
-    DAX; Both = Tabular Editor and, when it fails or there is no .bim, DAX. The method used is recorded in the checkpoint
-    (-Method TabularEditor|Dax) with the two CSV paths as outputs. Returns @{ Total; Done; Failed; Skipped; AlreadyDone;
-    ViaTabularEditor; ViaDax }.
+    Options.ModelDetailMethod: TabularEditor = the two csx scripts against the .bim (batch, parallel; no .bim / no TE2 =
+    Failed); Bim = the built-in TMSL parser (Export-IQModelDetailFromBim) against the .bim (no .bim = Failed); Dax =
+    Get-IQModelDetailViaDax (INFO.VIEW.* over executeQueries); Auto = Tabular Editor when it works and a .bim it can name
+    correctly exists, else the Bim parser when any .bim exists, else DAX; Both = Tabular Editor first and, when it fails or
+    cannot run, the Bim parser then DAX. The method that produced the files is recorded in the checkpoint
+    (-Method TabularEditor|Bim|Dax) with the two CSV paths as outputs; the message keeps the reasons earlier methods were
+    not used. Returns @{ Total; Done; Failed; Skipped; AlreadyDone; ViaTabularEditor; ViaBim; ViaDax }.
     #>
     [CmdletBinding()]
     param()
     $stage = 'ModelDetail'
-    $summary = @{ Total = 0; Done = 0; Failed = 0; Skipped = 0; AlreadyDone = 0; ViaTabularEditor = 0; ViaDax = 0 }
+    $summary = @{ Total = 0; Done = 0; Failed = 0; Skipped = 0; AlreadyDone = 0; ViaTabularEditor = 0; ViaBim = 0; ViaDax = 0 }
     $runFolder = Get-IQModelRunFolder
     $method = [string](Get-IQModelOption -Name 'ModelDetailMethod' -Default 'Auto')
-    if ($method -notin @('Auto', 'TabularEditor', 'Dax', 'Both')) {
+    if ($method -notin @('Auto', 'TabularEditor', 'Dax', 'Both', 'Bim')) {
         Write-IQLog -Level Warn -Stage $stage -Message "Unknown ModelDetailMethod '$method'; using Auto"
         $method = 'Auto'
     }
@@ -710,11 +947,13 @@ function Invoke-IQModelDetailStage {
     $teAvailable = Test-IQModelTabularEditorAvailable
     Write-IQLog -Level Info -Stage $stage -Message ("Model detail: {0} dataset(s) in scope, method {1}, Tabular Editor available: {2}" -f $work.Count, $method, $teAvailable)
     if ($work.Count -eq 0) { return $summary }
-    if (-not $teAvailable -and $method -ne 'Dax') { Write-IQLog -Level Info -Stage $stage -Message (Get-IQModelTabularEditorReason) }
+    if (-not $teAvailable -and $method -notin @('Dax', 'Bim')) { Write-IQLog -Level Info -Stage $stage -Message (Get-IQModelTabularEditorReason) }
+    $asOfDate = Get-IQDaxModelAsOfDate
 
-    $teCandidates = @()
-    $daxQueue = @()
+    $plans = @{}
+    $bimByKey = @{}
     $noteByKey = @{}
+    $teCandidates = @()
     foreach ($w in $work) {
         if (Test-IQItemDone -Stage $stage -ItemKey $w.Key) {
             $summary.AlreadyDone++
@@ -728,86 +967,105 @@ function Invoke-IQModelDetailStage {
         }
         $bim = $null
         if ($method -ne 'Dax') { $bim = Get-IQModelBimPath -Work $w }
-        $teEligible = ($teAvailable -and $null -ne $bim)
-        $why = ''
-        if (-not $teAvailable) { $why = Get-IQModelTabularEditorReason }
-        elseif ($null -eq $bim) { $why = 'no .bim available for this dataset' }
-
-        switch ($method) {
-            'TabularEditor' {
-                if ($teEligible) { $teCandidates += @{ Work = $w; BimPath = $bim; FallbackToDax = $false } }
-                else {
-                    Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method 'TabularEditor' -Message ('Tabular Editor method requested but ' + $why) | Out-Null
-                    $summary.Failed++
-                }
-            }
-            'Dax' { $daxQueue += $w }
-            'Auto' {
-                if ($teEligible) { $teCandidates += @{ Work = $w; BimPath = $bim; FallbackToDax = $false } }
-                else { $noteByKey[[string]$w.Key] = ('Tabular Editor not used: ' + $why); $daxQueue += $w }
-            }
-            'Both' {
-                if ($teEligible) { $teCandidates += @{ Work = $w; BimPath = $bim; FallbackToDax = $true } }
-                else { $noteByKey[[string]$w.Key] = ('Tabular Editor not used: ' + $why); $daxQueue += $w }
-            }
+        $plan = Get-IQModelDetailPlan -Method $method -TabularEditorAvailable $teAvailable -BimPath $bim -BaseName $w.BaseName
+        if ($plan.Steps.Count -eq 0) {
+            $failMethod = $method
+            $reason = $plan.Why
+            if ([string]::IsNullOrWhiteSpace($reason)) { $reason = 'no extraction method available' }
+            Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method $failMethod -Message ($method + ' method requested but ' + $reason) -Data @{ BaseName = $w.BaseName; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId } | Out-Null
+            $summary.Failed++
+            continue
         }
+        $plans[[string]$w.Key] = New-Object System.Collections.Generic.List[string]
+        foreach ($s in $plan.Steps) { $plans[[string]$w.Key].Add($s) }
+        $bimByKey[[string]$w.Key] = $bim
+        $noteByKey[[string]$w.Key] = New-Object System.Collections.Generic.List[string]
+        if ($plan.Why -and $plan.Steps[0] -ne 'TabularEditor' -and $method -ne 'Dax' -and $method -ne 'Bim') { $noteByKey[[string]$w.Key].Add('Tabular Editor not used: ' + $plan.Why) }
+        if ($plan.Steps[0] -eq 'TabularEditor') { $teCandidates += @{ Work = $w; BimPath = $bim } }
     }
 
-    # 1. Tabular Editor batch.
+    # 1. Tabular Editor batch (all csx jobs in one pool).
+    $queue = New-Object System.Collections.Generic.List[object]
     if ($teCandidates.Count -gt 0) {
         $outcomes = Invoke-IQModelDetailTabularEditor -Candidates $teCandidates -RunFolder $runFolder
         foreach ($c in $teCandidates) {
             $w = $c.Work
-            $o = $outcomes[[string]$w.Key]
+            $key = [string]$w.Key
+            $o = $outcomes[$key]
             if ($null -eq $o) { $o = @{ Success = $false; Csv = $null; Md = $null; Message = 'no outcome recorded' } }
+            $plans[$key].RemoveAt(0)
             if ($o.Success) {
-                Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Outputs @($o.Csv, $o.Md) -Method 'TabularEditor' -Message $o.Message -Data @{ BaseName = $w.BaseName; BimPath = $c.BimPath; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId } | Out-Null
+                $message = [string]$o.Message
+                Set-IQItemDone -Stage $stage -ItemKey $key -Item $w.Item -Outputs @($o.Csv, $o.Md) -Method 'TabularEditor' -Message $message -Data @{ BaseName = $w.BaseName; BimPath = $c.BimPath; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId } | Out-Null
                 $summary.Done++
                 $summary.ViaTabularEditor++
                 Write-IQLog -Level Success -Stage $stage -Item $w.Item -Message ('Model detail extracted via Tabular Editor: ' + $o.Csv)
+                $plans.Remove($key)
+                continue
             }
-            elseif ($c.FallbackToDax) {
-                Write-IQLog -Level Warn -Stage $stage -Item $w.Item -Message ('Tabular Editor extraction failed (' + $o.Message + '); falling back to DAX')
-                $noteByKey[[string]$w.Key] = ('Tabular Editor failed: ' + $o.Message)
-                $daxQueue += $w
+            $noteByKey[$key].Add('Tabular Editor failed: ' + $o.Message)
+            if ($plans[$key].Count -gt 0) {
+                Write-IQLog -Level Warn -Stage $stage -Item $w.Item -Message ('Tabular Editor extraction failed (' + $o.Message + '); falling back to ' + $plans[$key][0])
+            }
+        }
+    }
+    foreach ($w in $work) { if ($plans.ContainsKey([string]$w.Key)) { $queue.Add($w) } }
+
+    # 2. Remaining steps per dataset, in plan order: Bim parser, then DAX.
+    foreach ($w in $queue) {
+        $key = [string]$w.Key
+        $steps = $plans[$key]
+        $notes = $noteByKey[$key]
+        $done = $false
+        while (-not $done -and $steps.Count -gt 0) {
+            $step = $steps[0]
+            $steps.RemoveAt(0)
+            $r = $null
+            $noteText = ''
+            if ($notes.Count -gt 0) { $noteText = ' (' + ($notes -join '; ') + ')' }
+            $modelId = $w.BaseName
+            if ($w.IsDedicated) { $modelId = $w.DatasetId }
+            switch ($step) {
+                'Bim' {
+                    Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Extracting model detail from the .bim with the built-in parser' + $noteText)
+                    try { $r = Export-IQModelDetailFromBim -BimPath $bimByKey[$key] -OutputFolder $runFolder -ModelName $w.BaseName -ModelId $modelId -AsOfDate $asOfDate -Stage $stage }
+                    catch { $r = @{ Success = $false; Message = ('Bim parser threw: ' + $_.Exception.Message); Outputs = @() } }
+                }
+                'Dax' {
+                    Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Extracting model detail via DAX INFO.VIEW.*' + $noteText)
+                    try { $r = Get-IQModelDetailViaDax -Dataset $w.Dataset -OutputFolder $runFolder -IsDedicated $w.IsDedicated -BaseName $w.BaseName -ModelAsOfDate $asOfDate -Stage $stage }
+                    catch {
+                        $r = @{ Success = $false; Message = ('DAX extraction threw: ' + $_.Exception.Message); Outputs = @() }
+                        Write-IQLog -Level Error -Stage $stage -Item $w.Item -Message $r.Message -Exception $_.Exception
+                    }
+                }
+                default { $r = @{ Success = $false; Message = ('unknown step ' + $step); Outputs = @() } }
+            }
+            if ($r -and $r.Success) {
+                $message = [string]$r.Message
+                if ($notes.Count -gt 0) { $message = $message + ' [' + ($notes -join '; ') + ']' }
+                $data = @{ BaseName = $w.BaseName; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId; RowCount = $r.RowCount; DependencyRowCount = $r.DependencyRowCount }
+                if ($step -eq 'Bim') { $data['BimPath'] = $bimByKey[$key] }
+                if ($step -eq 'Dax' -and $r.ContainsKey('Unavailable')) { $data['UnavailableViaRest'] = @($r.Unavailable); $data['DependencySource'] = $r.DependencySource; $data['ExpressionsMasked'] = $r.ExpressionsMasked }
+                Set-IQItemDone -Stage $stage -ItemKey $key -Item $w.Item -Outputs @($r.Outputs) -Method $step -Message $message -Data $data | Out-Null
+                $summary.Done++
+                if ($step -eq 'Bim') { $summary.ViaBim++ } else { $summary.ViaDax++ }
+                $done = $true
             }
             else {
-                Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method 'TabularEditor' -Message $o.Message -Data @{ BaseName = $w.BaseName; BimPath = $c.BimPath; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId } | Out-Null
-                $summary.Failed++
+                $failMessage = $step + ' extraction failed'
+                if ($r -and $r.Message) { $failMessage = [string]$r.Message }
+                $notes.Add($step + ' failed: ' + $failMessage)
+                if ($steps.Count -gt 0) { Write-IQLog -Level Warn -Stage $stage -Item $w.Item -Message ($step + ' extraction failed (' + $failMessage + '); falling back to ' + $steps[0]) }
+                else {
+                    Set-IQItemDone -Stage $stage -ItemKey $key -Item $w.Item -Status Failed -Method $step -Message ($notes -join '; ') -Data @{ BaseName = $w.BaseName; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId } | Out-Null
+                    $summary.Failed++
+                    $done = $true
+                }
             }
         }
     }
 
-    # 2. DAX INFO.* path.
-    foreach ($w in $daxQueue) {
-        $note = $null
-        if ($noteByKey.ContainsKey([string]$w.Key)) { $note = $noteByKey[[string]$w.Key] }
-        if ($note) { Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Extracting model detail via DAX INFO.* (' + $note + ')') }
-        else { Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message 'Extracting model detail via DAX INFO.*' }
-        $r = $null
-        try {
-            $r = Get-IQModelDetailViaDax -Dataset $w.Dataset -OutputFolder $runFolder -IsDedicated $w.IsDedicated -BaseName $w.BaseName -Stage $stage
-        }
-        catch {
-            $r = @{ Success = $false; Message = ('DAX extraction threw: ' + $_.Exception.Message); Outputs = @() }
-            Write-IQLog -Level Error -Stage $stage -Item $w.Item -Message $r.Message -Exception $_.Exception
-        }
-        if ($r -and $r.Success) {
-            $message = [string]$r.Message
-            if ($note) { $message = $message + ' [' + $note + ']' }
-            Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Outputs @($r.Outputs) -Method 'Dax' -Message $message -Data @{ BaseName = $w.BaseName; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId; RowCount = $r.RowCount; DependencyRowCount = $r.DependencyRowCount } | Out-Null
-            $summary.Done++
-            $summary.ViaDax++
-        }
-        else {
-            $message = 'DAX model detail failed'
-            if ($r -and $r.Message) { $message = [string]$r.Message }
-            if ($note) { $message = $message + ' [' + $note + ']' }
-            Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method 'Dax' -Message $message -Data @{ BaseName = $w.BaseName; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId } | Out-Null
-            $summary.Failed++
-        }
-    }
-
-    Write-IQLog -Level Info -Stage $stage -Message ("Model detail finished: {0} done ({1} Tabular Editor, {2} DAX), {3} failed, {4} skipped, {5} already done" -f $summary.Done, $summary.ViaTabularEditor, $summary.ViaDax, $summary.Failed, $summary.Skipped, $summary.AlreadyDone)
+    Write-IQLog -Level Info -Stage $stage -Message ("Model detail finished: {0} done ({1} Tabular Editor, {2} Bim parser, {3} DAX), {4} failed, {5} skipped, {6} already done" -f $summary.Done, $summary.ViaTabularEditor, $summary.ViaBim, $summary.ViaDax, $summary.Failed, $summary.Skipped, $summary.AlreadyDone)
     return $summary
 }

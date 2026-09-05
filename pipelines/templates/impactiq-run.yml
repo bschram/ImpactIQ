@@ -1,0 +1,429 @@
+# ImpactIQ v3 - reusable steps template. Included by pipelines/azure-pipelines.yml; can be reused from any other
+# pipeline in the same repository with:
+#
+#   steps:
+#     - template: pipelines/templates/impactiq-run.yml
+#       parameters: { authMode: DeviceCode, environment: USGov, workspaceNames: 'Finance*;HR' }
+#
+# Every step is Windows PowerShell 5.1 safe (pwsh: false by default). Secrets are read ONLY from environment
+# variables mapped in the `env:` blocks (never from the command line). See docs/Azure-DevOps.md.
+#
+# Steps, in order:
+#   1. checkout (self)
+#   2. restore State\ (runs + encrypted token cache) from the latest run of THIS pipeline   [restoreState]
+#   3. install PowerShell modules (ImportExcel by default)
+#   4. run ImpactIQ.ps1 headless; exit code 2 -> SucceededWithIssues, 1 -> Failed
+#   5. stage artifacts (always) and upload a run summary to the pipeline UI
+#   6. publish impactiq-state / impactiq-outputs / impactiq-logs (always) and impactiq-backups [publishBackups]
+#   7. optionally commit the workbooks to an outputs branch (Azure Repos -> Power BI via Web.Contents + PAT)
+#   8. optionally copy the workbooks to a OneDrive/SharePoint sync folder (self-hosted agents only)
+
+parameters:
+  - name: authMode
+    type: string
+    default: DeviceCode
+  - name: environment
+    type: string
+    default: USGov
+  - name: runMode
+    type: string
+    default: Workspaces
+  - name: workspaceNames
+    type: string
+    default: '*'
+  - name: stages
+    type: string
+    default: ''
+  - name: extraArgs
+    type: string
+    default: ''
+  - name: publishBackups
+    type: boolean
+    default: false
+  - name: commitOutputs
+    type: boolean
+    default: false
+  - name: outputsBranch
+    type: string
+    default: data
+  - name: sharePointSyncPath
+    type: string
+    default: ''
+  - name: baseFolder
+    type: string
+    default: $(Build.SourcesDirectory)
+  - name: restoreState
+    type: boolean
+    default: true
+  - name: stateArtifact
+    type: string
+    default: impactiq-state
+  - name: installModules
+    type: string
+    default: ImportExcel
+  - name: skipToolUpdate
+    type: boolean
+    default: false
+  - name: usePwsh
+    type: boolean
+    default: false
+
+steps:
+  - checkout: self
+    persistCredentials: ${{ parameters.commitOutputs }}
+    fetchDepth: 0
+    clean: false
+    displayName: Checkout ImpactIQ
+
+  - ${{ if eq(parameters.restoreState, true) }}:
+      - task: DownloadPipelineArtifact@2
+        displayName: Restore State from the latest run of this pipeline
+        continueOnError: true
+        inputs:
+          buildType: specific
+          project: $(System.TeamProjectId)
+          definition: $(System.DefinitionId)
+          buildVersionToDownload: latestFromBranch
+          branchName: $(Build.SourceBranch)
+          allowPartiallySucceededBuilds: true
+          allowFailedBuilds: true
+          artifactName: ${{ parameters.stateArtifact }}
+          targetPath: ${{ parameters.baseFolder }}/State
+
+  - task: PowerShell@2
+    displayName: Install PowerShell modules
+    inputs:
+      pwsh: ${{ parameters.usePwsh }}
+      targetType: inline
+      errorActionPreference: continue
+      failOnStderr: false
+      script: |
+        $ErrorActionPreference = 'Stop'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $wanted = @()
+        foreach ($m in ($env:IMPACTIQ_P_MODULES -split '[,;]')) { if (-not [string]::IsNullOrWhiteSpace($m)) { $wanted += $m.Trim() } }
+        if ($wanted.Count -eq 0) { Write-Host 'No modules requested.'; exit 0 }
+        try {
+          if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+          }
+        } catch { Write-Host "NuGet provider bootstrap skipped: $($_.Exception.Message)" }
+        foreach ($name in $wanted) {
+          if (Get-Module -ListAvailable -Name $name) { Write-Host "$name already available"; continue }
+          Write-Host "Installing $name (CurrentUser scope)"
+          try {
+            Install-Module -Name $name -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
+          } catch {
+            Write-Host "##vso[task.logissue type=warning]Install-Module $name failed: $($_.Exception.Message)"
+          }
+        }
+        Get-Module -ListAvailable -Name $wanted | Select-Object Name, Version | Format-Table -AutoSize | Out-String | Write-Host
+    env:
+      IMPACTIQ_P_MODULES: ${{ parameters.installModules }}
+
+  - task: PowerShell@2
+    displayName: Run ImpactIQ (${{ parameters.environment }}, ${{ parameters.authMode }})
+    inputs:
+      pwsh: ${{ parameters.usePwsh }}
+      targetType: inline
+      errorActionPreference: continue
+      failOnStderr: false
+      ignoreLASTEXITCODE: true
+      script: |
+        $ErrorActionPreference = 'Continue'
+        $base = $env:IMPACTIQ_P_BASEFOLDER
+        $entry = Join-Path $base 'ImpactIQ.ps1'
+        if (-not (Test-Path -LiteralPath $entry)) {
+          Write-Host "##vso[task.logissue type=error]ImpactIQ.ps1 not found at $entry - is the repo checked out and baseFolder correct?"
+          exit 1
+        }
+        function ConvertTo-PsLiteral([string]$s) { return "'" + $s.Replace("'", "''") + "'" }
+
+        $parts = New-Object System.Collections.Generic.List[string]
+        $parts.Add('& ' + (ConvertTo-PsLiteral $entry))
+        $parts.Add('-BaseFolder ' + (ConvertTo-PsLiteral $base))
+        $parts.Add('-NonInteractive')
+        $parts.Add('-Environment ' + (ConvertTo-PsLiteral $env:IMPACTIQ_P_ENVIRONMENT))
+        $parts.Add('-AuthMode ' + (ConvertTo-PsLiteral $env:IMPACTIQ_P_AUTHMODE))
+        $parts.Add('-RunMode ' + (ConvertTo-PsLiteral $env:IMPACTIQ_P_RUNMODE))
+        $parts.Add('-Resume Auto')
+        if ($env:IMPACTIQ_P_SKIPTOOLUPDATE -eq 'True') { $parts.Add('-SkipToolUpdate') }
+
+        $names = @()
+        foreach ($n in (($env:IMPACTIQ_P_WORKSPACENAMES) -split ';')) { if (-not [string]::IsNullOrWhiteSpace($n)) { $names += $n.Trim() } }
+        if ($names.Count -eq 0 -or ($names.Count -eq 1 -and $names[0] -eq '*')) {
+          if ($env:IMPACTIQ_P_RUNMODE -eq 'Workspaces') { $parts.Add('-AllWorkspaces') }
+        } else {
+          $literals = @(); foreach ($n in $names) { $literals += (ConvertTo-PsLiteral $n) }
+          $parts.Add('-WorkspaceName @(' + ($literals -join ',') + ')')
+        }
+
+        $stages = @()
+        foreach ($s in (($env:IMPACTIQ_P_STAGES) -split '[,;]')) { if (-not [string]::IsNullOrWhiteSpace($s)) { $stages += $s.Trim() } }
+        if ($stages.Count -gt 0) {
+          $literals = @(); foreach ($s in $stages) { $literals += (ConvertTo-PsLiteral $s) }
+          $parts.Add('-Stages @(' + ($literals -join ',') + ')')
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_P_EXTRAARGS)) { $parts.Add($env:IMPACTIQ_P_EXTRAARGS.Trim()) }
+
+        $command = ($parts -join ' ') + '; exit $LASTEXITCODE'
+        Write-Host "Command: $command"
+
+        $exe = 'powershell'
+        if ($env:IMPACTIQ_P_USEPWSH -eq 'True') { $exe = 'pwsh' }
+        Write-Host "Host: $exe (TF_BUILD=$env:TF_BUILD, agent=$env:AGENT_NAME)"
+        Write-Host "Auth secrets present: USERNAME=$([bool]$env:IMPACTIQ_USERNAME) PASSWORD=$([bool]$env:IMPACTIQ_PASSWORD) TOKEN_CACHE_KEY=$([bool]$env:IMPACTIQ_TOKEN_CACHE_KEY) WEBHOOK=$([bool]$env:IMPACTIQ_DEVICECODE_WEBHOOK) PBI_TOKEN=$([bool]$env:IMPACTIQ_PBI_TOKEN)"
+
+        & $exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command
+        $exit = $LASTEXITCODE
+        if ($null -eq $exit) { $exit = 1 }
+        Write-Host "ImpactIQ exit code: $exit"
+        Write-Host "##vso[task.setvariable variable=ImpactIQ.ExitCode]$exit"
+        if ($exit -eq 0) { exit 0 }
+        if ($exit -eq 2) {
+          Write-Host "##vso[task.logissue type=warning]ImpactIQ completed with item failures (exit 2). See the Failures sheet / manifest.json in the impactiq-state artifact."
+          Write-Host "##vso[task.complete result=SucceededWithIssues;]ImpactIQ completed with errors (exit 2)"
+          exit 0
+        }
+        Write-Host "##vso[task.logissue type=error]ImpactIQ failed (exit $exit). Check the log in the impactiq-logs artifact; the run will be resumed by the next scheduled run."
+        exit $exit
+    env:
+      IMPACTIQ_P_BASEFOLDER: ${{ parameters.baseFolder }}
+      IMPACTIQ_P_ENVIRONMENT: ${{ parameters.environment }}
+      IMPACTIQ_P_AUTHMODE: ${{ parameters.authMode }}
+      IMPACTIQ_P_RUNMODE: ${{ parameters.runMode }}
+      IMPACTIQ_P_WORKSPACENAMES: ${{ parameters.workspaceNames }}
+      IMPACTIQ_P_STAGES: ${{ parameters.stages }}
+      IMPACTIQ_P_EXTRAARGS: ${{ parameters.extraArgs }}
+      IMPACTIQ_P_SKIPTOOLUPDATE: ${{ parameters.skipToolUpdate }}
+      IMPACTIQ_P_USEPWSH: ${{ parameters.usePwsh }}
+      IMPACTIQ_ENVIRONMENT: ${{ parameters.environment }}
+      # Secret pipeline variables / variable-group secrets. Undefined ones arrive as empty strings, which ImpactIQ
+      # treats as "not set". Define only the ones your authMode needs (docs/Auth-Options.md).
+      IMPACTIQ_USERNAME: $(IMPACTIQ_USERNAME)
+      IMPACTIQ_PASSWORD: $(IMPACTIQ_PASSWORD)
+      IMPACTIQ_TOKEN_CACHE_KEY: $(IMPACTIQ_TOKEN_CACHE_KEY)
+      IMPACTIQ_DEVICECODE_WEBHOOK: $(IMPACTIQ_DEVICECODE_WEBHOOK)
+      IMPACTIQ_PBI_TOKEN: $(IMPACTIQ_PBI_TOKEN)
+      IMPACTIQ_FABRIC_TOKEN: $(IMPACTIQ_FABRIC_TOKEN)
+      IMPACTIQ_TENANT_ID: $(IMPACTIQ_TENANT_ID)
+      IMPACTIQ_CLIENT_ID: $(IMPACTIQ_CLIENT_ID)
+
+  - task: PowerShell@2
+    displayName: Stage artifacts and run summary
+    condition: always()
+    inputs:
+      pwsh: ${{ parameters.usePwsh }}
+      targetType: inline
+      errorActionPreference: continue
+      failOnStderr: false
+      script: |
+        $ErrorActionPreference = 'Continue'
+        $base = $env:IMPACTIQ_P_BASEFOLDER
+        $staging = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'impactiq'
+        foreach ($n in @('state', 'outputs', 'backups', 'logs')) { New-Item -ItemType Directory -Force -Path (Join-Path $staging $n) | Out-Null }
+
+        # --- state: State\runs (manifests, checkpoints, extracts, tool logs) + State\auth only when an AES key is set
+        $runs = Join-Path $base 'State\runs'
+        if (Test-Path -LiteralPath $runs) { Copy-Item -LiteralPath $runs -Destination (Join-Path $staging 'state\runs') -Recurse -Force }
+        else { Write-Host 'No State\runs folder found (nothing ran?)' }
+        $auth = Join-Path $base 'State\auth'
+        if (Test-Path -LiteralPath $auth) {
+          if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_TOKEN_CACHE_KEY)) {
+            Copy-Item -LiteralPath $auth -Destination (Join-Path $staging 'state\auth') -Recurse -Force
+            Write-Host 'Token cache included in impactiq-state (AES-256 encrypted with IMPACTIQ_TOKEN_CACHE_KEY).'
+          } else {
+            Write-Host 'Token cache NOT published: IMPACTIQ_TOKEN_CACHE_KEY is not set (a DPAPI cache only works on this machine/user anyway).'
+          }
+        }
+        Set-Content -LiteralPath (Join-Path $staging 'state\README.txt') -Value "ImpactIQ state published by $env:BUILD_BUILDNUMBER on $((Get-Date).ToUniversalTime().ToString('u')). Restored into <BaseFolder>\State by the next run for -Resume Auto."
+
+        # --- outputs: the four workbooks
+        $missing = @()
+        foreach ($wb in @('Power BI Environment Detail.xlsx', 'Report Detail.xlsx', 'Model Detail.xlsx', 'Dataflow Detail.xlsx')) {
+          $p = Join-Path $base $wb
+          if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $staging 'outputs') -Force } else { $missing += $wb }
+        }
+        if ($missing.Count -gt 0) { Write-Host "##vso[task.logissue type=warning]Workbook(s) not produced this run: $($missing -join ', ')" }
+
+        # --- backups (optional): only folders written in the last 3 days (ResumeMaxAgeDays), so a persisted
+        #     self-hosted workspace does not re-publish months of history every night
+        if ($env:IMPACTIQ_P_PUBLISHBACKUPS -eq 'True') {
+          $cutoff = (Get-Date).AddDays(-3)
+          foreach ($kind in @('Model Backups', 'Report Backups', 'Dataflow Backups')) {
+            $root = Join-Path $base $kind
+            if (-not (Test-Path -LiteralPath $root)) { continue }
+            foreach ($d in (Get-ChildItem -LiteralPath $root -Directory | Where-Object { $_.LastWriteTime -ge $cutoff })) {
+              Copy-Item -LiteralPath $d.FullName -Destination (Join-Path (Join-Path $staging 'backups') (Join-Path $kind $d.Name)) -Recurse -Force
+            }
+          }
+        }
+
+        # --- logs
+        $logs = Join-Path $base 'Logs'
+        if (Test-Path -LiteralPath $logs) { Copy-Item -Path (Join-Path $logs '*') -Destination (Join-Path $staging 'logs') -Recurse -Force }
+
+        # --- run summary for the pipeline UI (from the newest manifest)
+        try {
+          $manifest = $null
+          if (Test-Path -LiteralPath $runs) {
+            $manifest = Get-ChildItem -LiteralPath $runs -Filter 'manifest.json' -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+          }
+          $md = New-Object System.Text.StringBuilder
+          [void]$md.AppendLine('## ImpactIQ run summary')
+          if ($null -eq $manifest) {
+            [void]$md.AppendLine('No manifest.json found - ImpactIQ did not reach Initialize-IQRun (see the impactiq-logs artifact).')
+          } else {
+            $m = Get-Content -LiteralPath $manifest.FullName -Raw | ConvertFrom-Json
+            [void]$md.AppendLine("| Run | Status | Environment | Auth | Started (UTC) | Ended (UTC) |")
+            [void]$md.AppendLine("|---|---|---|---|---|---|")
+            [void]$md.AppendLine("| $($m.runId) | $($m.status) | $($m.environment) | $($m.auth) | $($m.startedUtc) | $($m.endedUtc) |")
+            [void]$md.AppendLine('')
+            [void]$md.AppendLine('| Stage | Status | Done | Failed | Error |')
+            [void]$md.AppendLine('|---|---|---|---|---|')
+            foreach ($p in $m.stages.PSObject.Properties) {
+              $s = $p.Value
+              [void]$md.AppendLine("| $($p.Name) | $($s.status) | $($s.itemsDone) | $($s.itemsFailed) | $($s.error) |")
+            }
+            $fails = @($m.failures)
+            if ($fails.Count -gt 0) {
+              [void]$md.AppendLine('')
+              [void]$md.AppendLine("### Failures ($($fails.Count))")
+              foreach ($f in ($fails | Select-Object -First 50)) { [void]$md.AppendLine("- **$($f.stage)** $($f.item): $($f.message)") }
+              if ($fails.Count -gt 50) { [void]$md.AppendLine("- ... $($fails.Count - 50) more in manifest.json") }
+            }
+          }
+          $summaryPath = Join-Path $staging 'impactiq-summary.md'
+          [System.IO.File]::WriteAllText($summaryPath, $md.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "##vso[task.uploadsummary]$summaryPath"
+        } catch { Write-Host "Run summary skipped: $($_.Exception.Message)" }
+        Get-ChildItem -LiteralPath $staging -Recurse -File | Measure-Object -Property Length -Sum | ForEach-Object { Write-Host ("Staged {0} file(s), {1:N1} MB" -f $_.Count, ($_.Sum / 1MB)) }
+    env:
+      IMPACTIQ_P_BASEFOLDER: ${{ parameters.baseFolder }}
+      IMPACTIQ_P_PUBLISHBACKUPS: ${{ parameters.publishBackups }}
+      IMPACTIQ_TOKEN_CACHE_KEY: $(IMPACTIQ_TOKEN_CACHE_KEY)
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish ${{ parameters.stateArtifact }} (resume state)
+    condition: always()
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)/impactiq/state
+      artifact: ${{ parameters.stateArtifact }}
+      publishLocation: pipeline
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish impactiq-outputs (workbooks)
+    condition: always()
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)/impactiq/outputs
+      artifact: impactiq-outputs
+      publishLocation: pipeline
+
+  - task: PublishPipelineArtifact@1
+    displayName: Publish impactiq-logs
+    condition: always()
+    inputs:
+      targetPath: $(Build.ArtifactStagingDirectory)/impactiq/logs
+      artifact: impactiq-logs
+      publishLocation: pipeline
+
+  - ${{ if eq(parameters.publishBackups, true) }}:
+      - task: PublishPipelineArtifact@1
+        displayName: Publish impactiq-backups
+        condition: always()
+        inputs:
+          targetPath: $(Build.ArtifactStagingDirectory)/impactiq/backups
+          artifact: impactiq-backups
+          publishLocation: pipeline
+
+  - ${{ if eq(parameters.commitOutputs, true) }}:
+      - task: PowerShell@2
+        displayName: Commit workbooks to branch ${{ parameters.outputsBranch }}
+        condition: succeededOrFailed()
+        inputs:
+          pwsh: ${{ parameters.usePwsh }}
+          targetType: inline
+          errorActionPreference: continue
+          failOnStderr: false
+          workingDirectory: ${{ parameters.baseFolder }}
+          script: |
+            # Pushes outputs/*.xlsx (+ the newest manifest.json) to an unprotected branch using the job access token.
+            # Requires: Project Settings > Repositories > <repo> > Security > "<Project> Build Service (<Org>)" = Contribute
+            # + Create branch. The commit message carries [skip ci] so no CI trigger fires. See docs/Azure-DevOps.md.
+            $ErrorActionPreference = 'Continue'
+            $env:GIT_REDIRECT_STDERR = '2>&1'
+            function Invoke-Git { param([string[]]$GitArgs)
+              Write-Host ('git ' + ($GitArgs -join ' '))
+              $out = & git @GitArgs; if ($out) { $out | ForEach-Object { Write-Host $_ } }
+              return $LASTEXITCODE
+            }
+            $branch = $env:IMPACTIQ_P_OUTPUTSBRANCH
+            $src = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'impactiq\outputs'
+            $files = @(Get-ChildItem -LiteralPath $src -Filter '*.xlsx' -File -ErrorAction SilentlyContinue)
+            if ($files.Count -eq 0) { Write-Host 'No workbooks to commit.'; exit 0 }
+            if ([string]::IsNullOrWhiteSpace($env:SYSTEM_ACCESSTOKEN)) { Write-Host '##vso[task.logissue type=error]System.AccessToken is not mapped'; exit 1 }
+            $authHeader = 'http.extraheader=AUTHORIZATION: bearer ' + $env:SYSTEM_ACCESSTOKEN
+            [void](Invoke-Git @('config', 'user.email', 'impactiq-pipeline@noreply.invalid'))
+            [void](Invoke-Git @('config', 'user.name', 'ImpactIQ Pipeline'))
+            $wt = Join-Path $env:AGENT_TEMPDIRECTORY 'impactiq-outputs-wt'
+            if (Test-Path -LiteralPath $wt) { [void](Invoke-Git @('worktree', 'remove', '--force', $wt)); Remove-Item -LiteralPath $wt -Recurse -Force -ErrorAction SilentlyContinue }
+            [void](Invoke-Git @('worktree', 'prune'))
+            $exists = (Invoke-Git @('-c', $authHeader, 'fetch', 'origin', "+refs/heads/$branch`:refs/remotes/origin/$branch")) -eq 0
+            if ($exists) {
+              if ((Invoke-Git @('worktree', 'add', '--detach', $wt, "origin/$branch")) -ne 0) { exit 1 }
+              Push-Location $wt
+              [void](Invoke-Git @('checkout', '-B', $branch, "origin/$branch"))
+            } else {
+              Write-Host "Branch $branch does not exist yet - creating it as an orphan branch."
+              if ((Invoke-Git @('worktree', 'add', '--detach', $wt)) -ne 0) { exit 1 }
+              Push-Location $wt
+              [void](Invoke-Git @('checkout', '--orphan', $branch))
+              [void](Invoke-Git @('rm', '-r', '-f', '-q', '--cached', '.'))
+              Get-ChildItem -LiteralPath $wt -Force | Where-Object { $_.Name -ne '.git' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            try {
+              $dest = Join-Path $wt 'outputs'
+              New-Item -ItemType Directory -Force -Path $dest | Out-Null
+              foreach ($f in $files) { Copy-Item -LiteralPath $f.FullName -Destination $dest -Force }
+              $manifest = Get-ChildItem -LiteralPath (Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'impactiq\state') -Filter 'manifest.json' -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+              if ($manifest) { Copy-Item -LiteralPath $manifest.FullName -Destination (Join-Path $dest 'manifest.json') -Force }
+              $readme = "ImpactIQ outputs. Updated by pipeline run $env:BUILD_BUILDNUMBER (UTC $((Get-Date).ToUniversalTime().ToString('u'))).`nRead them from Power BI with the Web.Contents + PAT pattern in docs/Azure-DevOps.md."
+              Set-Content -LiteralPath (Join-Path $dest 'README.md') -Value $readme
+              [void](Invoke-Git @('add', '-A', 'outputs'))
+              $rc = Invoke-Git @('commit', '-q', '-m', "ImpactIQ outputs $env:BUILD_BUILDNUMBER [skip ci]")
+              if ($rc -ne 0) { Write-Host 'Nothing changed - no commit.'; exit 0 }
+              $rc = Invoke-Git @('-c', $authHeader, 'push', 'origin', "HEAD:refs/heads/$branch")
+              if ($rc -ne 0) { Write-Host "##vso[task.logissue type=error]git push to $branch failed (grant the build service Contribute + Create branch on the repo)"; exit 1 }
+              Write-Host "Workbooks committed to branch $branch."
+            } finally {
+              Pop-Location
+              [void](Invoke-Git @('worktree', 'remove', '--force', $wt))
+            }
+        env:
+          IMPACTIQ_P_OUTPUTSBRANCH: ${{ parameters.outputsBranch }}
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - ${{ if ne(parameters.sharePointSyncPath, '') }}:
+      - task: PowerShell@2
+        displayName: Copy workbooks to SharePoint/OneDrive sync folder
+        condition: succeededOrFailed()
+        inputs:
+          pwsh: ${{ parameters.usePwsh }}
+          targetType: inline
+          errorActionPreference: continue
+          failOnStderr: false
+          script: |
+            # Self-hosted agents only: the OneDrive sync client must be signed in under the agent's (interactive) account.
+            # Hosted agents have no OneDrive client - use commitOutputs instead. See docs/Azure-DevOps.md section 7.
+            $dest = $env:IMPACTIQ_P_SHAREPOINTSYNCPATH
+            if (-not (Test-Path -LiteralPath $dest)) { Write-Host "##vso[task.logissue type=warning]Sync folder not found: $dest"; exit 0 }
+            $src = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'impactiq\outputs'
+            foreach ($f in (Get-ChildItem -LiteralPath $src -Filter '*.xlsx' -File -ErrorAction SilentlyContinue)) {
+              $tmp = Join-Path $dest ($f.Name + '.tmp')
+              Copy-Item -LiteralPath $f.FullName -Destination $tmp -Force
+              Move-Item -LiteralPath $tmp -Destination (Join-Path $dest $f.Name) -Force
+              Write-Host "Copied $($f.Name) -> $dest"
+            }
+        env:
+          IMPACTIQ_P_SHAREPOINTSYNCPATH: ${{ parameters.sharePointSyncPath }}
