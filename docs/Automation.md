@@ -28,7 +28,8 @@ principal, no Azure VM, Azure DevOps available**. Everything also applies to com
 * **Robust** - one HTTP wrapper with retry/back-off (429 `Retry-After`, 5xx, network errors, one silent token refresh
   on 401), every external process (Tabular Editor 2, pbi-tools) has a timeout and captured output, every per-item
   failure is recorded in the manifest and the run continues. The exit code tells the scheduler what happened
-  (`0` clean, `2` finished with item failures, `1` fatal).
+  (`0` clean, `2` finished with item failures, `3` paused - `-TimeBudgetMinutes` reached, the next run resumes it,
+  `1` fatal).
 * **Same outputs** - `Power BI Environment Detail.xlsx`, `Report Detail.xlsx`, `Model Detail.xlsx`,
   `Dataflow Detail.xlsx` in the base folder; backups under `Model Backups\<yyyy-MM-dd>\`, `Report Backups\<yyyy-MM-dd>\`,
   `Dataflow Backups\<yyyy-MM-dd>\`. New sheets and columns are additive only (see Data-Coverage.md).

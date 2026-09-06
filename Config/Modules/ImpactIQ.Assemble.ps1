@@ -28,9 +28,19 @@
       - values go through a typed System.Data.DataTable and Export-Excel -InputObject (EPPlus LoadFromDataTable):
         strings are written verbatim (IDs with leading zeros stay text, "=..." is never turned into a formula, nothing
         is number-converted), real numbers/booleans/dates keep their type, nested values become compact JSON, and
-        cells longer than Excel's 32,767-character limit are truncated (counted and logged);
-      - each workbook is written to a temporary file in the target folder and moved over the previous workbook only
-        after it was closed successfully, so a failed build never destroys the last good output;
+        cells longer than Excel's 32,767-character limit are truncated (counted and logged); a sheet never exceeds
+        Excel's 1,048,576-row limit (rows beyond 1,048,575 data rows are dropped, counted and logged);
+      - each workbook is written to a temporary file in the target folder and copied over the previous workbook only
+        after it was closed successfully, so a failed build never destroys the last good output (stale *.tmp-*.xlsx
+        files left by a killed process are removed first; .NET file APIs are used so '[' / ']' in the BaseFolder
+        never glob);
+      - one sheet that cannot be written (EPPlus error) does not lose the workbook: the sheet is replaced by its
+        header-only table (every contract sheet still exists), the failure is logged and the workbook item is
+        recorded as Failed; a source file that cannot be read (CSV, txt, dataflow extract, extras JSON) is recorded
+        as a failed Assemble item ("source-<file>") so manifest.failures, the Failures sheet and the exit code show
+        that the workbook is incomplete (brief section 0.4);
+      - Message / Error text copied from the manifest and the inventory Errors[] goes through ConvertTo-IQRedactedText
+        (the workbooks are shared; connection-string passwords and tokens must not land in them);
       - -AutoNameRange is kept where the monolith used it (Report/Model Detail); -AutoSize is used on Windows only
         (ImportExcel cannot auto-fit without libgdiplus on Linux) and is capped by ImportExcel's MaxAutoSizeRows;
       - worksheet names are made Excel-safe (31 characters, no []:*?/\); "DatasetDirectQueryRefreshSchedule" (33
@@ -38,7 +48,8 @@
 
     Windows PowerShell 5.1 and PowerShell 7 compatible. Dot-sourced from ImpactIQ.ps1, so $script:IQ is the shared
     context. Cross-module functions used (brief section 2): Write-IQLog, Get-IQSafeKey, ConvertFrom-IQJsonFile,
-    Get-IQDateFolder, Get-IQInventory, Get-IQAllWorkspaceInventories, Set-IQItemDone, Save-IQManifest.
+    Get-IQDateFolder, Get-IQInventory, Get-IQAllWorkspaceInventories, Set-IQItemDone, Save-IQManifest,
+    ConvertTo-IQRedactedText.
     Private helpers are prefixed *-IQAsm* / *-IQSheet* and are not part of the cross-module contract.
 #>
 
@@ -120,10 +131,62 @@ $script:IQExtrasSheetNames = @(
 )
 
 $script:IQExcelCellLimit = 32767
+# Excel's hard limit is 1,048,576 rows per worksheet; row 1 is the header, so at most 1,048,575 data rows are written.
+$script:IQExcelMaxDataRows = 1048575
+
+# Source files that could not be read while the current workbook was built (@{ Path; Message }); reset per workbook by
+# Invoke-IQAssembleStage and turned into failed "source-<file>" Assemble items so the run does not end 'Completed'
+# while a sheet silently lacks rows (brief section 0.4).
+$script:IQAssembleSourceErrors = New-Object System.Collections.Generic.List[object]
 
 # =====================================================================================================================
 # Small private helpers (rows may be PSCustomObjects from JSON, hashtables/ordered dictionaries, or DataRows)
 # =====================================================================================================================
+
+function Add-IQAsmSourceError {
+    <#
+    .SYNOPSIS
+        Logs a Warn for a source file that could not be read and remembers it for Invoke-IQAssembleStage (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message,
+        [Parameter(Mandatory = $false)][AllowNull()][System.Exception]$Exception,
+        [Parameter(Mandatory = $false)][AllowNull()][string]$Item
+    )
+    if ([string]::IsNullOrWhiteSpace($Item)) { $Item = [System.IO.Path]::GetFileName($Path) }
+    Write-IQLog -Level Warn -Stage 'Assemble' -Item $Item -Message $Message -Exception $Exception
+    if ($null -eq $script:IQAssembleSourceErrors) { $script:IQAssembleSourceErrors = New-Object System.Collections.Generic.List[object] }
+    $script:IQAssembleSourceErrors.Add(@{ Path = $Path; Message = $Message })
+}
+
+function Remove-IQAsmStaleTempFile {
+    <#
+    .SYNOPSIS
+        Deletes "<BaseName>.tmp-*.xlsx" files a killed earlier run left next to a workbook (private; never throws).
+    .DESCRIPTION
+        Uses the .NET directory API (no PowerShell wildcard globbing of the folder path) so a BaseFolder containing
+        '[' or ']' works; returns the number of files removed.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Folder,
+        [Parameter(Mandatory = $true)][string]$BaseName
+    )
+    $removed = 0
+    if ([string]::IsNullOrWhiteSpace($Folder) -or -not [System.IO.Directory]::Exists($Folder)) { return $removed }
+    $stale = @()
+    try { $stale = @([System.IO.Directory]::GetFiles($Folder, $BaseName + '.tmp-*.xlsx')) } catch { $stale = @() }
+    foreach ($f in $stale) {
+        try { [System.IO.File]::Delete($f); $removed++ }
+        catch { Write-IQLog -Level Debug -Stage 'Assemble' -Message ("Stale temporary workbook '{0}' could not be removed: {1}" -f $f, $_.Exception.Message) }
+    }
+    if ($removed -gt 0) {
+        Write-IQLog -Level Debug -Stage 'Assemble' -Item $BaseName -Message ("Removed {0} stale temporary workbook file(s) left by an earlier run." -f $removed)
+    }
+    return $removed
+}
 
 function Get-IQAsmMember {
     <#
@@ -295,22 +358,32 @@ function Get-IQAsmRunPath {
 function Get-IQAssembleFolder {
     <#
     .SYNOPSIS
-        The backup folder Assemble reads for Model / Report / Dataflow: <root>\<RunId> when it exists, else the newest yyyy-MM-dd folder (Warn), else $null.
+        The backup folder Assemble reads for Model / Report / Dataflow: <root>\<RunId> when it exists; without an active run the newest yyyy-MM-dd folder (Warn); else $null.
+    .DESCRIPTION
+        With an active run (Initialize-IQRun set $script:IQ.RunPaths) a missing run folder yields $null and a Warn -
+        the builders then emit header-only sheets. Falling back to the newest dated folder of ANOTHER run would present
+        that run's CSV/txt rows as this run's output (and write this run's Dataflow workbook into that folder), so the
+        monolith's "latest dated folder" rule only applies when no run is active (e.g. the helpers are called directly).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][ValidateSet('Model', 'Report', 'Dataflow')][string]$Kind)
     $root = $null
     if ($script:IQ -and $script:IQ.Paths) { $root = [string]$script:IQ.Paths[$Kind + 'Backups'] }
+    $hasRun = [bool]($script:IQ -and $script:IQ.ContainsKey('RunPaths') -and $null -ne $script:IQ.RunPaths)
     $runFolder = $null
-    if ($script:IQ -and $script:IQ.ContainsKey('RunPaths') -and $null -ne $script:IQ.RunPaths) { $runFolder = [string]$script:IQ.RunPaths[$Kind + 'Backups'] }
+    if ($hasRun) { $runFolder = [string]$script:IQ.RunPaths[$Kind + 'Backups'] }
     if ([string]::IsNullOrWhiteSpace($runFolder) -and -not [string]::IsNullOrWhiteSpace($root) -and $script:IQ -and -not [string]::IsNullOrWhiteSpace([string]$script:IQ.RunId)) {
         $runFolder = Join-Path $root $script:IQ.RunId
     }
     if (-not [string]::IsNullOrWhiteSpace($runFolder) -and (Test-Path -LiteralPath $runFolder)) { return $runFolder }
+    if ($hasRun) {
+        Write-IQLog -Level Warn -Stage 'Assemble' -Message ("{0} Backups folder '{1}' of run '{2}' not found - the {0} sheets are built header-only (another run's folder is never used)." -f $Kind, $runFolder, [string]$script:IQ.RunId)
+        return $null
+    }
     if (-not [string]::IsNullOrWhiteSpace($root)) {
         $latest = Get-IQDateFolder -Root $root
         if ($latest) {
-            Write-IQLog -Level Warn -Stage 'Assemble' -Message ("{0} Backups folder for run '{1}' not found; using the newest dated folder '{2}'." -f $Kind, [string]$script:IQ.RunId, $latest)
+            Write-IQLog -Level Warn -Stage 'Assemble' -Message ("No active run; {0} Backups: using the newest dated folder '{1}'." -f $Kind, $latest)
             return $latest
         }
     }
@@ -453,8 +526,13 @@ function ConvertTo-IQSheetTable {
     .DESCRIPTION
         Column type = bool / datetime / long / double when every non-null value of the column has that kind, else
         string (values converted with ConvertTo-IQAsmCellText; nested objects become compact JSON). Strings longer than
-        32,767 characters are truncated (Excel limit) and counted in the table's ExtendedProperties['Truncated'].
-        -LeadingColumns are placed first (created empty when absent), -TrailingColumns are appended when absent.
+        32,767 characters are truncated (Excel limit) and counted in the table's ExtendedProperties['Truncated'];
+        rows beyond 1,048,575 (Excel's row limit minus the header) are dropped, counted in
+        ExtendedProperties['TruncatedRows'] and logged at Warn. -LeadingColumns are placed first (created empty when
+        absent), -TrailingColumns are appended when absent.
+        Performance: Assemble runs after the time budget is spent, so the per-cell work is kept to plain operators
+        (member enumeration once per row into name/value arrays, string and $null fast paths, column ordinals); the
+        helper functions are only called for the uncommon non-string values.
     #>
     [CmdletBinding()]
     param(
@@ -463,37 +541,82 @@ function ConvertTo-IQSheetTable {
         [Parameter(Mandatory = $false)][AllowNull()][string[]]$TrailingColumns,
         [Parameter(Mandatory = $false)][string]$SheetName = 'Sheet'
     )
-    $maps = New-Object System.Collections.Generic.List[object]
+    $rowNames = New-Object System.Collections.Generic.List[object]    # per row: string[] member names
+    $rowValues = New-Object System.Collections.Generic.List[object]   # per row: object[] member values
     $columns = New-Object System.Collections.Generic.List[string]
     $seen = @{}
     foreach ($c in @($LeadingColumns)) {
         if ([string]::IsNullOrWhiteSpace([string]$c) -or $seen.ContainsKey([string]$c)) { continue }
         $seen[[string]$c] = $true; $columns.Add([string]$c)
     }
+    $memberTypes = @('NoteProperty', 'Property', 'AliasProperty', 'ScriptProperty')
+    $maxRows = [int]$script:IQExcelMaxDataRows
+    $truncatedRows = 0
+    $lastSignature = $null
     foreach ($row in @($Rows)) {
         if ($null -eq $row) { continue }
-        $map = ConvertTo-IQAsmRowMap -Row $row
-        foreach ($k in @($map.Keys)) {
-            if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; $columns.Add($k) }
+        if ($rowNames.Count -ge $maxRows) { $truncatedRows++; continue }
+        $names = $null
+        $values = $null
+        if ($row -is [System.Collections.IDictionary]) {
+            $names = New-Object System.Collections.Generic.List[string]
+            $values = New-Object System.Collections.Generic.List[object]
+            foreach ($k in @($row.Keys)) { $names.Add([string]$k); $values.Add($row[$k]) }
+            $names = $names.ToArray(); $values = $values.ToArray()
         }
-        $maps.Add($map)
+        elseif ($row -is [string] -or $row -is [System.ValueType]) {
+            $names = [string[]]@('Value'); $values = [object[]]@($row)
+        }
+        elseif ($row -is [System.Management.Automation.PSCustomObject]) {
+            # JSON / [PSCustomObject] rows (the bulk of every sheet): the names come from one engine-side member
+            # enumeration and the values are read by index - several times faster than a scripted foreach over
+            # PSObject.Properties with .Name/.Value per member. Values are NOT taken by member enumeration because
+            # that would flatten array-valued cells and shift the row.
+            $props = @($row.PSObject.Properties)
+            $names = [string[]]@($props.Name)
+            $values = New-Object object[] $props.Count
+            for ($i = 0; $i -lt $props.Count; $i++) { $values[$i] = $props[$i].Value }
+        }
+        else {
+            # Other objects (DataRow, class instances): keep the property kinds the sheet should carry.
+            $nl = New-Object System.Collections.Generic.List[string]
+            $vl = New-Object System.Collections.Generic.List[object]
+            foreach ($p in $row.PSObject.Properties) {
+                if ($memberTypes -contains $p.MemberType) { $nl.Add($p.Name); $vl.Add($p.Value) }
+            }
+            $names = $nl.ToArray(); $values = $vl.ToArray()
+        }
+        # Column discovery only when the row shape differs from the previous row (rows of one collector share it).
+        $signature = [string]::Join([string][char]31, $names)
+        if ($signature -ne $lastSignature) {
+            foreach ($k in $names) {
+                if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; $columns.Add($k) }
+            }
+            $lastSignature = $signature
+        }
+        $rowNames.Add($names)
+        $rowValues.Add($values)
     }
     foreach ($c in @($TrailingColumns)) {
         if ([string]::IsNullOrWhiteSpace([string]$c) -or $seen.ContainsKey([string]$c)) { continue }
         $seen[[string]$c] = $true; $columns.Add([string]$c)
     }
 
-    # Column typing: one pass over the values.
+    # Column typing: one pass over the values (strings and nulls decided inline, helper only for the rest).
     $kinds = @{}
     foreach ($c in $columns) { $kinds[$c] = $null }
-    foreach ($map in $maps) {
-        foreach ($c in $columns) {
-            if ($kinds[$c] -eq 'String') { continue }
-            if (-not $map.Contains($c)) { continue }
-            $kind = Get-IQAsmValueKind -Value $map[$c]
+    for ($ri = 0; $ri -lt $rowNames.Count; $ri++) {
+        $names = $rowNames[$ri]; $values = $rowValues[$ri]
+        for ($i = 0; $i -lt $names.Length; $i++) {
+            $v = $values[$i]
+            if ($null -eq $v) { continue }
+            $c = $names[$i]
+            $current = $kinds[$c]
+            if ($current -eq 'String') { continue }
+            if ($v -is [string]) { $kinds[$c] = 'String'; continue }
+            $kind = Get-IQAsmValueKind -Value $v
             if ($kind -eq 'Null') { continue }
             if ($kind -eq 'Other') { $kind = 'String' }
-            $current = $kinds[$c]
             if ($null -eq $current) { $kinds[$c] = $kind }
             elseif ($current -eq $kind) { continue }
             elseif (($current -eq 'Integer' -and $kind -eq 'Real') -or ($current -eq 'Real' -and $kind -eq 'Integer')) { $kinds[$c] = 'Real' }
@@ -503,6 +626,8 @@ function ConvertTo-IQSheetTable {
 
     $table = New-Object System.Data.DataTable
     $table.TableName = (Get-IQSafeSheetName -Name $SheetName)
+    $ordinal = @{}
+    $isText = @{}
     foreach ($c in $columns) {
         $type = [string]
         switch ([string]$kinds[$c]) {
@@ -512,33 +637,45 @@ function ConvertTo-IQSheetTable {
             'Real' { $type = [double] }
             default { $type = [string] }
         }
-        [void]$table.Columns.Add((New-Object System.Data.DataColumn($c, $type)))
+        $col = New-Object System.Data.DataColumn($c, $type)
+        # A text column defaults to '' (a missing/null value is an empty cell, as before); typed columns default to DBNull.
+        if ($type -eq [string]) { $col.DefaultValue = ''; $isText[$c] = $true } else { $isText[$c] = $false }
+        [void]$table.Columns.Add($col)
+        $ordinal[$c] = $col.Ordinal
     }
 
     $truncated = 0
-    foreach ($map in $maps) {
+    $cellLimit = [int]$script:IQExcelCellLimit
+    for ($ri = 0; $ri -lt $rowNames.Count; $ri++) {
+        $names = $rowNames[$ri]; $values = $rowValues[$ri]
         $dr = $table.NewRow()
-        foreach ($c in $columns) {
-            $v = $null
-            if ($map.Contains($c)) { $v = $map[$c] }
+        for ($i = 0; $i -lt $names.Length; $i++) {
+            $v = $values[$i]
+            if ($null -eq $v -or $v -is [System.DBNull]) { continue }   # defaults: '' for text, DBNull for typed
+            $c = $names[$i]
+            if ($isText[$c]) {
+                if ($v -is [string]) { $text = $v } else { $text = ConvertTo-IQAsmCellText -Value $v }
+                if ($text.Length -gt $cellLimit) { $text = $text.Substring(0, $cellLimit); $truncated++ }
+                $dr[$ordinal[$c]] = $text
+                continue
+            }
             switch ([string]$kinds[$c]) {
-                'Bool' { if ($null -eq $v) { $dr[$c] = [System.DBNull]::Value } else { $dr[$c] = [bool]$v } }
-                'DateTime' { if ($null -eq $v) { $dr[$c] = [System.DBNull]::Value } else { $dr[$c] = [datetime]$v } }
-                'Integer' { if ($null -eq $v) { $dr[$c] = [System.DBNull]::Value } else { $dr[$c] = [long]$v } }
-                'Real' { if ($null -eq $v) { $dr[$c] = [System.DBNull]::Value } else { $dr[$c] = [double]$v } }
-                default {
-                    $text = ConvertTo-IQAsmCellText -Value $v
-                    if ($text.Length -gt $script:IQExcelCellLimit) { $text = $text.Substring(0, $script:IQExcelCellLimit); $truncated++ }
-                    $dr[$c] = $text
-                }
+                'Bool' { $dr[$ordinal[$c]] = [bool]$v }
+                'DateTime' { $dr[$ordinal[$c]] = [datetime]$v }
+                'Integer' { $dr[$ordinal[$c]] = [long]$v }
+                'Real' { $dr[$ordinal[$c]] = [double]$v }
             }
         }
         $table.Rows.Add($dr)
     }
     $table.ExtendedProperties['Truncated'] = $truncated
-    $table.ExtendedProperties['SourceRows'] = $maps.Count
+    $table.ExtendedProperties['TruncatedRows'] = $truncatedRows
+    $table.ExtendedProperties['SourceRows'] = $rowNames.Count + $truncatedRows
     if ($truncated -gt 0) {
         Write-IQLog -Level Warn -Stage 'Assemble' -Item $SheetName -Message ("{0} cell(s) longer than {1} characters were truncated (Excel limit)." -f $truncated, $script:IQExcelCellLimit)
+    }
+    if ($truncatedRows -gt 0) {
+        Write-IQLog -Level Warn -Stage 'Assemble' -Item $SheetName -Message ("{0} row(s) beyond Excel's limit of {1:n0} data rows per sheet were not written." -f $truncatedRows, $maxRows)
     }
     return , $table
 }
@@ -594,8 +731,12 @@ function Write-IQWorkbook {
         Writes an ordered set of sheet tables to a workbook via a temporary file that replaces the target only after a successful save.
     .DESCRIPTION
         -Sheets is an ordered dictionary sheetName -> System.Data.DataTable (Export-Excel -InputObject fast path).
-        Returns @{ Path; Sheets = [string[]] final worksheet names; Rows = total rows }. Throws when the workbook cannot
-        be written or moved (e.g. the target is open in Excel); the previous workbook is left untouched in that case.
+        Returns @{ Path; Sheets = [string[]] final worksheet names; Rows = total rows; FailedSheets = [string[]] }.
+        A sheet whose Export-Excel call fails (EPPlus error) is logged at Error and written again as its header-only
+        table (columns only), so every contract sheet still exists and the other sheets are not lost; its name is
+        returned in FailedSheets (the caller records the workbook item as Failed). Throws when the workbook itself
+        cannot be written or moved into place (e.g. the target is open in Excel); the previous workbook is left
+        untouched in that case. Stale "<name>.tmp-*.xlsx" files of a killed earlier run are removed first.
     #>
     [CmdletBinding()]
     param(
@@ -608,6 +749,7 @@ function Write-IQWorkbook {
     $folder = Split-Path -Path $Path -Parent
     if ($folder -and -not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
     $baseName = [System.IO.Path]::GetFileNameWithoutExtension($Path)
+    [void](Remove-IQAsmStaleTempFile -Folder $folder -BaseName $baseName)
     $tmp = Join-Path $folder ($baseName + '.tmp-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.xlsx')
 
     $useAutoSize = $false
@@ -615,6 +757,7 @@ function Write-IQWorkbook {
 
     $pkg = $null
     $finalNames = @()
+    $failedSheets = @()
     $usedNames = @{}
     $totalRows = 0
     try {
@@ -644,30 +787,55 @@ function Write-IQWorkbook {
 
             # -NoNumberConversion '*' (audit C8-15 / X1-22): the DataTable path already writes strings verbatim, the
             # switch keeps that guarantee if the input path ever changes (piped objects).
-            $params = @{ InputObject = $table; WorksheetName = $sheetName; PassThru = $true; NoNumberConversion = @('*') }
-            if ($null -eq $pkg) { $params['Path'] = $tmp } else { $params['ExcelPackage'] = $pkg }
-            if ($useAutoSize) { $params['AutoSize'] = $true }
-            if ($AutoNameRange) { $params['AutoNameRange'] = $true }
             # DateTime-typed columns are written as real Excel dates with ImportExcel's built-in date-time number format
             # (NumFmtId 22); a custom format string must NOT be used here - EPPlus/Import-Excel only read a numeric cell
             # back as [datetime] when its number format is a built-in date format.
-            $pkg = Export-Excel @params
+            $params = @{ WorksheetName = $sheetName; PassThru = $true; NoNumberConversion = @('*') }
+            if ($useAutoSize) { $params['AutoSize'] = $true }
+            if ($AutoNameRange) { $params['AutoNameRange'] = $true }
+            $written = $false
+            try {
+                if ($null -eq $pkg) { $params['Path'] = $tmp } else { $params['ExcelPackage'] = $pkg }
+                $pkg = Export-Excel -InputObject $table @params
+                $written = $true
+            }
+            catch {
+                # One failing sheet must not cost the workbook (every contract sheet missing = PBIT fatal, brief
+                # section 14): drop the half-built worksheet and write the header-only table instead.
+                $failedSheets += [string]$name
+                Write-IQLog -Level Error -Stage 'Assemble' -Item $sheetName -Message ("Sheet could not be written ({0} row(s), {1} column(s)); written header-only instead: {2}" -f $table.Rows.Count, $table.Columns.Count, $_.Exception.Message) -Exception $_.Exception
+                if ($null -ne $pkg) {
+                    try { if ($null -ne $pkg.Workbook.Worksheets[$sheetName]) { $pkg.Workbook.Worksheets.Delete($sheetName) } }
+                    catch { Write-IQLog -Level Debug -Stage 'Assemble' -Item $sheetName -Message ("Partial worksheet could not be removed: {0}" -f $_.Exception.Message) }
+                }
+                $headerOnly = $table.Clone()   # same columns, no rows
+                [void](Add-IQSheetPlaceholderRow -Table $headerOnly)
+                $params.Remove('Path'); $params.Remove('ExcelPackage')
+                if ($null -eq $pkg) { $params['Path'] = $tmp } else { $params['ExcelPackage'] = $pkg }
+                $pkg = Export-Excel -InputObject $headerOnly @params
+                $table = $headerOnly
+            }
             $finalNames += $sheetName
             $totalRows += $table.Rows.Count
-            Write-IQLog -Level Debug -Stage 'Assemble' -Item $sheetName -Message ("{0} row(s), {1} column(s)" -f $table.Rows.Count, $table.Columns.Count)
+            if ($written) { Write-IQLog -Level Debug -Stage 'Assemble' -Item $sheetName -Message ("{0} row(s), {1} column(s)" -f $table.Rows.Count, $table.Columns.Count) }
         }
         if ($null -eq $pkg) { throw "No sheet could be written to '$Path'." }
         Close-ExcelPackage -ExcelPackage $pkg
         $pkg = $null
         if (-not (Test-Path -LiteralPath $tmp) -or (Get-Item -LiteralPath $tmp).Length -le 0) { throw "Temporary workbook '$tmp' was not created." }
-        Move-Item -LiteralPath $tmp -Destination $Path -Force
+        # .NET copy + delete instead of Move-Item: -Destination has no -LiteralPath variant and Windows PowerShell 5.1
+        # globs '[' / ']' in it (a BaseFolder like 'D:\PBI Governance [PROD]' broke the final move). Copy-then-delete
+        # keeps the previous workbook until the new one is fully in place and still fails cleanly when the target is
+        # locked (open in Excel).
+        [System.IO.File]::Copy($tmp, $Path, $true)
+        [System.IO.File]::Delete($tmp)
     }
     catch {
         if ($null -ne $pkg) { try { Close-ExcelPackage -ExcelPackage $pkg -NoSave } catch { Write-IQLog -Level Debug -Stage 'Assemble' -Message ("Temp package close failed: {0}" -f $_.Exception.Message) } }
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
         throw
     }
-    return @{ Path = $Path; Sheets = $finalNames; Rows = $totalRows }
+    return @{ Path = $Path; Sheets = $finalNames; Rows = $totalRows; FailedSheets = $failedSheets }
 }
 
 # =====================================================================================================================
@@ -715,7 +883,12 @@ function ConvertFrom-IQReportDetailText {
 function Get-IQReportDetailSheetMap {
     <#
     .SYNOPSIS
-        Ordered dictionary sheetName -> rows for every *.txt in the report backup folder (file order, as the monolith), then missing contract sheets.
+        Ordered dictionary sheetName -> @{ Rows; Columns } for every *.txt in the report backup folder (file order, as the monolith), then missing contract sheets.
+    .DESCRIPTION
+        Columns are the header line of the file, so a header-only txt (e.g. ReportExports.txt when nothing was
+        exported, ExtractErrors.txt, ReportObjects_UnusedObjects.txt, or a contract sheet whose csx writes extra
+        columns) still yields its header row in the workbook. A file that cannot be read is recorded with
+        Add-IQAsmSourceError (failed Assemble item) and its sheet is written header-only.
     #>
     [CmdletBinding()]
     param(
@@ -728,17 +901,18 @@ function Get-IQReportDetailSheetMap {
             $sheet = [System.IO.Path]::GetFileNameWithoutExtension($txt.Name)
             try {
                 $parsed = ConvertFrom-IQReportDetailText -Path $txt.FullName
-                $map[$sheet] = @($parsed.Rows)
+                $headers = @($parsed.Headers | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+                $map[$sheet] = @{ Rows = @($parsed.Rows); Columns = @($headers) }
                 Write-IQLog -Level Debug -Stage 'Assemble' -Item $sheet -Message ("{0}: {1} row(s), {2} column(s)" -f $txt.Name, @($parsed.Rows).Count, @($parsed.Headers).Count)
             }
             catch {
-                Write-IQLog -Level Warn -Stage 'Assemble' -Item $sheet -Message ("Could not parse '{0}': {1}" -f $txt.FullName, $_.Exception.Message) -Exception $_.Exception
-                if (-not $map.Contains($sheet)) { $map[$sheet] = @() }
+                Add-IQAsmSourceError -Path $txt.FullName -Item $sheet -Message ("Could not parse '{0}': {1}" -f $txt.FullName, $_.Exception.Message) -Exception $_.Exception
+                if (-not $map.Contains($sheet)) { $map[$sheet] = @{ Rows = @(); Columns = @() } }
             }
         }
     }
     foreach ($sheet in @(Get-IQContractSheetName -Workbook 'Report Detail.xlsx' -Contract $Contract)) {
-        if (-not $map.Contains($sheet)) { $map[$sheet] = @() }
+        if (-not $map.Contains($sheet)) { $map[$sheet] = @{ Rows = @(); Columns = @() } }
     }
     return $map
 }
@@ -770,7 +944,7 @@ function Get-IQModelDetailRow {
             $files++
         }
         catch {
-            Write-IQLog -Level Warn -Stage 'Assemble' -Item $csv.Name -Message ("Could not read CSV '{0}': {1}" -f $csv.FullName, $_.Exception.Message) -Exception $_.Exception
+            Add-IQAsmSourceError -Path $csv.FullName -Item $csv.Name -Message ("Could not read CSV '{0}': {1}" -f $csv.FullName, $_.Exception.Message) -Exception $_.Exception
         }
     }
     $kind = 'Semantic Models'
@@ -807,7 +981,7 @@ function Get-IQDataflowDetailRow {
             foreach ($q in @($queries)) { if ($null -ne $q) { $rows.Add($q) } }
         }
         catch {
-            Write-IQLog -Level Warn -Stage 'Assemble' -Item $f.Name -Message ("Could not read dataflow extract '{0}': {1}" -f $f.FullName, $_.Exception.Message) -Exception $_.Exception
+            Add-IQAsmSourceError -Path $f.FullName -Item $f.Name -Message ("Could not read dataflow extract '{0}': {1}" -f $f.FullName, $_.Exception.Message) -Exception $_.Exception
         }
     }
     Write-IQLog -Level Debug -Stage 'Assemble' -Item 'Sheet1' -Message ("{0} dataflow extract(s), {1} query row(s)" -f $files, $rows.Count)
@@ -876,7 +1050,7 @@ function Get-IQAssembleRunSummaryRow {
             DurationSeconds = $dur
             ItemsDone       = [int]$done
             ItemsFailed     = [int]$failed
-            Error           = [string](Get-IQAsmMember -Object $st -Name 'error')
+            Error           = ConvertTo-IQRedactedText -Text ([string](Get-IQAsmMember -Object $st -Name 'error'))
         }
         foreach ($k in $common.Keys) { $row[$k] = $common[$k] }
         $stageRows += [PSCustomObject]$row
@@ -917,7 +1091,7 @@ function Get-IQAssembleFailureRow {
                 Stage   = [string](Get-IQAsmMember -Object $f -Name 'stage')
                 ItemKey = [string](Get-IQAsmMember -Object $f -Name 'itemKey')
                 Item    = [string](Get-IQAsmMember -Object $f -Name 'item')
-                Message = [string](Get-IQAsmMember -Object $f -Name 'message')
+                Message = ConvertTo-IQRedactedText -Text ([string](Get-IQAsmMember -Object $f -Name 'message'))
                 TimeUtc = [string](Get-IQAsmMember -Object $f -Name 'timeUtc')
                 RunId   = $runId
             })
@@ -944,7 +1118,7 @@ function Get-IQAssembleInventoryErrorRow {
                 WorkspaceName = $wsName
                 Collector     = [string](Get-IQAsmMember -Object $err -Name 'Collector')
                 Path          = [string](Get-IQAsmMember -Object $err -Name 'Path')
-                Message       = [string](Get-IQAsmMember -Object $err -Name 'Message')
+                Message       = ConvertTo-IQRedactedText -Text ([string](Get-IQAsmMember -Object $err -Name 'Message'))
             })
     }
     foreach ($e in @(Get-IQAsmMember -Object $Global -Name 'Errors')) { & $add $e '' '(global)' }
@@ -996,11 +1170,16 @@ function Get-IQExtraSheetMap {
         if ([string]::IsNullOrWhiteSpace($defaultName)) { $defaultName = $stem }
         try {
             # A top-level JSON array is unrolled by ConvertFrom-IQJsonFile (1 element -> the element, 0 -> $null), so the
-            # shape is decided from the first non-blank character of the file, not from the parsed value.
-            $text = [System.IO.File]::ReadAllText($f.FullName)
+            # shape is decided from the first non-blank character of the file, not from the parsed value. The file is
+            # sniffed with a reader (not ReadAllText): an ActivityEvents file can be hundreds of MB and would otherwise
+            # be held twice in memory on Windows PowerShell 5.1.
             $firstChar = ''
-            $m = [regex]::Match($text, '^\uFEFF?\s*(\S)')
-            if ($m.Success) { $firstChar = $m.Groups[1].Value }
+            $sr = [System.IO.File]::OpenText($f.FullName)
+            try {
+                do { $ch = $sr.Read() } while ($ch -ge 0 -and ([char]$ch -eq [char]0xFEFF -or [char]::IsWhiteSpace([char]$ch)))
+                if ($ch -ge 0) { $firstChar = [string][char]$ch }
+            }
+            finally { $sr.Dispose() }
             if ($firstChar -eq '[') {
                 & $addRows $defaultName @(ConvertFrom-IQJsonFile -Path $f.FullName | Where-Object { $null -ne $_ }) @()
                 continue
@@ -1045,7 +1224,7 @@ function Get-IQExtraSheetMap {
             & $addRows $defaultName @($obj) @()
         }
         catch {
-            Write-IQLog -Level Warn -Stage 'Assemble' -Item $f.Name -Message ("Could not read extras file '{0}': {1}" -f $f.FullName, $_.Exception.Message) -Exception $_.Exception
+            Add-IQAsmSourceError -Path $f.FullName -Item $f.Name -Message ("Could not read extras file '{0}': {1}" -f $f.FullName, $_.Exception.Message) -Exception $_.Exception
         }
     }
     if ($map.Count -gt 0) {
@@ -1171,7 +1350,9 @@ function Build-IQReportWorkbook {
     $source = Get-IQReportDetailSheetMap -Folder $Folder -Contract $Contract
     $tables = [ordered]@{}
     foreach ($name in @($source.Keys)) {
-        $tables[$name] = New-IQSheetTable -Workbook $workbook -SheetName ([string]$name) -Rows $source[$name] -Contract $Contract
+        $entry = $source[$name]
+        # The txt header row is the sheet's default column list, so header-only files keep their columns.
+        $tables[$name] = New-IQSheetTable -Workbook $workbook -SheetName ([string]$name) -Rows @($entry.Rows) -Contract $Contract -DefaultColumns @($entry.Columns)
     }
     return (Write-IQWorkbook -Path $Path -Sheets $tables -AutoNameRange)
 }
@@ -1237,16 +1418,11 @@ function Build-IQDataflowWorkbook {
     if (-not [string]::IsNullOrWhiteSpace($CopyPath) -and $CopyPath -ne $Path) {
         $copyFolder = Split-Path -Path $CopyPath -Parent
         if ($copyFolder -and -not (Test-Path -LiteralPath $copyFolder)) { New-Item -ItemType Directory -Path $copyFolder -Force | Out-Null }
-        $tmp = Join-Path $copyFolder ([System.IO.Path]::GetFileNameWithoutExtension($CopyPath) + '.tmp-' + [guid]::NewGuid().ToString('N').Substring(0, 8) + '.xlsx')
-        try {
-            Copy-Item -LiteralPath $Path -Destination $tmp -Force
-            Move-Item -LiteralPath $tmp -Destination $CopyPath -Force
-            $result['CopyPath'] = $CopyPath
-        }
-        catch {
-            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
-            throw
-        }
+        # Stale copy temp files of earlier module versions / killed runs, then a .NET copy: the source is a complete,
+        # closed workbook and File.Copy never globs '[' / ']' in the BaseFolder (Copy-Item/Move-Item -Destination do).
+        [void](Remove-IQAsmStaleTempFile -Folder $copyFolder -BaseName ([System.IO.Path]::GetFileNameWithoutExtension($CopyPath)))
+        [System.IO.File]::Copy($Path, $CopyPath, $true)
+        $result['CopyPath'] = $CopyPath
     }
     return $result
 }
@@ -1282,8 +1458,11 @@ function Invoke-IQAssembleStage {
     .DESCRIPTION
         Each workbook is built independently (a failure of one is recorded with Set-IQItemDone -Status Failed and the
         others are still built), written to a temp file and moved into place, and checkpointed as an Assemble item
-        (itemKeys environment-workbook, report-workbook, model-workbook, dataflow-workbook). Returns
-        @{ EnvironmentWorkbook; ReportWorkbook; ModelWorkbook; DataflowWorkbook; Built; Failed; Outputs }.
+        (itemKeys environment-workbook, report-workbook, model-workbook, dataflow-workbook). A workbook whose sheets
+        were partly written header-only (Write-IQWorkbook FailedSheets) is recorded as Failed although the file exists;
+        every source file that could not be read is recorded as a failed "source-<file>" item, so the stage ends
+        CompletedWithErrors and the exit code reflects the incomplete output (brief section 0.4). Returns
+        @{ EnvironmentWorkbook; ReportWorkbook; ModelWorkbook; DataflowWorkbook; Built; Failed; SourceErrors; Outputs }.
     #>
     [CmdletBinding()]
     param(
@@ -1308,14 +1487,19 @@ function Invoke-IQAssembleStage {
     Write-IQLog -Level Info -Stage $stage -Message ("Assembling workbooks for run '{0}' into '{1}'" -f [string]$script:IQ.RunId, $OutputFolder)
 
     $outputs = @{}
-    $result = @{ EnvironmentWorkbook = $null; ReportWorkbook = $null; ModelWorkbook = $null; DataflowWorkbook = $null; Built = 0; Failed = 0; Outputs = $outputs }
+    $result = @{ EnvironmentWorkbook = $null; ReportWorkbook = $null; ModelWorkbook = $null; DataflowWorkbook = $null; Built = 0; Failed = 0; SourceErrors = 0; Outputs = $outputs }
 
-    $dataflowFolder = Get-IQAssembleFolder -Kind 'Dataflow'
-    if ([string]::IsNullOrWhiteSpace($dataflowFolder)) {
-        $dataflowFolder = $OutputFolder
-        if ($script:IQ.ContainsKey('RunPaths') -and $null -ne $script:IQ.RunPaths -and -not [string]::IsNullOrWhiteSpace([string]$script:IQ.RunPaths['DataflowBackups'])) {
-            $dataflowFolder = [string]$script:IQ.RunPaths['DataflowBackups']
-        }
+    # The Dataflow workbook always goes into THIS run's Dataflow Backups\<RunId> folder (created when it was deleted
+    # after Initialize-IQRun) - never into another run's dated folder. Without an active run (helpers called directly)
+    # the monolith's newest-dated-folder rule applies, else the output folder.
+    $dataflowFolder = $null
+    if ($script:IQ.ContainsKey('RunPaths') -and $null -ne $script:IQ.RunPaths -and -not [string]::IsNullOrWhiteSpace([string]$script:IQ.RunPaths['DataflowBackups'])) {
+        $dataflowFolder = [string]$script:IQ.RunPaths['DataflowBackups']
+        if (-not (Test-Path -LiteralPath $dataflowFolder)) { New-Item -ItemType Directory -Path $dataflowFolder -Force | Out-Null }
+    }
+    else {
+        $dataflowFolder = Get-IQAssembleFolder -Kind 'Dataflow'
+        if ([string]::IsNullOrWhiteSpace($dataflowFolder)) { $dataflowFolder = $OutputFolder }
     }
 
     $jobs = @(
@@ -1335,6 +1519,7 @@ function Invoke-IQAssembleStage {
 
     foreach ($job in $jobs) {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $script:IQAssembleSourceErrors = New-Object System.Collections.Generic.List[object]
         try {
             $r = & $job.Build $job.Path
             $finalPath = [string]$job.Path
@@ -1345,12 +1530,37 @@ function Invoke-IQAssembleStage {
                 $outputs['dataflowWorkbookInRunFolder'] = [string]$r['Path']
                 $outs += [string]$r['Path']
             }
-            $sheetCount = 0; $rowCount = 0
-            if ($r) { $sheetCount = @($r['Sheets']).Count; $rowCount = [int]$r['Rows'] }
+            $sheetCount = 0; $rowCount = 0; $failedSheets = @()
+            if ($r) { $sheetCount = @($r['Sheets']).Count; $rowCount = [int]$r['Rows']; $failedSheets = @($r['FailedSheets'] | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) }
+            $sourceErrors = @()
+            if ($null -ne $script:IQAssembleSourceErrors) { $sourceErrors = $script:IQAssembleSourceErrors.ToArray() }
             $result.Built++
-            Write-IQLog -Level Success -Stage $stage -Item $job.Name -Message ("{0} sheet(s), {1} row(s) written to '{2}' in {3:n1} s" -f $sheetCount, $rowCount, $finalPath, $sw.Elapsed.TotalSeconds)
+            $result.SourceErrors += $sourceErrors.Count
+            if ($failedSheets.Count -gt 0) {
+                # The file exists (every contract sheet is present, the failed ones header-only) but it is incomplete.
+                $msg = ("{0} sheet(s) could not be written and are header-only: {1}" -f $failedSheets.Count, ($failedSheets -join ', '))
+                Write-IQLog -Level Error -Stage $stage -Item $job.Name -Message ("{0} sheet(s), {1} row(s) written to '{2}' in {3:n1} s - INCOMPLETE: {4}" -f $sheetCount, $rowCount, $finalPath, $sw.Elapsed.TotalSeconds, $msg)
+                if ($hasManifest) {
+                    try { Set-IQItemDone -Stage $stage -ItemKey $job.Key -Item $job.Name -Outputs $outs -Status Failed -Method 'ImportExcel' -Message $msg -Data @{ Sheets = $sheetCount; Rows = $rowCount; FailedSheets = $failedSheets } | Out-Null }
+                    catch { Write-IQLog -Level Warn -Stage $stage -Message ("Checkpoint could not be written: {0}" -f $_.Exception.Message) }
+                }
+            }
+            else {
+                $level = 'Success'
+                $note = ''
+                if ($sourceErrors.Count -gt 0) { $level = 'Warn'; $note = (' - {0} source file(s) could not be read (see Failures)' -f $sourceErrors.Count) }
+                Write-IQLog -Level $level -Stage $stage -Item $job.Name -Message ("{0} sheet(s), {1} row(s) written to '{2}' in {3:n1} s{4}" -f $sheetCount, $rowCount, $finalPath, $sw.Elapsed.TotalSeconds, $note)
+                if ($hasManifest) {
+                    Set-IQItemDone -Stage $stage -ItemKey $job.Key -Item $job.Name -Outputs $outs -Method 'ImportExcel' -Data @{ Sheets = $sheetCount; Rows = $rowCount; SourceErrors = $sourceErrors.Count } | Out-Null
+                }
+            }
+            # Every unreadable source file is a recorded per-item failure (brief section 0.4): the sheet lacks its rows.
             if ($hasManifest) {
-                Set-IQItemDone -Stage $stage -ItemKey $job.Key -Item $job.Name -Outputs $outs -Method 'ImportExcel' -Data @{ Sheets = $sheetCount; Rows = $rowCount } | Out-Null
+                foreach ($se in $sourceErrors) {
+                    $sePath = [string]$se['Path']
+                    try { Set-IQItemDone -Stage $stage -ItemKey ('source-' + (Get-IQSafeKey -Value $sePath)) -Item $sePath -Status Failed -Method 'ImportExcel' -Message ([string]$se['Message']) | Out-Null }
+                    catch { Write-IQLog -Level Warn -Stage $stage -Message ("Checkpoint could not be written: {0}" -f $_.Exception.Message) }
+                }
             }
         }
         catch {
@@ -1362,10 +1572,11 @@ function Invoke-IQAssembleStage {
             }
         }
     }
+    $script:IQAssembleSourceErrors = New-Object System.Collections.Generic.List[object]
 
     if ($hasManifest) { Set-IQManifestOutput -Outputs $outputs }
     $level = 'Success'
-    if ($result.Failed -gt 0) { $level = 'Warn' }
-    Write-IQLog -Level $level -Stage $stage -Message ("Assemble finished: {0} workbook(s) built, {1} failed, {2:n1} s" -f $result.Built, $result.Failed, $started.Elapsed.TotalSeconds)
+    if ($result.Failed -gt 0 -or $result.SourceErrors -gt 0) { $level = 'Warn' }
+    Write-IQLog -Level $level -Stage $stage -Message ("Assemble finished: {0} workbook(s) built, {1} failed, {2} unreadable source file(s), {3:n1} s" -f $result.Built, $result.Failed, $result.SourceErrors, $started.Elapsed.TotalSeconds)
     return $result
 }

@@ -16,6 +16,8 @@ Contents: 1 prerequisites - 2 create the pipeline - 3 secrets - 4 hosted vs self
   document. Nothing else - no app registration.
 * Parallel jobs: the **free Microsoft-hosted tier caps a job at 60 minutes**; buy one Microsoft-hosted parallel job to
   lift it to 360 minutes, or use the free self-hosted parallel job (no cap). Organization settings > Parallel jobs.
+  On any Microsoft-hosted pool **set `timeBudgetMinutes`** (`55` free tier, `350` paid) - a run killed by the cap
+  ends as *Canceled* and the next run cannot restore its state (section 5).
 * The repository root is the ImpactIQ base folder (`ImpactIQ.ps1`, `Config\` with the csx scripts, `Blank Model.bim`,
   Tabular Editor 2 portable and pbi-tools). The pipeline passes `-BaseFolder $(Build.SourcesDirectory)`.
 
@@ -27,7 +29,9 @@ Contents: 1 prerequisites - 2 create the pipeline - 3 secrets - 4 hosted vs self
 3. Project settings > Pipelines > Settings: set **Days to keep runs** to more than the longest gap between two
    scheduled runs (the resume state and the token cache travel as artifacts of the previous run; default 30 days).
 4. Run pipeline (manual): choose `authMode`, `environment` (`USGov`), `workspaceNames` (e.g. `Finance*;HR;*Sales*`
-   - `*` alone means all workspaces), optionally `stages` = `Inventory` for a quick first test.
+   - `*` alone means all workspaces), `timeBudgetMinutes` (`55` on the free hosted tier, `350` with a paid parallel
+   job; the YAML default `0` is only right for self-hosted agents), optionally `stages` = `Inventory` for a quick
+   first test.
 5. Open the run, expand **Run ImpactIQ**. With `DeviceCode` the step prints
    `DEVICE CODE SIGN-IN REQUIRED: ... https://microsoft.com/devicelogin ... code XXXXXXXX` - complete it within
    15 minutes (or read it from the Teams/Slack channel if `IMPACTIQ_DEVICECODE_WEBHOOK` is set).
@@ -65,7 +69,7 @@ it mints with `##vso[task.setsecret]` and redacts `Password=`/`Bearer` patterns 
 
 | | Microsoft-hosted `windows-latest` | Self-hosted Windows agent |
 |---|---|---|
-| Job time limit | 60 min free / **360 min** with a paid parallel job (set `timeoutInMinutes: 360` explicitly - the pipeline does) | none (`timeoutInMinutes: 0`) |
+| Job time limit | 60 min free / **360 min** with a paid parallel job (set `timeoutInMinutes: 360` explicitly - the pipeline does). **`timeBudgetMinutes` is required** (`55` / `350`): a job killed by the cap ends *Canceled* and its state is not restored by the next run (section 5) | none (`timeoutInMinutes: 0`, `timeBudgetMinutes: 0`) |
 | State between runs | only via artifacts (`restoreState: true`, default) | the agent workspace persists (`$(Build.SourcesDirectory)\State` survives) - set `restoreState: false` so an older artifact never overwrites newer local state |
 | Token cache | AES with `IMPACTIQ_TOKEN_CACHE_KEY` (published inside `impactiq-state`) | DPAPI under the agent service account; nothing published |
 | Tabular Editor 2 / pbi-tools | committed copies in `Config\`, updated from GitHub each run unless `skipToolUpdate: true`; WER dialogs disabled by the tool | same; downloads can be blocked -> `skipToolUpdate: true` |
@@ -107,9 +111,12 @@ checkout  ->  restore impactiq-state (previous run)  ->  install modules  ->  Ru
 * **Restore** uses `DownloadPipelineArtifact@2` with `buildType: specific`, `definition: $(System.DefinitionId)`,
   `buildVersionToDownload: latestFromBranch`, `allowPartiallySucceededBuilds` + `allowFailedBuilds: true`,
   `continueOnError: true` (the very first run logs `No builds currently exist in the build definition supplied` - harmless).
-  Runs that were **cancelled** by the job timeout are not returned by the task; that is why every publish step has
-  `condition: always()` and the job has `cancelTimeoutInMinutes: 15` - the state is captured even when the job is
-  killed at the 360-minute mark, and the following run resumes it.
+  `latestFromBranch` only considers runs whose result is *Succeeded*, *PartiallySucceeded* or *Failed*. A run that
+  was **cancelled** - by hand or by the job timeout - has the result *Canceled* and is **skipped**: the next run
+  restores the run *before* it and redoes everything the killed run had checkpointed. The publish steps still run
+  after a cancel (`condition: always()`, `cancelTimeoutInMinutes: 15`), so the killed run's `impactiq-state` artifact
+  exists and can be downloaded by hand, but nothing picks it up automatically. That is why `timeBudgetMinutes` is
+  **required on Microsoft-hosted pools** (next bullets): the run must end on its own, with exit `3`, before the cap.
 * **Resume**: `ImpactIQ.ps1 -Resume Auto` (the template's default) resumes today's run if its manifest is not
   `Completed`, otherwise the newest run of the last 3 days with status `Running`, `Paused`, `Failed` or
   `CompletedWithErrors`, otherwise starts a fresh run for today. Completed stages are skipped (except `Assemble`, always rebuilt), completed
@@ -121,15 +128,17 @@ checkout  ->  restore impactiq-state (previous run)  ->  install modules  ->  Ru
   failed run still publishes its state, so the next run continues where it stopped.
 * **Time budget**: set `timeBudgetMinutes` (pipeline parameter -> `-TimeBudgetMinutes`) a few minutes below the job
   cap - `55` on the free hosted tier, `350` with a paid parallel job. ImpactIQ then stops between items 2 minutes before
-  the budget, still runs `Assemble`, publishes state + outputs and exits `3` instead of being killed mid-item (a killed
-  job loses the last item and, on the free tier, may not even publish its artifacts). Headless-and-Resume.md section 10.
+  the budget, still runs `Assemble`, publishes state + outputs and exits `3` instead of being killed mid-item. The
+  YAML default is `0` (unlimited), which is only correct for self-hosted agents: on a hosted pool a run that hits the
+  cap is *Canceled*, its state is not restored (previous bullet) and the tenant is re-scanned from the older state on
+  every schedule. Headless-and-Resume.md section 10.
 * **Summary**: the "Stage artifacts" step writes `impactiq-summary.md` from `manifest.json` and uploads it with
   `##vso[task.uploadsummary]` - the run's Summary tab shows stages, counts and the first 50 failures.
 * **Backups** (`publishBackups: true`) publishes only backup date-folders written in the last 3 days, so a persistent
   self-hosted workspace does not re-upload months of `.pbix`/`.bim` files every night.
 * **Big tenants on hosted agents**: a run that needs more than 6 hours (or 1 hour on the free tier) simply spans several
-  scheduled runs (each resumes the previous; use `timeBudgetMinutes` so every run ends cleanly with exit 3). If you need
-  it in one go, use a self-hosted agent.
+  scheduled runs (each resumes the previous) - **provided** `timeBudgetMinutes` makes every run end cleanly with exit
+  `3`; runs that are cancelled by the cap do not chain. If you need it in one go, use a self-hosted agent.
 
 ## 6. Getting the outputs into Power BI
 
@@ -234,7 +243,7 @@ the folder that the local `.pbit` reads. No Service refresh in that case.
 | `sharePointSyncPath` | `` | section 7 |
 | `variableGroup` | `` | Library variable group holding the `IMPACTIQ_*` secrets |
 | `timeoutInMinutes` | `360` | `0` = unlimited (self-hosted) |
-| `timeBudgetMinutes` | `0` | `-TimeBudgetMinutes`: stop cleanly N minutes after the start (2-minute grace), exit `3`, resumed by the next run. Use `55` on the free hosted tier, `350` with a paid parallel job, `0` (unlimited) on self-hosted |
+| `timeBudgetMinutes` | `0` | `-TimeBudgetMinutes`: stop cleanly N minutes after the start (2-minute grace), exit `3`, resumed by the next run. **Required on Microsoft-hosted pools**: `55` on the free tier, `350` with a paid parallel job (a run killed by the job cap is *Canceled* and its state is not restored - section 5). `0` (unlimited) only on self-hosted agents |
 | `restoreState` | `true` | `false` on self-hosted agents whose workspace persists |
 | `skipToolUpdate` | `false` | do not contact GitHub for Tabular Editor / pbi-tools updates |
 | `usePwsh` | `false` | run under PowerShell 7 instead of Windows PowerShell 5.1 |
@@ -246,7 +255,8 @@ template. The exact command line is printed at the top of the "Run ImpactIQ" ste
 
 | Symptom | Cause / fix |
 |---|---|
-| Job cancelled at 60:00 | free hosted tier. Set `timeBudgetMinutes: 55` so the run pauses itself (exit 3) and publishes its state before the cap; buy one parallel job **and** keep `timeoutInMinutes: 360` in the YAML (without it the 60-minute default still applies), or go self-hosted. The next run resumes. |
+| Job cancelled at 60:00 (or 360:00) | job cap reached with `timeBudgetMinutes: 0`. The cancelled run's artifacts are published but the next run does **not** restore them (`latestFromBranch` skips *Canceled* runs) - it resumes the run before it, so the same items are scanned again on every schedule. Set `timeBudgetMinutes: 55` (free tier) / `350` (paid parallel job) so the run pauses itself (exit 3) before the cap; buy one parallel job **and** keep `timeoutInMinutes: 360` in the YAML (without it the 60-minute default still applies), or go self-hosted. To salvage one cancelled run by hand: download its `impactiq-state`, unzip it over `State\` on a self-hosted agent or re-publish it from a manual run. |
+| Every scheduled run starts over although the previous one ran for an hour | same cause: the previous run was *Canceled* by the job cap, so its state was never restored. Set `timeBudgetMinutes` (previous row). |
 | Run ends with `exit 3` (orange, "paused") | expected when `timeBudgetMinutes` is set and the tenant needs more than one run: the next scheduled run resumes from the checkpoints. If it never finishes, see Headless-and-Resume.md section 9 (budget smaller than a single item). |
 | `No builds currently exist in the build definition supplied` on the restore step | first run; harmless (`continueOnError`). |
 | Every run asks for a device code again | `IMPACTIQ_TOKEN_CACHE_KEY` not set (hosted agents) or changed; artifact retention shorter than the schedule gap; `restoreState: false` on a hosted agent; the refresh token was revoked (password change, CA). Look for `Token cache included` in the "Stage artifacts" log of the previous run. |

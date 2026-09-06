@@ -22,16 +22,10 @@
       }
     }
   },
-  "pbi:QueryGroups": [
-    {
-      "id": "g1",
-      "name": "Facts"
-    }
-  ],
   "annotations": [
     {
       "name": "pbi:QueryGroups",
-      "value": "[]"
+      "value": "[{\"id\":\"g1\",\"name\":\"Facts\",\"order\":0}]"
     }
   ],
   "entities": [
@@ -49,7 +43,8 @@
         }
       ],
       "pbi:refreshPolicy": {
-        "$type": "FullRefreshPolicy",
+        "$type": "IncrementalRefreshPolicy",
+        "location": "Sales.csv",
         "incrementalPeriods": 3,
         "incrementalGranularity": "Month"
       }
@@ -57,7 +52,11 @@
     {
       "$type": "LocalEntity",
       "name": "Empty",
-      "attributes": []
+      "attributes": [],
+      "pbi:refreshPolicy": {
+        "$type": "FullRefreshPolicy",
+        "location": "Empty.csv"
+      }
     }
   ]
 }

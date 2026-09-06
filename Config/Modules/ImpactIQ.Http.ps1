@@ -7,7 +7,11 @@
 # Windows PowerShell 5.1 and PowerShell 7 compatible. Loaded by dot-sourcing from ImpactIQ.ps1, so
 # $script:IQ is the shared context created by Initialize-IQContext (ImpactIQ.Common.ps1).
 #
-# Cross-module functions used (brief section 2): Write-IQLog, Get-IQToken.
+# Cross-module functions used (brief section 2): Write-IQLog, Get-IQToken; Test-IQTimeBudget (Common) is called only when
+# it is loaded so retry waits and LRO polling stop at the run's time budget.
+# $script:IQ.LastHttpError records the last handled 400/403/404 (StatusCode, Body, Message, Url, Method) for callers
+# such as Invoke-IQDaxQuery that need the engine error text behind a $null result; it is cleared at the start of
+# every request so a stale value is never reported.
 # Private helpers are prefixed Start-IQHttp* / Get-IQHttp* / Invoke-IQHttp* and are not part of the contract.
 
 function Start-IQHttpSleep {
@@ -206,22 +210,39 @@ function Get-IQHttpErrorInfo {
     }
 
     if ($null -eq $info.StatusCode) {
-        # No HTTP response: decide whether this is a transient network failure.
+        # No HTTP response: decide whether this is a transient network failure. The WebException status list is
+        # authoritative on Windows PowerShell 5.1; certificate / TLS / proxy-policy failures are permanent for the
+        # process and are never retried (a retry cannot fix a rejected certificate).
         $transientWebStatuses = @('Timeout', 'ConnectFailure', 'NameResolutionFailure', 'ReceiveFailure', 'SendFailure',
             'ConnectionClosed', 'KeepAliveFailure', 'PipelineFailure', 'ProxyNameResolutionFailure', 'RequestCanceled', 'UnknownError')
-        if ($info.WebStatus -and $transientWebStatuses -contains $info.WebStatus) { $info.Transient = $true }
+        $permanentWebStatuses = @('TrustFailure', 'SecureChannelFailure', 'RequestProhibitedByProxy', 'RequestProhibitedByCachePolicy',
+            'MessageLengthLimitExceeded', 'ServerProtocolViolation', 'CacheEntryNotFound')
+        $chain = New-Object System.Collections.Generic.List[object]
         $walk = $ex
         $depth = 0
-        while ($null -ne $walk -and $depth -lt 6 -and -not $info.Transient) {
-            $name = $walk.GetType().FullName
-            if ($name -match 'HttpRequestException|TaskCanceledException|OperationCanceledException|SocketException|System\.IO\.IOException|WebException|TimeoutException') {
-                $info.Transient = $true
-            }
-            elseif ($walk.Message -match 'operation has timed out|operation was canceled|connection was forcibly closed|Unable to connect|No such host|actively refused|Resource temporarily unavailable') {
-                $info.Transient = $true
-            }
+        while ($null -ne $walk -and $depth -lt 6) {
+            $chain.Add($walk)
             $walk = $walk.InnerException
             $depth++
+        }
+        $permanent = $false
+        if ($info.WebStatus -and $permanentWebStatuses -contains $info.WebStatus) { $permanent = $true }
+        foreach ($inner in $chain) {
+            # PowerShell 7 wraps a failed TLS handshake as HttpRequestException -> AuthenticationException.
+            if ($inner.GetType().FullName -match 'System\.Security\.Authentication\.AuthenticationException') { $permanent = $true }
+        }
+        if (-not $permanent) {
+            if ($info.WebStatus -and $transientWebStatuses -contains $info.WebStatus) { $info.Transient = $true }
+            foreach ($inner in $chain) {
+                if ($info.Transient) { break }
+                $name = $inner.GetType().FullName
+                if ($name -match 'HttpRequestException|TaskCanceledException|OperationCanceledException|SocketException|System\.IO\.IOException|TimeoutException') {
+                    $info.Transient = $true
+                }
+                elseif ($inner.Message -match 'operation has timed out|operation was canceled|connection was forcibly closed|Unable to connect|No such host|actively refused|Resource temporarily unavailable') {
+                    $info.Transient = $true
+                }
+            }
         }
     }
     if ($info.StatusCode -and [string]::IsNullOrEmpty($info.Message)) { $info.Message = "HTTP $($info.StatusCode)" }
@@ -336,16 +357,78 @@ function Get-IQHttpBearerToken {
     return (Get-IQToken -Resource $Api)
 }
 
+function Set-IQHttpLastError {
+    <#
+    .SYNOPSIS
+    Records the last handled HTTP failure in $script:IQ.LastHttpError so callers can read the status and body behind a $null result (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][object]$StatusCode,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Body,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Message,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Url,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Method
+    )
+    if (-not $script:IQ) { return }
+    $code = $null
+    if ($null -ne $StatusCode) { try { $code = [int]$StatusCode } catch { $code = $null } }
+    $script:IQ['LastHttpError'] = @{ StatusCode = $code; Body = [string]$Body; Message = [string]$Message; Url = [string]$Url; Method = [string]$Method }
+}
+
+function Test-IQHttpTimeBudget {
+    <#
+    .SYNOPSIS
+    True when the run's time budget is used up (Test-IQTimeBudget, Common); $false when that function is not loaded (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Stage)
+    try {
+        if ($null -eq (Get-Command -Name 'Test-IQTimeBudget' -ErrorAction SilentlyContinue)) { return $false }
+        return [bool](Test-IQTimeBudget -Stage $Stage)
+    }
+    catch { return $false }
+}
+
+function Limit-IQHttpWaitToBudget {
+    <#
+    .SYNOPSIS
+    Caps a retry wait (seconds) to the run's remaining time budget (Options.TimeBudgetMinutes minus the 2-minute grace) so a
+    Retry-After of several minutes cannot sleep past the point where Complete-IQRun must still write the manifest (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][double]$Seconds)
+    try {
+        if (-not $script:IQ -or -not $script:IQ.Options) { return $Seconds }
+        $budget = 0
+        if ($script:IQ.Options.Contains('TimeBudgetMinutes') -and $null -ne $script:IQ.Options['TimeBudgetMinutes']) { $budget = [int]$script:IQ.Options['TimeBudgetMinutes'] }
+        if ($budget -le 0) { return $Seconds }
+        if (-not ($script:IQ.ContainsKey('StartedUtc') -and $script:IQ['StartedUtc'] -is [datetime])) { return $Seconds }
+        $limitMinutes = $budget - 2
+        if ($limitMinutes -le 0) { $limitMinutes = $budget }
+        $elapsed = ([datetime]::UtcNow - ([datetime]$script:IQ['StartedUtc']).ToUniversalTime()).TotalSeconds
+        $remaining = [math]::Floor($limitMinutes * 60 - $elapsed)
+        if ($remaining -lt 1) { $remaining = 1 }
+        if ($Seconds -gt $remaining) { return [double]$remaining }
+        return $Seconds
+    }
+    catch { return $Seconds }
+}
+
 function Invoke-IQHttpRequest {
     <#
     .SYNOPSIS
     Executes one HTTP request with the full ImpactIQ retry matrix and returns status/headers/content (private core).
     .DESCRIPTION
-    Returns $null for 400/403/404 (logged), otherwise @{ StatusCode; Headers; Content; ContentType; ElapsedMs;
-    OutFile }. Throws for statuses that are not retryable or after the retry budget is exhausted.
+    Returns $null for 400/403/404 (logged, and recorded in $script:IQ.LastHttpError with StatusCode/Body/Message),
+    otherwise @{ StatusCode; Headers; Content; ContentType; ElapsedMs; OutFile }. Throws for statuses that are not
+    retryable or after the retry budget is exhausted. With -OutFile the body is streamed straight to disk (no
+    -PassThru, so Windows PowerShell 5.1 does not buffer the whole download in memory) and Headers/Content are $null.
     Retry policy (brief section 2.3): 429 -> Retry-After seconds (default 30, max 300), up to 8 times;
     5xx/408 and transient network errors -> 2,4,8,16,32,60 s backoff up to $script:IQ.Options.MaxRetries attempts
-    (default 5); 401 -> force one token refresh and retry once.
+    (default 5) counted separately from the 429 and 401 retries; 401 -> force one token refresh and retry once.
+    Every wait is capped to the run's remaining time budget and skipped (the request fails) once Test-IQTimeBudget
+    reports the budget as used up.
     #>
     [CmdletBinding()]
     param(
@@ -376,6 +459,7 @@ function Invoke-IQHttpRequest {
     )
     Initialize-IQHttpDefault
     $ProgressPreference = 'SilentlyContinue'   # Audit C1-07: the 5.1 progress bar makes -OutFile downloads very slow.
+    if ($script:IQ) { $script:IQ['LastHttpError'] = $null }   # never report a stale failure for this request
 
     $maxAttempts = 5
     try { if ($script:IQ.Options -and $null -ne $script:IQ.Options.MaxRetries -and [int]$script:IQ.Options.MaxRetries -gt 0) { $maxAttempts = [int]$script:IQ.Options.MaxRetries } } catch { $maxAttempts = 5 }
@@ -400,7 +484,8 @@ function Invoke-IQHttpRequest {
         if ($ContentType -match '(?i)^application/json$') { $ContentType = 'application/json; charset=utf-8' }
     }
 
-    $attempt = 0
+    $attempt = 0               # every request sent (log lines only)
+    $transientAttempts = 0     # 5xx/408/network failures: the only counter measured against MaxRetries
     $rateLimitRetries = 0
     $authRetried = $false
     $forceRefresh = $false
@@ -420,6 +505,7 @@ function Invoke-IQHttpRequest {
             if ([string]::IsNullOrEmpty($token)) {
                 if ($Api -eq 'Fabric') {
                     Write-IQLog -Level Debug -Stage $Stage -Message "No Fabric token available; skipping $Method $displayPath"
+                    Set-IQHttpLastError -StatusCode $null -Body '' -Message 'No Fabric token available' -Url $displayPath -Method $Method
                     return $null
                 }
                 $fatalMessage = "No Power BI access token is available for $Method $displayPath."
@@ -434,8 +520,9 @@ function Invoke-IQHttpRequest {
             $params.ContentType = $ContentType
         }
         if ($OutFile) {
+            # No -PassThru: with it Windows PowerShell 5.1 keeps the whole body in a MemoryStream plus a byte[] copy
+            # before writing the file; without it the response is streamed straight to disk.
             $params.OutFile = $OutFile
-            $params.PassThru = $true
             $outDir = Split-Path -Path $OutFile -Parent
             if ($outDir -and -not (Test-Path -LiteralPath $outDir)) { New-Item -Path $outDir -ItemType Directory -Force | Out-Null }
         }
@@ -445,26 +532,28 @@ function Invoke-IQHttpRequest {
         try {
             $response = Invoke-WebRequest @params
             $stopwatch.Stop()
-            $statusCode = 200
-            try { if ($null -ne $response -and $null -ne $response.StatusCode) { $statusCode = [int]$response.StatusCode } } catch { $statusCode = 200 }
-            Write-IQLog -Level Debug -Stage $Stage -Message ("{0} {1} -> {2} ({3} ms)" -f $Method, $displayPath, $statusCode, $stopwatch.ElapsedMilliseconds)
-
-            $result = @{ StatusCode = $statusCode; Headers = $null; Content = $null; ContentType = $null; ElapsedMs = $stopwatch.ElapsedMilliseconds; OutFile = $OutFile }
-            if ($null -ne $response) {
-                try { $result.Headers = $response.Headers } catch { $result.Headers = $null }
-                $result.ContentType = Get-IQHttpHeaderValue -Headers $result.Headers -Name 'Content-Type'
-            }
             if ($OutFile) {
+                # Invoke-WebRequest -OutFile returns nothing (and a non-success status still throws), so the status is
+                # known to be 2xx; the file on disk is the result.
+                $result = @{ StatusCode = 200; Headers = $null; Content = $null; ContentType = $null; ElapsedMs = $stopwatch.ElapsedMilliseconds; OutFile = $OutFile }
                 if ((Test-Path -LiteralPath $OutFile) -and (Get-Item -LiteralPath $OutFile).Length -gt 0) {
-                    $result.Content = $null
+                    Write-IQLog -Level Debug -Stage $Stage -Message ("{0} {1} -> 200 ({2} ms, {3} bytes to file)" -f $Method, $displayPath, $stopwatch.ElapsedMilliseconds, (Get-Item -LiteralPath $OutFile).Length)
                 }
                 else {
                     if (Test-Path -LiteralPath $OutFile) { Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue }
                     Write-IQLog -Level Warn -Stage $Stage -Message "$Method $displayPath returned an empty body; no file written to $OutFile"
-                    $result.StatusCode = $statusCode
                     $result.OutFile = $null
                 }
                 return $result
+            }
+            $statusCode = 200
+            try { if ($null -ne $response -and $null -ne $response.StatusCode) { $statusCode = [int]$response.StatusCode } } catch { $statusCode = 200 }
+            Write-IQLog -Level Debug -Stage $Stage -Message ("{0} {1} -> {2} ({3} ms)" -f $Method, $displayPath, $statusCode, $stopwatch.ElapsedMilliseconds)
+
+            $result = @{ StatusCode = $statusCode; Headers = $null; Content = $null; ContentType = $null; ElapsedMs = $stopwatch.ElapsedMilliseconds; OutFile = $null }
+            if ($null -ne $response) {
+                try { $result.Headers = $response.Headers } catch { $result.Headers = $null }
+                $result.ContentType = Get-IQHttpHeaderValue -Headers $result.Headers -Name 'Content-Type'
             }
             if ($null -ne $response) {
                 $content = $null
@@ -494,13 +583,19 @@ function Invoke-IQHttpRequest {
 
             if ($status -eq 429) {
                 if ($rateLimitRetries -lt $maxRateLimitRetries) {
+                    if (Test-IQHttpTimeBudget -Stage $Stage) {
+                        $fatalMessage = "Time budget reached while waiting to retry $Method $displayPath after HTTP 429. $bodySnippet"
+                        $fatalInner = $_.Exception
+                        break
+                    }
                     $rateLimitRetries++
                     $wait = 30
                     if ($null -ne $info.RetryAfter) { $wait = [int]$info.RetryAfter }
                     if ($wait -lt 1) { $wait = 1 }
                     if ($wait -gt 300) { $wait = 300 }
+                    $wait = Limit-IQHttpWaitToBudget -Seconds $wait
                     if ($script:IQ -and $script:IQ.Stats) { $script:IQ.Stats.Retries = [int]$script:IQ.Stats.Retries + 1 }
-                    Write-IQLog -Level Warn -Stage $Stage -Message "429 Too Many Requests for $Method $displayPath; waiting $wait s (retry $rateLimitRetries/$maxRateLimitRetries)"
+                    Write-IQLog -Level Warn -Stage $Stage -Message "429 Too Many Requests for $Method $displayPath; waiting $([int]$wait) s (retry $rateLimitRetries/$maxRateLimitRetries)"
                     Start-IQHttpSleep -Seconds $wait
                     continue
                 }
@@ -524,24 +619,37 @@ function Invoke-IQHttpRequest {
                 $level = 'Warn'
                 if ($AllowNotFound) { $level = 'Debug' }
                 Write-IQLog -Level $level -Stage $Stage -Message ("HTTP {0} for {1} {2}. {3}" -f $status, $Method, $displayPath, $bodySnippet)
+                Set-IQHttpLastError -StatusCode $status -Body $info.Body -Message $info.Message -Url $displayPath -Method $Method
                 return $null
             }
             if ($status -eq 400) {
                 Write-IQLog -Level Warn -Stage $Stage -Message ("HTTP 400 for {0} {1}. {2}" -f $Method, $displayPath, $bodySnippet)
+                Set-IQHttpLastError -StatusCode $status -Body $info.Body -Message $info.Message -Url $displayPath -Method $Method
                 return $null
             }
             $retryable = ($null -eq $status -and $info.Transient) -or ($status -eq 408) -or ($null -ne $status -and $status -ge 500 -and $status -le 599)
-            if ($retryable -and $attempt -lt $maxAttempts) {
-                $wait = [math]::Min(60, [math]::Pow(2, $attempt))
-                if ($null -ne $info.RetryAfter -and $info.RetryAfter -gt $wait) { $wait = [math]::Min(300, $info.RetryAfter) }
-                if ($script:IQ -and $script:IQ.Stats) { $script:IQ.Stats.Retries = [int]$script:IQ.Stats.Retries + 1 }
-                Write-IQLog -Level Warn -Stage $Stage -Message ("{0} for {1} {2}; retrying in {3} s (attempt {4}/{5}): {6}" -f $(if ($null -ne $status) { "HTTP $status" } else { 'Network error' }), $Method, $displayPath, [int]$wait, $attempt, $maxAttempts, $info.Message)
-                Start-IQHttpSleep -Seconds $wait
-                continue
+            if ($retryable) {
+                $transientAttempts++
+                if ($transientAttempts -lt $maxAttempts) {
+                    if (Test-IQHttpTimeBudget -Stage $Stage) {
+                        $fatalMessage = "Time budget reached while waiting to retry $Method $displayPath after $(if ($null -ne $status) { "HTTP $status" } else { 'a network error' }): $($info.Message)"
+                        $fatalInner = $_.Exception
+                        break
+                    }
+                    $wait = [math]::Min(60, [math]::Pow(2, $transientAttempts))
+                    if ($null -ne $info.RetryAfter -and $info.RetryAfter -gt $wait) { $wait = [math]::Min(300, $info.RetryAfter) }
+                    $wait = Limit-IQHttpWaitToBudget -Seconds $wait
+                    if ($script:IQ -and $script:IQ.Stats) { $script:IQ.Stats.Retries = [int]$script:IQ.Stats.Retries + 1 }
+                    Write-IQLog -Level Warn -Stage $Stage -Message ("{0} for {1} {2}; retrying in {3} s (attempt {4}/{5}): {6}" -f $(if ($null -ne $status) { "HTTP $status" } else { 'Network error' }), $Method, $displayPath, [int]$wait, $transientAttempts, $maxAttempts, $info.Message)
+                    Start-IQHttpSleep -Seconds $wait
+                    continue
+                }
             }
             $statusText = 'no response'
             if ($null -ne $status) { $statusText = "HTTP $status" }
-            $fatalMessage = "$statusText for $Method $displayPath after $attempt attempt(s): $($info.Message)"
+            $fatalMessage = "$statusText for $Method $displayPath"
+            if ($retryable) { $fatalMessage += " after $transientAttempts attempt(s)" }
+            $fatalMessage += ": $($info.Message)"
             if ($bodySnippet) { $fatalMessage += " Body: $bodySnippet" }
             $fatalInner = $_.Exception
             break
@@ -554,7 +662,11 @@ function Invoke-IQHttpRequest {
 function ConvertFrom-IQHttpJson {
     <#
     .SYNOPSIS
-    Parses a response body as JSON; returns $null for empty bodies and the raw string when parsing fails (private).
+    Parses a response body as JSON; returns $null for empty bodies and for bodies that are not JSON (logged at Warn) (private).
+    .DESCRIPTION
+    Invoke-IQApi promises a parsed object, so a proxy HTML page or a body Windows PowerShell 5.1 cannot parse (keys that
+    differ only by case) is reported at Warn with the Content-Type and the start of the body, and $null is returned
+    instead of a raw string that callers would silently treat as an empty list. -Raw bypasses this function.
     #>
     [CmdletBinding()]
     param(
@@ -563,6 +675,10 @@ function ConvertFrom-IQHttpJson {
         [AllowEmptyString()]
         [string]$Content,
         [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$ContentType,
+        [Parameter(Mandatory = $false)]
         [string]$Stage = 'Http'
     )
     if ([string]::IsNullOrWhiteSpace($Content)) { return $null }
@@ -570,8 +686,12 @@ function ConvertFrom-IQHttpJson {
         return (ConvertFrom-Json -InputObject $Content)
     }
     catch {
-        Write-IQLog -Level Debug -Stage $Stage -Message ("Response body is not JSON (" + $_.Exception.Message + "); returning the raw string")
-        return $Content
+        $snippet = ($Content -replace '\s+', ' ').Trim()
+        if ($snippet.Length -gt 200) { $snippet = $snippet.Substring(0, 200) + '...' }
+        $typeText = '(none)'
+        if (-not [string]::IsNullOrWhiteSpace($ContentType)) { $typeText = $ContentType }
+        Write-IQLog -Level Warn -Stage $Stage -Message ("Response body is not JSON (Content-Type {0}; {1}); treating it as no result. Body starts: {2}" -f $typeText, $_.Exception.Message, $snippet)
+        return $null
     }
 }
 
@@ -619,7 +739,10 @@ function Invoke-IQApi {
     'value' array and a continuation (@odata.nextLink, continuationUri or continuationToken) all pages are followed
     (unless -NoPaging) and the returned object's 'value' is the concatenation (10 000 page guard).
     -Raw returns the body string; -OutFile streams the body to disk and returns $true only when the file exists and
-    is non-empty. 403/404 return $null (Warn, or Debug with -AllowNotFound); 400 returns $null with a Warn.
+    is non-empty. 403/404 return $null (Warn, or Debug with -AllowNotFound); 400 returns $null with a Warn; both record
+    $script:IQ.LastHttpError. A body that is not JSON returns $null with a Warn. A 400/403/404 on a continuation page
+    throws (a partial list is never returned as a complete one), except 403/404 with -AllowNotFound, which returns
+    the rows collected so far with IQPartial = $true and IQPagesFetched set on the returned object.
     #>
     [CmdletBinding()]
     param(
@@ -670,7 +793,7 @@ function Invoke-IQApi {
     if ($null -eq $result) { return $null }
     if ($Raw) { return $result.Content }
 
-    $first = ConvertFrom-IQHttpJson -Content $result.Content -Stage $Stage
+    $first = ConvertFrom-IQHttpJson -Content $result.Content -ContentType $result.ContentType -Stage $Stage
     if ($NoPaging -or $null -eq $first -or -not ($first -is [System.Management.Automation.PSCustomObject]) -or -not $first.PSObject.Properties['value']) {
         return $first
     }
@@ -683,26 +806,51 @@ function Invoke-IQApi {
     $pages = 1
     $maxPages = 10000
     $currentUrl = $nextUrl
+    $partial = $false
+    $pagesFetched = 1
     while ($currentUrl -and $pages -lt $maxPages) {
         $pages++
         $pageParams = @{ Method = 'GET'; Url = $currentUrl; Api = $Api; TimeoutSec = $TimeoutSec; AllowNotFound = $AllowNotFound; NoAuth = $NoAuth; Stage = $Stage }
         if ($Headers) { $pageParams.Headers = $Headers }
         $pageResult = Invoke-IQHttpRequest @pageParams
         if ($null -eq $pageResult) {
-            Write-IQLog -Level Warn -Stage $Stage -Message "Paging stopped at page $pages for $(Get-IQHttpDisplayPath -Url $url); returning $($all.Count) rows collected so far"
-            break
+            # A handled 400/403/404 on a continuation page (expired continuationToken, stale nextLink, lost access).
+            # Callers cannot tell a truncated list from a complete one, so this is a failure of the whole call unless
+            # the caller opted into missing data with -AllowNotFound (403/404 only) - then the result is stamped partial.
+            $pageStatus = $null
+            $pageMessage = ''
+            if ($script:IQ -and $script:IQ.ContainsKey('LastHttpError') -and $script:IQ['LastHttpError'] -is [hashtable]) {
+                $pageStatus = $script:IQ['LastHttpError']['StatusCode']
+                $pageMessage = [string]$script:IQ['LastHttpError']['Message']
+            }
+            $statusText = 'no response'
+            if ($null -ne $pageStatus) { $statusText = "HTTP $pageStatus" }
+            $where = "page $pages of $(Get-IQHttpDisplayPath -Url $url)"
+            if ($AllowNotFound -and ($pageStatus -eq 403 -or $pageStatus -eq 404)) {
+                Write-IQLog -Level Warn -Stage $Stage -Message "Paging stopped at $where ($statusText); returning the $($all.Count) rows collected so far as a partial result (IQPartial)"
+                $partial = $true
+                break
+            }
+            throw (New-Object System.Exception("Paging failed at $where ($statusText): $pageMessage"))
         }
-        $page = ConvertFrom-IQHttpJson -Content $pageResult.Content -Stage $Stage
-        if ($null -eq $page -or -not ($page -is [System.Management.Automation.PSCustomObject])) { break }
+        $pagesFetched = $pages
+        $page = ConvertFrom-IQHttpJson -Content $pageResult.Content -ContentType $pageResult.ContentType -Stage $Stage
+        if ($null -eq $page -or -not ($page -is [System.Management.Automation.PSCustomObject])) {
+            throw (New-Object System.Exception("Paging failed at page $pages of $(Get-IQHttpDisplayPath -Url $url): the page body is not a JSON object"))
+        }
         if ($page.PSObject.Properties['value'] -and $null -ne $page.value) { $all.AddRange([object[]]@($page.value)) }
         $currentUrl = Get-IQContinuationUrl -Response $page -RequestUrl $currentUrl
     }
     if ($pages -ge $maxPages) { Write-IQLog -Level Warn -Stage $Stage -Message "Paging guard hit ($maxPages pages) for $(Get-IQHttpDisplayPath -Url $url)" }
-    Write-IQLog -Level Debug -Stage $Stage -Message ("Paged {0} pages / {1} rows for {2}" -f $pages, $all.Count, (Get-IQHttpDisplayPath -Url $url))
+    Write-IQLog -Level Debug -Stage $Stage -Message ("Paged {0} pages / {1} rows for {2}" -f $pagesFetched, $all.Count, (Get-IQHttpDisplayPath -Url $url))
 
     $first | Add-Member -MemberType NoteProperty -Name 'value' -Value $all.ToArray() -Force
     foreach ($name in @('@odata.nextLink', 'continuationUri', 'continuationToken')) {
         if ($first.PSObject.Properties[$name]) { $first.PSObject.Properties.Remove($name) }
+    }
+    if ($partial) {
+        $first | Add-Member -MemberType NoteProperty -Name 'IQPartial' -Value $true -Force
+        $first | Add-Member -MemberType NoteProperty -Name 'IQPagesFetched' -Value $pagesFetched -Force
     }
     return $first
 }
@@ -713,8 +861,11 @@ function Invoke-IQFabricLro {
     Calls a Fabric long-running-operation endpoint (e.g. getDefinition) and returns the final result object or $null.
     .DESCRIPTION
     200 -> parsed body. 202 -> polls the Location header (or operations/<x-ms-operation-id>) every Retry-After
-    seconds (default 5) until status is Succeeded, then GETs <operationUrl>/result. Failed/timeout/403/404 -> $null
-    with a Warn. Never throws for operation failures; throws only for unrecoverable HTTP errors.
+    seconds (default 5) until status is Succeeded, then GETs <operationUrl>/result. Failed/timeout/400/403/404 -> $null
+    with exactly one Warn (the HTTP line carries the status and body). When no Fabric token is available (the auth
+    provider cannot mint one, brief section 2.2) the call is skipped with one Debug line and $null - no Warn per item.
+    Polling stops with $null when the run's time budget is used up. Never throws for operation failures; throws only
+    for unrecoverable HTTP errors.
     #>
     [CmdletBinding()]
     param(
@@ -734,17 +885,22 @@ function Invoke-IQFabricLro {
     )
     $url = Get-IQApiUrl -Path $Path -Query $Query -Api Fabric
     $displayPath = Get-IQHttpDisplayPath -Url $url
-    $requestParams = @{ Method = $Method; Url = $url; Api = 'Fabric'; Stage = $Stage; AllowNotFound = $true }
+    if ([string]::IsNullOrEmpty((Get-IQHttpBearerToken -Api Fabric))) {
+        Write-IQLog -Level Debug -Stage $Stage -Message "No Fabric token available; skipping Fabric operation $Method $displayPath"
+        return $null
+    }
+    $requestParams = @{ Method = $Method; Url = $url; Api = 'Fabric'; Stage = $Stage }
     if ($PSBoundParameters.ContainsKey('Body') -and $null -ne $Body) { $requestParams.Body = $Body }
     elseif ($Method -eq 'POST') { $requestParams.Body = '{}' }   # Fabric rejects a POST without a JSON body on some endpoints
 
     $result = Invoke-IQHttpRequest @requestParams
     if ($null -eq $result) {
-        Write-IQLog -Level Warn -Stage $Stage -Message "Fabric operation $Method $displayPath was not accepted (see previous message)"
+        # 400/403/404: Invoke-IQHttpRequest already logged the status and body at Warn.
+        Write-IQLog -Level Debug -Stage $Stage -Message "Fabric operation $Method $displayPath was rejected; see the HTTP warning above"
         return $null
     }
     if ($result.StatusCode -ne 202) {
-        return (ConvertFrom-IQHttpJson -Content $result.Content -Stage $Stage)
+        return (ConvertFrom-IQHttpJson -Content $result.Content -ContentType $result.ContentType -Stage $Stage)
     }
 
     $location = Get-IQHttpHeaderValue -Headers $result.Headers -Name 'Location'
@@ -771,25 +927,29 @@ function Invoke-IQFabricLro {
     $status = $null
     $polls = 0
     while ([datetime]::UtcNow -lt $deadline) {
-        Start-IQHttpSleep -Seconds $retryAfter
+        if (Test-IQHttpTimeBudget -Stage $Stage) {
+            Write-IQLog -Level Warn -Stage $Stage -Message "Time budget reached while polling Fabric operation for $displayPath (last status: '$status', $polls polls); giving up"
+            return $null
+        }
+        Start-IQHttpSleep -Seconds (Limit-IQHttpWaitToBudget -Seconds $retryAfter)
         $polls++
         $pollResult = Invoke-IQHttpRequest -Method GET -Url $operationUrl -Api Fabric -Stage $Stage
         if ($null -eq $pollResult) {
-            Write-IQLog -Level Warn -Stage $Stage -Message "Fabric operation status for $displayPath could not be read (poll $polls)"
+            Write-IQLog -Level Debug -Stage $Stage -Message "Fabric operation status for $displayPath could not be read (poll $polls); see the HTTP warning above"
             return $null
         }
         $pollRetry = ConvertTo-IQRetryAfterDelay -Value (Get-IQHttpHeaderValue -Headers $pollResult.Headers -Name 'Retry-After')
         if ($null -ne $pollRetry -and $pollRetry -ge 1 -and $pollRetry -le 60) { $retryAfter = $pollRetry }
-        $state = ConvertFrom-IQHttpJson -Content $pollResult.Content -Stage $Stage
+        $state = ConvertFrom-IQHttpJson -Content $pollResult.Content -ContentType $pollResult.ContentType -Stage $Stage
         $status = $null
         if ($state -is [System.Management.Automation.PSCustomObject] -and $state.PSObject.Properties['status']) { $status = [string]$state.status }
         if ($status -ieq 'Succeeded') {
             $finalResult = Invoke-IQHttpRequest -Method GET -Url ($operationUrl + '/result') -Api Fabric -Stage $Stage
             if ($null -eq $finalResult) {
-                Write-IQLog -Level Warn -Stage $Stage -Message "Fabric operation for $displayPath succeeded but its result could not be fetched"
+                Write-IQLog -Level Debug -Stage $Stage -Message "Fabric operation for $displayPath succeeded but its result could not be fetched; see the HTTP warning above"
                 return $null
             }
-            return (ConvertFrom-IQHttpJson -Content $finalResult.Content -Stage $Stage)
+            return (ConvertFrom-IQHttpJson -Content $finalResult.Content -ContentType $finalResult.ContentType -Stage $Stage)
         }
         if ($status -ieq 'Failed' -or $status -ieq 'Cancelled' -or $status -ieq 'Canceled') {
             $errorText = ''

@@ -31,6 +31,10 @@
 $script:IQAuthDefaultClientId = '1950a258-227b-4e31-a9cf-717495945fc2'   # Azure PowerShell first-party public client
 $script:IQAuthDeviceGrant = 'urn:ietf:params:oauth:grant-type:device_code'
 $script:IQAuthRefreshSkewMinutes = 5
+$script:IQAuthHttpDefaultsApplied = $false
+$script:IQAuthGrantMaxAttempts = 6             # refresh/password grants mid-run: 2,4,8,16,32,60 s like the Http module
+$script:IQAuthPollMaxAttempts = 3              # device-code polls: fast path, the loop itself keeps polling
+$script:IQAuthFabricFailureLimit = 2           # consecutive Az.Accounts Fabric minting failures before giving up
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Small private helpers (sleep, endpoints, scopes, HTTP, JWT)
@@ -44,6 +48,42 @@ function Start-IQAuthSleep {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true, Position = 0)][int]$Seconds)
     if ($Seconds -gt 0) { Start-Sleep -Seconds $Seconds }
+}
+
+function Initialize-IQAuthHttpDefault {
+    <#
+    .SYNOPSIS
+        Applies the process-wide HTTP defaults (TLS 1.2, system-proxy default credentials) once, before the first OAuth call (private).
+    .DESCRIPTION
+        Mirrors the Http module's Initialize-IQHttpDefault, which only runs from Invoke-IQHttpRequest - i.e. after
+        Initialize-IQAuth. The device-code / ROPC / refresh requests are the first HTTP calls of a run, so without this
+        an agent behind an authenticated corporate proxy gets 407 at sign-in (audit C1-17). Never throws.
+    #>
+    [CmdletBinding()]
+    param()
+    if ($script:IQAuthHttpDefaultsApplied) { return }
+    if ($script:IQ -is [hashtable] -and $script:IQ.ContainsKey('HttpDefaultsApplied') -and $script:IQ.HttpDefaultsApplied) {
+        $script:IQAuthHttpDefaultsApplied = $true
+        return
+    }
+    $script:IQAuthHttpDefaultsApplied = $true
+    try {
+        # Audit C1-06: OR Tls12 into the existing set instead of replacing it (Windows PowerShell 5.1 defaults to SSL3/TLS1.0).
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    }
+    catch {
+        Write-IQLog -Level Debug -Stage Auth -Message ('Could not adjust SecurityProtocol: ' + $_.Exception.Message)
+    }
+    try {
+        $proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+        if ($proxy) {
+            $proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
+            [System.Net.WebRequest]::DefaultWebProxy = $proxy
+        }
+    }
+    catch {
+        Write-IQLog -Level Debug -Stage Auth -Message ('Could not configure the system web proxy: ' + $_.Exception.Message)
+    }
 }
 
 function Get-IQAuthState {
@@ -129,14 +169,64 @@ function Get-IQAuthScope {
     return $scope
 }
 
+function Get-IQAuthRetryAfterDelay {
+    <#
+    .SYNOPSIS
+        Reads a Retry-After header (delta seconds or HTTP date) from an HttpWebResponse / HttpResponseMessage / test double; $null when absent (private, never throws).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()]$Response)
+    if ($null -eq $Response) { return $null }
+    $raw = $null
+    try {
+        $headers = $null
+        if ($Response.PSObject.Properties['Headers']) { $headers = $Response.Headers }
+        if ($null -ne $headers) {
+            # PowerShell 7: HttpResponseHeaders.RetryAfter is a typed RetryConditionHeaderValue (Delta or Date).
+            if ($headers.PSObject.Properties['RetryAfter'] -and $null -ne $headers.RetryAfter) {
+                $ra = $headers.RetryAfter
+                if ($ra.PSObject.Properties['Delta'] -and $null -ne $ra.Delta) { $raw = [string][int][math]::Ceiling($ra.Delta.TotalSeconds) }
+                elseif ($ra.PSObject.Properties['Date'] -and $null -ne $ra.Date) { $raw = [string][int][math]::Ceiling(($ra.Date.UtcDateTime - [datetime]::UtcNow).TotalSeconds) }
+            }
+            if ($null -eq $raw) {
+                if ($headers -is [System.Collections.IDictionary]) {
+                    if ($headers.Contains('Retry-After')) { $raw = [string]$headers['Retry-After'] }
+                }
+                elseif ($headers -is [System.Collections.Specialized.NameValueCollection]) {
+                    # Windows PowerShell 5.1: HttpWebResponse.Headers is a WebHeaderCollection.
+                    $raw = [string]$headers['Retry-After']
+                }
+                elseif ($headers.PSObject.Methods['TryGetValues']) {
+                    $values = $null
+                    if ($headers.TryGetValues('Retry-After', [ref]$values)) { $raw = [string](@($values) | Select-Object -First 1) }
+                }
+            }
+        }
+    }
+    catch { $raw = $null }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $seconds = 0
+    if ([int]::TryParse($raw.Trim(), [ref]$seconds)) {
+        if ($seconds -lt 0) { $seconds = 0 }
+        return $seconds
+    }
+    $when = [datetime]::MinValue
+    if ([datetime]::TryParse($raw.Trim(), [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$when)) {
+        $delta = [int][math]::Ceiling(($when - [datetime]::UtcNow).TotalSeconds)
+        if ($delta -lt 0) { $delta = 0 }
+        return $delta
+    }
+    return $null
+}
+
 function Get-IQAuthHttpErrorInfo {
     <#
     .SYNOPSIS
-        Extracts StatusCode, body and transient flag from an Invoke-RestMethod error on both 5.1 (WebException) and 7 (HttpResponseException).
+        Extracts StatusCode, Retry-After, body and transient flag from an Invoke-RestMethod error on both 5.1 (WebException) and 7 (HttpResponseException).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
-    $info = @{ StatusCode = $null; Body = ''; Message = ''; Transient = $false }
+    $info = @{ StatusCode = $null; RetryAfter = $null; Body = ''; Message = ''; Transient = $false }
     $ex = $ErrorRecord.Exception
     if ($null -eq $ex) { $info.Message = [string]$ErrorRecord; return $info }
     $info.Message = [string]$ex.Message
@@ -151,6 +241,7 @@ function Get-IQAuthHttpErrorInfo {
     try { if ($ex.PSObject.Properties['Response']) { $response = $ex.Response } } catch { $response = $null }
     if ($null -ne $response) {
         try { if ($response.PSObject.Properties['StatusCode'] -and $null -ne $response.StatusCode) { $info.StatusCode = [int]$response.StatusCode } } catch { $info.StatusCode = $null }
+        $info.RetryAfter = Get-IQAuthRetryAfterDelay -Response $response
         # Windows PowerShell 5.1: WebException.Response is an HttpWebResponse; read the body from the stream.
         if ([string]::IsNullOrEmpty($info.Body) -and $response.PSObject.Methods['GetResponseStream']) {
             try {
@@ -231,8 +322,10 @@ function Invoke-IQAuthRequest {
         POSTs a form body to an OAuth endpoint with Invoke-RestMethod; returns @{Ok; Response | StatusCode; Error; ErrorDescription; AadCodes; Message} (never throws).
     .DESCRIPTION
         Transient failures (no HTTP status and a network-level exception, or HTTP 5xx/408/429) are retried up to
-        MaxAttempts with 2,4,8 s backoff via Start-IQAuthSleep. OAuth errors (400 with an "error" body) are returned
-        to the caller for interpretation (authorization_pending, invalid_grant, ...).
+        MaxAttempts with 2,4,8,16,32,60 s backoff via Start-IQAuthSleep; a Retry-After header (429/503) is honoured
+        instead, capped at 300 s. OAuth errors (400 with an "error" body) are returned to the caller for
+        interpretation (authorization_pending, invalid_grant, ...). Applies the process HTTP defaults (TLS 1.2,
+        proxy credentials) on the first call.
     #>
     [CmdletBinding()]
     param(
@@ -242,7 +335,8 @@ function Invoke-IQAuthRequest {
         [Parameter(Mandatory = $false)][ValidateRange(5, 600)][int]$TimeoutSec = 60,
         [Parameter(Mandatory = $false)][string]$Description = 'token request'
     )
-    $result = @{ Ok = $false; Response = $null; StatusCode = $null; Error = $null; ErrorDescription = $null; AadCodes = @(); Message = $null; Body = '' }
+    Initialize-IQAuthHttpDefault
+    $result = @{ Ok = $false; Response = $null; StatusCode = $null; RetryAfter = $null; Error = $null; ErrorDescription = $null; AadCodes = @(); Message = $null; Body = '' }
     $attempt = 0
     while ($attempt -lt $MaxAttempts) {
         $attempt++
@@ -264,6 +358,7 @@ function Invoke-IQAuthRequest {
             if ([string]::IsNullOrWhiteSpace($info.Body) -and [string]$info.Message -match '^\s*\{') { $info.Body = [string]$info.Message }
             $parsed = ConvertFrom-IQAuthErrorBody -Body $info.Body
             $result.StatusCode = $info.StatusCode
+            $result.RetryAfter = $info.RetryAfter
             $result.Body = $info.Body
             $result.Error = $parsed.Error
             $result.ErrorDescription = $parsed.ErrorDescription
@@ -273,7 +368,8 @@ function Invoke-IQAuthRequest {
             if ($null -ne $info.StatusCode) { $status = [int]$info.StatusCode }
             $retryable = ($status -ge 500) -or ($status -eq 408) -or ($status -eq 429) -or ($status -eq 0 -and $info.Transient)
             if ($retryable -and $attempt -lt $MaxAttempts) {
-                $delay = [int][math]::Pow(2, $attempt)
+                $delay = [int][math]::Min(60, [math]::Pow(2, $attempt))
+                if ($null -ne $info.RetryAfter -and [int]$info.RetryAfter -gt 0) { $delay = [int][math]::Min(300, [int]$info.RetryAfter) }
                 Write-IQLog -Level Warn -Stage Auth -Message ("{0} failed transiently (HTTP {1}: {2}); retrying in {3} s (attempt {4}/{5})." -f $Description, $status, $info.Message, $delay, $attempt, $MaxAttempts)
                 Start-IQAuthSleep -Seconds $delay
                 continue
@@ -291,7 +387,12 @@ function Test-IQAuthPermanentFailure {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][hashtable]$Result)
-    if ($null -ne $Result.StatusCode -and [int]$Result.StatusCode -ge 400 -and [int]$Result.StatusCode -lt 500) { return $true }
+    if ($null -ne $Result.StatusCode) {
+        $status = [int]$Result.StatusCode
+        # 408 (request timeout) and 429 (throttled) are transient even though they are 4xx.
+        if ($status -eq 408 -or $status -eq 429) { return $false }
+        if ($status -ge 400 -and $status -lt 500) { return $true }
+    }
     $code = [string]$Result.Error
     if ([string]::IsNullOrWhiteSpace($code)) { return $false }
     if ($code -in @('temporarily_unavailable', 'server_error', 'no_refresh_token')) { return $false }
@@ -531,15 +632,16 @@ function Set-IQAuthToken {
 
     if ($null -ne $Response) {
         try {
+            # Account first: Save-IQTokenCache below persists $auth.Account, so it must be known before the first save (brief 4.3).
+            $account = $null
+            if ($Response.PSObject.Properties['id_token']) { $account = Get-IQJwtAccount -Token ([string]$Response.id_token) }
+            if ([string]::IsNullOrWhiteSpace($account)) { $account = Get-IQJwtAccount -Token $AccessToken }
+            if (-not [string]::IsNullOrWhiteSpace($account)) { $auth.Account = $account }
             if ($Response.PSObject.Properties['refresh_token'] -and -not [string]::IsNullOrWhiteSpace([string]$Response.refresh_token)) {
                 $auth.RefreshToken = [string]$Response.refresh_token
                 Register-IQAuthSecret -Value $auth.RefreshToken
                 if ($PersistCache) { Save-IQTokenCache | Out-Null }
             }
-            $account = $null
-            if ($Response.PSObject.Properties['id_token']) { $account = Get-IQJwtAccount -Token ([string]$Response.id_token) }
-            if ([string]::IsNullOrWhiteSpace($account)) { $account = Get-IQJwtAccount -Token $AccessToken }
-            if (-not [string]::IsNullOrWhiteSpace($account)) { $auth.Account = $account }
         }
         catch { Write-IQLog -Level Debug -Stage Auth -Message ('Could not read refresh token / account from the token response: ' + $_.Exception.Message) }
     }
@@ -589,6 +691,7 @@ function Send-IQDeviceCodeWebhook {
         [Parameter(Mandatory = $true)][string]$Message
     )
     try {
+        Initialize-IQAuthHttpDefault
         $payload = ConvertTo-Json -InputObject @{ text = $Message } -Depth 20 -Compress
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
         Invoke-RestMethod -Method Post -Uri $Url -Body $bytes -ContentType 'application/json; charset=utf-8' -TimeoutSec 30 -UseBasicParsing -ErrorAction Stop | Out-Null
@@ -606,7 +709,10 @@ function Invoke-IQDeviceCodeFlow {
     .DESCRIPTION
         Prints the sign-in message at Warn (visible in pipeline logs), posts it to -WebhookUrl when set, then polls
         every "interval" seconds handling authorization_pending, slow_down (+5 s), expired_token (throw) and
-        authorization_declined (throw). Invoke-RestMethod (via Invoke-IQAuthRequest) and Start-IQAuthSleep are mockable.
+        authorization_declined (throw). Transient poll failures (network errors, 5xx/408/429, server_error /
+        temporarily_unavailable, unparsable error bodies) are logged and polling continues until the code expires,
+        so a short outage while waiting for a human does not discard the device code that was already posted.
+        Invoke-RestMethod (via Invoke-IQAuthRequest) and Start-IQAuthSleep are mockable.
     #>
     [CmdletBinding()]
     param(
@@ -660,7 +766,7 @@ function Invoke-IQDeviceCodeFlow {
         $polls++
         if ($polls -gt $maxPolls) { throw 'Device-code sign-in was not completed in time (poll limit reached).' }
         Start-IQAuthSleep -Seconds $interval
-        $poll = Invoke-IQAuthRequest -Uri $tokenUrl -Body $pollBody -MaxAttempts 3 -Description 'device-code poll'
+        $poll = Invoke-IQAuthRequest -Uri $tokenUrl -Body $pollBody -MaxAttempts $script:IQAuthPollMaxAttempts -Description 'device-code poll'
         if ($poll.Ok) {
             $accessToken = Get-IQAuthResponseAccessToken -Response $poll.Response
             if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'Device-code token response contained no access_token.' }
@@ -684,6 +790,14 @@ function Invoke-IQDeviceCodeFlow {
         elseif ($err -eq 'bad_verification_code') {
             throw ('The token endpoint rejected the device code: ' + (Get-IQAuthResultText -Result $poll))
         }
+        elseif (Test-IQAuthTransientPollFailure -Result $poll) {
+            # Network blip / 5xx / throttling while waiting for a human: the device code is still valid, keep polling.
+            $text = Get-IQAuthResultText -Result $poll
+            if ([datetime]::UtcNow -gt $deadline) {
+                throw ('Device-code sign-in was not completed before the code expired (the token endpoint was last unreachable: ' + $text + ').')
+            }
+            Write-IQLog -Level Warn -Stage Auth -Message ("Device-code poll failed transiently ({0}); the code is still valid, polling again in {1} s." -f $text, $interval)
+        }
         else {
             $text = Get-IQAuthResultText -Result $poll
             if ($poll.AadCodes -contains '50076' -or $poll.AadCodes -contains '50079' -or $poll.AadCodes -contains '53003' -or $poll.AadCodes -contains '530036') {
@@ -694,6 +808,22 @@ function Invoke-IQDeviceCodeFlow {
     }
 }
 
+function Test-IQAuthTransientPollFailure {
+    <#
+    .SYNOPSIS
+        $true when a failed device-code poll result is a transient failure (no OAuth error code, 5xx/408/429, or server_error / temporarily_unavailable) rather than an OAuth verdict (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][hashtable]$Result)
+    $status = 0
+    if ($null -ne $Result.StatusCode) { $status = [int]$Result.StatusCode }
+    if ($status -ge 500 -or $status -eq 408 -or $status -eq 429) { return $true }
+    $code = [string]$Result.Error
+    if ([string]::IsNullOrWhiteSpace($code)) { return $true }
+    if ($code -in @('temporarily_unavailable', 'server_error')) { return $true }
+    return $false
+}
+
 function Invoke-IQRefreshTokenGrant {
     <#
     .SYNOPSIS
@@ -702,12 +832,13 @@ function Invoke-IQRefreshTokenGrant {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][ValidateSet('PowerBI', 'Fabric')][string]$Resource,
-        [Parameter(Mandatory = $false)][string]$RefreshToken
+        [Parameter(Mandatory = $false)][string]$RefreshToken,
+        [Parameter(Mandatory = $false)][ValidateRange(1, 10)][int]$MaxAttempts = 3
     )
     $auth = Get-IQAuthState -AllowUninitialized
     if ([string]::IsNullOrWhiteSpace($RefreshToken)) { $RefreshToken = [string]$auth.RefreshToken }
     if ([string]::IsNullOrWhiteSpace($RefreshToken)) {
-        return @{ Ok = $false; Response = $null; StatusCode = $null; Error = 'no_refresh_token'; ErrorDescription = 'No refresh token is available.'; AadCodes = @(); Message = 'No refresh token is available.'; Body = '' }
+        return @{ Ok = $false; Response = $null; StatusCode = $null; RetryAfter = $null; Error = 'no_refresh_token'; ErrorDescription = 'No refresh token is available.'; AadCodes = @(); Message = 'No refresh token is available.'; Body = '' }
     }
     $body = @{
         grant_type    = 'refresh_token'
@@ -716,7 +847,7 @@ function Invoke-IQRefreshTokenGrant {
         refresh_token = $RefreshToken
     }
     $tokenUrl = Get-IQAuthEndpoint -Kind Token
-    return (Invoke-IQAuthRequest -Uri $tokenUrl -Body $body -Description ("refresh-token grant ($Resource)"))
+    return (Invoke-IQAuthRequest -Uri $tokenUrl -Body $body -MaxAttempts $MaxAttempts -Description ("refresh-token grant ($Resource)"))
 }
 
 function Get-IQRopcErrorMessage {
@@ -755,7 +886,8 @@ function Invoke-IQPasswordGrant {
     param(
         [Parameter(Mandatory = $true)][System.Management.Automation.PSCredential]$Credential,
         [Parameter(Mandatory = $true)][ValidateSet('PowerBI', 'Fabric')][string]$Resource,
-        [Parameter(Mandatory = $false)][switch]$IncludeProfile
+        [Parameter(Mandatory = $false)][switch]$IncludeProfile,
+        [Parameter(Mandatory = $false)][ValidateRange(1, 10)][int]$MaxAttempts = 3
     )
     $auth = Get-IQAuthState -AllowUninitialized
     $password = ConvertFrom-IQSecureString -SecureString $Credential.Password
@@ -768,7 +900,7 @@ function Invoke-IQPasswordGrant {
             password   = $password
         }
         $tokenUrl = Get-IQAuthEndpoint -Kind Token
-        return (Invoke-IQAuthRequest -Uri $tokenUrl -Body $body -Description ("password grant ($Resource)"))
+        return (Invoke-IQAuthRequest -Uri $tokenUrl -Body $body -MaxAttempts $MaxAttempts -Description ("password grant ($Resource)"))
     }
     finally {
         $password = $null
@@ -787,7 +919,10 @@ function Connect-IQPowerBIModule {
     .DESCRIPTION
         Moved from Final PS Script.txt 455-503: -Environment omitted for Public, -WarningAction SilentlyContinue 3>$null,
         Disconnect-PowerBIServiceAccount + 2 s sleep between attempts. Additions: -Credential (ROPC fallback for the
-        Credential mode) and -Tenant when a tenant GUID is configured and the cmdlet supports it.
+        Credential mode) and -Tenant when a tenant GUID is configured and the user (or user+credential) parameter set
+        of the installed cmdlet declares it (older module builds have -Tenant only in the service-principal sets, and
+        CommandInfo.Parameters is the union of all sets). A parameter-binding failure with -Tenant is retried once
+        without it.
     #>
     [CmdletBinding()]
     param(
@@ -808,11 +943,18 @@ function Connect-IQPowerBIModule {
                 $connectArgs = @{ ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
                 if (-not [string]::IsNullOrWhiteSpace($envName) -and $envName -ne 'Public') { $connectArgs.Environment = $envName }
                 if ($null -ne $Credential) { $connectArgs.Credential = $Credential }
-                if ($auth -and (Test-IQAuthGuid -Value ([string]$auth.TenantId))) {
-                    $cmd = Get-Command -Name Connect-PowerBIServiceAccount -ErrorAction SilentlyContinue
-                    if ($cmd -and $cmd.Parameters.ContainsKey('Tenant')) { $connectArgs.Tenant = [string]$auth.TenantId }
+                if ($auth -and (Test-IQAuthGuid -Value ([string]$auth.TenantId)) -and (Test-IQAuthConnectSupportsTenant -UseCredential:($null -ne $Credential))) {
+                    $connectArgs.Tenant = [string]$auth.TenantId
                 }
-                Connect-PowerBIServiceAccount @connectArgs 3>$null | Out-Null
+                try {
+                    Connect-PowerBIServiceAccount @connectArgs 3>$null | Out-Null
+                }
+                catch {
+                    if (-not $connectArgs.ContainsKey('Tenant') -or -not (Test-IQAuthParameterBindingError -ErrorRecord $_)) { throw }
+                    Write-IQLog -Level Debug -Stage Auth -Message ('Connect-PowerBIServiceAccount rejected -Tenant for this sign-in (' + $_.Exception.Message + '); retrying without it.')
+                    $connectArgs.Remove('Tenant')
+                    Connect-PowerBIServiceAccount @connectArgs 3>$null | Out-Null
+                }
 
                 $token = Get-PowerBIAccessToken -ErrorAction Stop -WarningAction SilentlyContinue 3>$null
                 $plain = ConvertTo-IQPlainTokenValue -Value $token
@@ -836,6 +978,52 @@ function Connect-IQPowerBIModule {
     finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
+}
+
+function Test-IQAuthConnectSupportsTenant {
+    <#
+    .SYNOPSIS
+        $true when the user (or user+credential) parameter set of the installed Connect-PowerBIServiceAccount declares -Tenant (private).
+    .DESCRIPTION
+        CommandInfo.Parameters is the union of every parameter set; on module builds where -Tenant belongs only to
+        the ServicePrincipal sets, splatting it without -ServicePrincipal makes parameter binding fail. The sets are
+        matched by shape (no ServicePrincipal/CertificateThumbprint parameter; Credential present iff -UseCredential)
+        rather than by name so renamed sets still work.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][switch]$UseCredential)
+    $cmd = $null
+    try { $cmd = Get-Command -Name Connect-PowerBIServiceAccount -ErrorAction SilentlyContinue } catch { $cmd = $null }
+    if ($null -eq $cmd) { return $false }
+    $sets = $null
+    try { $sets = @($cmd.ParameterSets) } catch { $sets = $null }
+    if ($null -eq $sets -or $sets.Count -eq 0) { return $false }
+    foreach ($set in $sets) {
+        $names = @()
+        try { $names = @($set.Parameters | ForEach-Object { [string]$_.Name }) } catch { $names = @() }
+        if ($names -contains 'ServicePrincipal' -or $names -contains 'CertificateThumbprint') { continue }
+        $hasCredential = ($names -contains 'Credential')
+        if ($hasCredential -ne [bool]$UseCredential) { continue }
+        if ($names -contains 'Tenant') { return $true }
+    }
+    return $false
+}
+
+function Test-IQAuthParameterBindingError {
+    <#
+    .SYNOPSIS
+        $true when an ErrorRecord is a parameter-binding failure (unresolvable parameter set / unknown parameter) rather than a sign-in error (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+    try {
+        if ($ErrorRecord.Exception -is [System.Management.Automation.ParameterBindingException]) { return $true }
+        if ([string]$ErrorRecord.FullyQualifiedErrorId -match '^(AmbiguousParameterSet|NamedParameterNotFound|MissingMandatoryParameter|ParameterArgumentValidationError)') { return $true }
+        if ([string]$ErrorRecord.CategoryInfo.Category -eq 'InvalidArgument' -and [string]$ErrorRecord.Exception.Message -match '(?i)parameter') { return $true }
+        if ([string]$ErrorRecord.Exception.Message -match '(?i)parameter set cannot be resolved|cannot be found that matches parameter name .Tenant.|missing mandatory parameters') { return $true }
+    }
+    catch { return $false }
+    return $false
 }
 
 function Get-IQPowerBIModuleToken {
@@ -872,8 +1060,13 @@ function Get-IQAzAccessTokenValue {
         Get-AzAccessToken -ResourceUrl as plain text (handles the SecureString .Token of Az 14+); retries once after 5 s; throws on failure.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][string]$ResourceUrl)
+    param(
+        [Parameter(Mandatory = $true)][string]$ResourceUrl,
+        [Parameter(Mandatory = $false)][switch]$Quiet
+    )
     $lastError = $null
+    $retryLevel = 'Warn'
+    if ($Quiet) { $retryLevel = 'Debug' }
     for ($attempt = 1; $attempt -le 2; $attempt++) {
         try {
             $result = Get-AzAccessToken -ResourceUrl $ResourceUrl -ErrorAction Stop -WarningAction SilentlyContinue 3>$null
@@ -884,7 +1077,7 @@ function Get-IQAzAccessTokenValue {
         catch {
             $lastError = $_
             if ($attempt -lt 2) {
-                Write-IQLog -Level Warn -Stage Auth -Message ("Get-AzAccessToken for {0} failed ({1}); retrying once in 5 s." -f $ResourceUrl, $_.Exception.Message)
+                Write-IQLog -Level $retryLevel -Stage Auth -Message ("Get-AzAccessToken for {0} failed ({1}); retrying once in 5 s." -f $ResourceUrl, $_.Exception.Message)
                 Start-IQAuthSleep -Seconds 5
             }
         }
@@ -1050,6 +1243,7 @@ function Initialize-IQAuth {
         DeviceCodeWebhookUrl = $DeviceCodeWebhookUrl
         FabricUnavailable    = $false
         FabricWarned         = $false
+        FabricFailures       = 0               # consecutive Az.Accounts Fabric minting failures (Interactive mode)
         StaticExpiryWarned   = $false
         CacheWarned          = $false
         Description          = $null
@@ -1122,16 +1316,21 @@ function Initialize-IQAuthDeviceCode {
         $auth.RefreshToken = [string]$cache.refreshToken
         if (-not [string]::IsNullOrWhiteSpace([string]$cache.account)) { $auth.Account = [string]$cache.account }
         Write-IQLog -Level Info -Stage Auth -Message ("Token cache found (saved {0}); attempting a silent refresh." -f $cache.savedUtc)
-        $r = Invoke-IQRefreshTokenGrant -Resource PowerBI
+        $r = Invoke-IQRefreshTokenGrant -Resource PowerBI -MaxAttempts $script:IQAuthGrantMaxAttempts
         if ($r.Ok) {
             Set-IQAuthToken -Resource PowerBI -AccessToken (Get-IQAuthResponseAccessToken -Response $r.Response) -Response $r.Response -Source 'cached refresh token' -PersistCache | Out-Null
             $auth.Source = 'cached refresh token'
             $signedIn = $true
         }
-        else {
+        elseif (Test-IQAuthPermanentFailure -Result $r) {
             Write-IQLog -Level Warn -Stage Auth -Message ('The cached refresh token was rejected (' + (Get-IQAuthResultText -Result $r) + '); falling back to a fresh device-code sign-in.')
             $auth.RefreshToken = $null
             $auth.Account = $null
+        }
+        else {
+            # Transient (network / 5xx / throttling): the refresh token is probably still valid. Do not discard it and
+            # do not block a scheduled run on a device-code prompt nobody will answer; the cache file is left untouched.
+            throw ('The token endpoint could not be reached to redeem the cached refresh token (' + (Get-IQAuthResultText -Result $r) + '). The token cache was left untouched; retry the run.')
         }
     }
     if (-not $signedIn) {
@@ -1278,17 +1477,32 @@ function Update-IQAuthToken {
                 return (Set-IQAuthToken -Resource PowerBI -AccessToken $t -Source 'MicrosoftPowerBIMgmt')
             }
             if (-not (Connect-IQAzForFabric)) { return (Set-IQAuthFabricUnavailable -Reason 'No Az.Accounts context.' -Permanent) }
+            $failures = 0
+            if ($auth.ContainsKey('FabricFailures')) { $failures = [int]$auth.FabricFailures }
             try {
-                $t = Get-IQAzAccessTokenValue -ResourceUrl (Get-IQAuthResourceUrl -Resource Fabric)
+                $t = Get-IQAzAccessTokenValue -ResourceUrl (Get-IQAuthResourceUrl -Resource Fabric) -Quiet:($failures -gt 0)
+                $auth.FabricFailures = 0
                 return (Set-IQAuthToken -Resource Fabric -AccessToken $t -Source 'Az.Accounts')
             }
             catch {
-                Write-IQLog -Level Warn -Stage Auth -Message ('Fabric token refresh via Az.Accounts failed: ' + $_.Exception.Message)
-                return (Set-IQAuthFabricUnavailable -Reason $_.Exception.Message)
+                # No Fabric token is ever cached on failure, so every Fabric call would otherwise repeat two
+                # Get-AzAccessToken attempts, a 5 s sleep and a Warn line. Give up after a few consecutive failures,
+                # or immediately when the error does not look transient (e.g. the resource is rejected on GCC High).
+                $failures++
+                $auth.FabricFailures = $failures
+                $message = [string]$_.Exception.Message
+                $transient = ($message -match '(?i)timed out|timeout|temporarily|network|unavailable|connection|try again')
+                $permanent = (-not $transient) -or ($failures -ge $script:IQAuthFabricFailureLimit)
+                $level = 'Debug'
+                if ($failures -eq 1) { $level = 'Warn' }
+                $suffix = ''
+                if ($permanent) { $suffix = ' Fabric collections will be skipped for the rest of the run.' }
+                Write-IQLog -Level $level -Stage Auth -Message ('Fabric token refresh via Az.Accounts failed: ' + $message + $suffix)
+                return (Set-IQAuthFabricUnavailable -Reason $message -Permanent:$permanent)
             }
         }
         'DeviceCode' {
-            $r = Invoke-IQRefreshTokenGrant -Resource $Resource
+            $r = Invoke-IQRefreshTokenGrant -Resource $Resource -MaxAttempts $script:IQAuthGrantMaxAttempts
             if ($r.Ok) { return (Set-IQAuthToken -Resource $Resource -AccessToken (Get-IQAuthResponseAccessToken -Response $r.Response) -Response $r.Response -Source 'refresh token' -PersistCache) }
             $text = Get-IQAuthResultText -Result $r
             if ($Resource -eq 'Fabric') {
@@ -1318,10 +1532,10 @@ function Update-IQAuthToken {
             # HTTP provider: prefer the refresh token from the first ROPC response, else repeat the password grant.
             $r = $null
             if (-not [string]::IsNullOrWhiteSpace([string]$auth.RefreshToken)) {
-                $r = Invoke-IQRefreshTokenGrant -Resource $Resource
+                $r = Invoke-IQRefreshTokenGrant -Resource $Resource -MaxAttempts $script:IQAuthGrantMaxAttempts
                 if (-not $r.Ok) { Write-IQLog -Level Debug -Stage Auth -Message ("Refresh-token grant failed ({0}); repeating the password grant." -f (Get-IQAuthResultText -Result $r)) }
             }
-            if ($null -eq $r -or -not $r.Ok) { $r = Invoke-IQPasswordGrant -Credential $auth.Credential -Resource $Resource }
+            if ($null -eq $r -or -not $r.Ok) { $r = Invoke-IQPasswordGrant -Credential $auth.Credential -Resource $Resource -MaxAttempts $script:IQAuthGrantMaxAttempts }
             if ($r.Ok) { return (Set-IQAuthToken -Resource $Resource -AccessToken (Get-IQAuthResponseAccessToken -Response $r.Response) -Response $r.Response -Source 'ROPC') }
             if ($Resource -eq 'Fabric') {
                 $text = Get-IQAuthResultText -Result $r

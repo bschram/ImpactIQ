@@ -34,11 +34,47 @@ Describe 'ConvertFrom-IQBimModel' {
         @($script:Model.Tables).Count | Should -Be 3
         @($script:Model.Tables | ForEach-Object { $_.Name }) | Should -Be @('Sales', 'Date', 'Time Intelligence')
     }
-    It 'identifies the calculation group table and its items in ordinal order' {
+    It 'identifies the calculation group table and its items in TMSL array order (csx order)' {
         $script:Model.CalculationGroupTables | Should -Be @('Time Intelligence')
         $cg = $script:Model.Tables | Where-Object { $_.Name -eq 'Time Intelligence' }
         $cg.IsCalculationGroup | Should -BeTrue
         @($cg.CalculationItems | ForEach-Object { $_.Name }) | Should -Be @('Current', 'YTD')
+    }
+    It 'keeps calculation items in array order even when ordinals are absent or out of order (BIM-02)' {
+        # TMSL omits ordinal at its default (0), so a stable, deterministic order can only come from the array itself.
+        $items = @()
+        for ($i = 1; $i -le 20; $i++) { $items += ('{"name":"i' + $i + '","expression":"SELECTEDMEASURE()"}') }
+        $items += '{"name":"last","ordinal":1,"expression":"SELECTEDMEASURE()"}'
+        $items += '{"name":"first","ordinal":0,"expression":"SELECTEDMEASURE()"}'
+        $json = '{"name":"cg","model":{"tables":[{"name":"CG","columns":[{"name":"Name","dataType":"string","sourceColumn":"Name"}],"partitions":[{"name":"CG","source":{"type":"calculationGroup"}}],"calculationGroup":{"calculationItems":[' + ($items -join ',') + ']}}]}}'
+        $path = Join-Path $script:OutFolder 'calc-items-order.bim'
+        [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))
+        $expected = @()
+        for ($i = 1; $i -le 20; $i++) { $expected += ('i' + $i) }
+        $expected += @('last', 'first')
+        $m = ConvertFrom-IQBimModel -Path $path
+        @($m.Tables[0].CalculationItems | ForEach-Object { $_.Name }) | Should -BeExactly $expected
+        $m.Tables[0].CalculationItems[20].Ordinal | Should -Be 1
+        $r = Export-IQModelDetailFromBim -BimPath $path -OutputFolder $script:OutFolder -ModelName 'WS ~ CG Order' -ModelId 'WS ~ CG Order' -AsOfDate '2026-09-05'
+        $r.Success | Should -BeTrue -Because $r.Message
+        $rows = @(Import-Csv -Path $r.Csv -Encoding UTF8 | Where-Object { $_.Type -eq 'CalculationItem' } | ForEach-Object { $_.Name })
+        $rows | Should -BeExactly $expected
+    }
+    It 'leaves the Partition Expression empty for DirectLake entity partitions like the csx p.Expression (BIM-03)' {
+        $json = '{"name":"dl","model":{"defaultMode":"directLake","tables":[{"name":"Sales","columns":[{"name":"Amount","dataType":"double","sourceColumn":"Amount"}],"partitions":[{"name":"Sales","mode":"directLake","source":{"type":"entity","entityName":"dbo_Sales","schemaName":"dbo","expressionSource":"DatabaseQuery"}}]},{"name":"Legacy","columns":[{"name":"Id","dataType":"int64","sourceColumn":"Id"}],"partitions":[{"name":"Legacy","source":{"type":"query","query":"SELECT Id FROM dbo.Legacy","dataSource":"Sql"}}]}]}}'
+        $path = Join-Path $script:OutFolder 'directlake.bim'
+        [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding($false)))
+        $m = ConvertFrom-IQBimModel -Path $path
+        $sales = $m.Tables | Where-Object { $_.Name -eq 'Sales' }
+        $sales.StorageMode | Should -Be 'DirectLake'
+        $sales.Partitions[0].SourceType | Should -Be 'Entity'
+        $sales.Partitions[0].Expression | Should -BeExactly ''
+        ($m.Tables | Where-Object { $_.Name -eq 'Legacy' }).Partitions[0].Expression | Should -BeExactly 'SELECT Id FROM dbo.Legacy'
+        $r = Export-IQModelDetailFromBim -BimPath $path -OutputFolder $script:OutFolder -ModelName 'WS ~ DirectLake' -ModelId 'WS ~ DirectLake' -AsOfDate '2026-09-05'
+        $r.Success | Should -BeTrue -Because $r.Message
+        $p = Import-Csv -Path $r.Csv -Encoding UTF8 | Where-Object { $_.Type -eq 'Partition' -and $_.Table -eq 'Sales' }
+        $p.Expression | Should -BeExactly ''
+        $p.TableStorageMode | Should -Be 'DirectLake'
     }
     It 'joins string-array expressions with CRLF and keeps plain strings' {
         $sales = $script:Model.Tables | Where-Object { $_.Name -eq 'Sales' }
@@ -235,6 +271,33 @@ Describe 'Export-IQModelDetailFromBim' {
         $r = Export-IQModelDetailFromBim -BimPath (Join-Path $script:OutFolder 'missing.bim') -OutputFolder $script:OutFolder -ModelName 'X ~ Y' -ModelId 'X ~ Y' -AsOfDate '2026-09-05'
         $r.Success | Should -BeFalse
         $r.Message | Should -Match 'Could not parse'
+    }
+}
+
+Describe 'Dax helper contract used by ImpactIQ.Bim.ps1 (BIM-04)' {
+    # These ImpactIQ.Dax.ps1 helpers are not in the brief section 2 contract but the .bim path depends on them; pin the
+    # names and parameter sets so a signature change in Dax.ps1 fails here instead of silently breaking the Bim export.
+    It 'exposes <Name> with parameters <Parameters>' -TestCases @(
+        @{ Name = 'Get-IQModelDetailHeader'; Parameters = @() }
+        @{ Name = 'Get-IQMeasureDependencyHeader'; Parameters = @() }
+        @{ Name = 'New-IQModelDetailRow'; Parameters = @('Type', 'Common', 'Fields') }
+        @{ Name = 'Write-IQCsvFile'; Parameters = @('Path', 'Header', 'Rows') }
+        @{ Name = 'ConvertTo-IQMeasureDependencyRows'; Parameters = @('Objects', 'Common', 'KnownTables', 'KnownMeasures', 'KnownColumns', 'CalculationGroupTables') }
+    ) {
+        param($Name, $Parameters)
+        $cmd = Get-Command -Name $Name -CommandType Function -ErrorAction SilentlyContinue
+        $cmd | Should -Not -BeNullOrEmpty -Because "ImpactIQ.Bim.ps1 calls $Name"
+        $cmd.ScriptBlock.File | Should -Match 'ImpactIQ\.Dax\.ps1$'
+        foreach ($p in $Parameters) { $cmd.Parameters.ContainsKey($p) | Should -BeTrue -Because "$Name -$p is used by ImpactIQ.Bim.ps1" }
+    }
+    It 'Bim.ps1 calls only Write-IQLog plus the pinned Dax helpers across module boundaries' {
+        $text = [System.IO.File]::ReadAllText((Join-Path (Split-Path -Parent $PSScriptRoot) 'Config/Modules/ImpactIQ.Bim.ps1'))
+        $code = ([regex]::Replace($text, '(?s)<#.*?#>', '') -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+        $called = @([regex]::Matches($code, '(?<![\w-])[A-Z][A-Za-z]+-IQ[A-Za-z]+') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+        $own = @([regex]::Matches($code, '(?m)^function\s+([A-Za-z]+-IQ[A-Za-z]+)') | ForEach-Object { $_.Groups[1].Value })
+        $allowed = @('Write-IQLog', 'Get-IQModelDetailHeader', 'Get-IQMeasureDependencyHeader', 'New-IQModelDetailRow', 'Write-IQCsvFile', 'ConvertTo-IQMeasureDependencyRows')
+        $foreign = @($called | Where-Object { $own -notcontains $_ -and $allowed -notcontains $_ })
+        $foreign | Should -BeNullOrEmpty -Because 'every cross-module call must be listed in the Bim.ps1 header and pinned above'
     }
 }
 

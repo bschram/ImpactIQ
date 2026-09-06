@@ -13,14 +13,20 @@
 #   admin-activity-<yyyy-MM-dd>  GET admin/activityevents?startDateTime='<day>T00:00:00.000Z'&endDateTime='<day>T23:59:59.999Z'
 #                             (continuationUri paging), one item per UTC day for the last -ActivityDays days (max 28)
 #   usage-<workspaceId>       Get-IQUsageMetrics (ImpactIQ.Dax.ps1) per real workspace in scope
-# The admin collectors run only when GET admin/capacities?$top=1 succeeds (Fabric administrator); otherwise admin-groups
-# and admin-scan are checkpointed as Skipped with the reason and the run continues. A Skipped admin checkpoint is NOT
-# treated as final: when a later (resumed) run passes the probe, the collector runs for real.
+# The admin collectors run only when GET admin/capacities?$top=1 succeeds (Fabric administrator). A definite "no"
+# (HTTP 401/403/404 -> $null) checkpoints admin-groups and admin-scan as Skipped with the reason and the run continues;
+# a probe that fails for another reason (5xx after retries, network, expired token) is transient: the two items are
+# checkpointed Failed (manifest.failures, stage CompletedWithErrors, exit 2) so the next start re-runs the stage and
+# retries them. A Skipped checkpoint is not treated as final either: when a later run of the stage passes the probe,
+# the collector runs for real.
 #
-# Raw JSON (never deleted by this module):
+# Raw JSON (never deleted by this module; API bodies are written verbatim, never re-serialised):
 #   extracts\admin\groups-<page>.json            one file per admin/groups page
 #   extracts\admin\scan-workspaces.json          the workspace ids that were scanned (with the batch layout)
-#   extracts\admin\scan-<batch>-<hash8>.json     one scanResult per batch of <= 100 workspace ids (reused on re-run)
+#   extracts\admin\scan-<batch>-<hash8>.json     one scanResult per batch of <= 100 workspace ids (reused on re-run;
+#                                                the ids are sorted before batching so a retry produces the same
+#                                                batches, and a cached file is matched by its <hash8> even when its
+#                                                batch number moved)
 #   extracts\admin\activity-<yyyy-MM-dd>.json    { Date; EventCount; Pages; Partial; Events[] } per UTC day
 #   extracts\usage\<safeWorkspaceId>.json        the Get-IQUsageMetrics result of one workspace
 #
@@ -89,15 +95,25 @@
 #                        ReportName, SectionId, UserId, UserKey, Client, SessionSource, WorkspaceId(model), Timestamp, ...)
 #
 # Optional $script:IQ.Options keys (not entry-point parameters; defaults in Get-IQExtrasOption callers):
-#   ActivityDays (entry point, default 30 -> clamped to ActivityMaxDays=28), ActivityMaxRows (250000), UsageDays (30),
-#   AdminGroupsPageSize (5000), AdminScanScopeOnly ($false: scan the whole tenant; $true: only workspaces in scope),
-#   AdminScanMaxWorkspaces (0 = all), AdminScanBatchSize (100), AdminScanTimeoutMinutes (30), ExtrasPollSeconds (10).
+#   ActivityDays (entry point, default 30 -> clamped to ActivityMaxDays=28; the day window ends on the run's start
+#   date - manifest startedUtc on a resume, Options.NowUtc / the clock otherwise - so a resumed run keeps its window),
+#   ActivityMaxRows (250000 on PowerShell 7, 100000 on Windows PowerShell 5.1 whose JSON serialiser is much slower),
+#   UsageDays (30), AdminGroupsPageSize (5000), AdminScanScopeOnly ($false: scan the whole tenant; $true: only
+#   workspaces in scope), AdminScanMaxWorkspaces (0 = all), AdminScanBatchSize (100), AdminScanTimeoutMinutes (30),
+#   ExtrasPollSeconds (10; the scanStatus poll honours a larger Retry-After header).
+#
+# Time budget (Options.TimeBudgetMinutes): Test-IQTimeBudget is consulted before every collector, before every Scanner
+# batch and inside the scanStatus poll loop. A collector that stops on the budget is NOT checkpointed (the cached
+# batches / day files stay on disk) and reports 'Paused', so Invoke-IQStage marks the stage Paused and the next start
+# resumes it.
 #
 # Windows PowerShell 5.1 and PowerShell 7 compatible; nothing here is Windows-only. Dot-sourced from ImpactIQ.ps1, so
 # $script:IQ is the shared context. Cross-module functions used (brief section 2): Write-IQLog, Get-IQSafeKey,
-# ConvertTo-IQJsonFile, ConvertFrom-IQJsonFile, Invoke-IQApi, Test-IQItemDone, Set-IQItemDone, Get-IQItemCheckpoint,
-# Save-IQInventory, Get-IQSelectedWorkspaces, Get-IQUsageMetrics. Private helpers are prefixed *-IQExtras* / *-IQAdmin* /
-# *-IQScan* / *-IQUsage* and are not part of the contract.
+# Get-IQNowUtc, ConvertTo-IQJsonFile, ConvertFrom-IQJsonFile, Invoke-IQApi, Test-IQTimeBudget, Test-IQItemDone,
+# Set-IQItemDone, Get-IQItemCheckpoint, Save-IQInventory, Get-IQSelectedWorkspaces, Get-IQUsageMetrics. The scanStatus
+# poll reads the Retry-After header, which Invoke-IQApi does not expose, so it calls the Http module's request core
+# (Get-IQApiUrl, Invoke-IQHttpRequest, Get-IQHttpHeaderValue, ConvertTo-IQRetryAfterDelay) directly. Private helpers
+# are prefixed *-IQExtras* / *-IQAdmin* / *-IQScan* / *-IQUsage* and are not part of the contract.
 
 # =====================================================================================================================
 # Small private helpers
@@ -211,6 +227,36 @@ function Start-IQExtrasSleep {
     Start-Sleep -Seconds $Seconds
 }
 
+function Write-IQExtrasRawFile {
+    <#
+    .SYNOPSIS
+    Atomically writes an API body verbatim (UTF-8 without BOM, "<path>.tmp" then Move-Item -Force) so a raw cache never goes through ConvertTo-Json (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $dir = Split-Path -Path $Path -Parent
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $tmp = $Path + '.tmp'
+    [System.IO.File]::WriteAllText($tmp, $Text, (New-Object System.Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
+}
+
+function Get-IQExtrasNowUtc {
+    <#
+    .SYNOPSIS
+    The run's clock: Get-IQNowUtc (Options.NowUtc-aware) when the Common module exposes it, else [datetime]::UtcNow (private).
+    #>
+    [CmdletBinding()]
+    param()
+    if (Get-Command -Name 'Get-IQNowUtc' -ErrorAction SilentlyContinue) {
+        try { return ([datetime](Get-IQNowUtc)).ToUniversalTime() } catch { return [datetime]::UtcNow }
+    }
+    return [datetime]::UtcNow
+}
+
 function ConvertTo-IQExtrasScalar {
     <#
     .SYNOPSIS
@@ -276,9 +322,28 @@ function ConvertTo-IQExtrasRow {
         }
     }
     foreach ($e in @($Exclude)) { if ($null -ne $e) { $mapped[[string]$e] = $true } }
-    foreach ($name in @(Get-IQExtrasMemberName -Object $Object)) {
-        if ($mapped.ContainsKey($name) -or $row.Contains($name)) { continue }
-        $row[$name] = ConvertTo-IQExtrasScalar -Value (Get-IQExtrasMember -Object $Object -Name $name)
+    # The unmapped fields are the bulk of every activity event (hundreds of thousands of rows on a busy tenant), so the
+    # members are read directly and ConvertTo-IQExtrasScalar is only called for values that are not already scalar:
+    # a PowerShell function call costs ~100-200 us on Windows PowerShell 5.1.
+    if ($null -ne $Object) {
+        if ($Object -is [System.Collections.IDictionary]) {
+            foreach ($k in $Object.Keys) {
+                $name = [string]$k
+                if ($mapped.ContainsKey($name) -or $row.Contains($name)) { continue }
+                $v = $Object[$k]
+                if ($null -eq $v -or $v -is [string] -or $v -is [bool] -or $v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [datetime] -or $v -is [decimal]) { $row[$name] = $v }
+                else { $row[$name] = ConvertTo-IQExtrasScalar -Value $v }
+            }
+        }
+        else {
+            foreach ($p in $Object.PSObject.Properties) {
+                $name = $p.Name
+                if ($mapped.ContainsKey($name) -or $row.Contains($name)) { continue }
+                $v = $p.Value
+                if ($null -eq $v -or $v -is [string] -or $v -is [bool] -or $v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [datetime] -or $v -is [decimal]) { $row[$name] = $v }
+                else { $row[$name] = ConvertTo-IQExtrasScalar -Value $v }
+            }
+        }
     }
     return $row
 }
@@ -289,7 +354,9 @@ function New-IQExtrasSheet {
     Normalises rows into a self-describing sheet object { SchemaVersion; Collector; SheetName; Columns; RowCount; Rows; CollectedUtc; Message } where every row has every column (private).
     .DESCRIPTION
     Columns = -PreferredColumns (those that occur in at least one row, or all of them when -KeepPreferred) followed by
-    every other property in order of first appearance. Nested values are flattened with ConvertTo-IQExtrasScalar.
+    every other property in order of first appearance. Nested values are flattened with ConvertTo-IQExtrasScalar
+    (values that are already scalar - every cell of a ConvertTo-IQExtrasRow row - are copied without a function call,
+    which keeps a 250 000-row ActivityEvents sheet feasible on Windows PowerShell 5.1).
     #>
     [CmdletBinding()]
     param(
@@ -306,16 +373,30 @@ function New-IQExtrasSheet {
     if ($KeepPreferred) {
         foreach ($c in @($PreferredColumns)) { if ($c -and -not $seen.ContainsKey($c)) { $seen[$c] = $true; $columns.Add($c) } }
     }
+    # One pass over the rows collects the member names in order of first appearance (no per-row function calls).
     $present = @{}
-    foreach ($r in $list) { foreach ($n in @(Get-IQExtrasMemberName -Object $r)) { $present[$n] = $true } }
-    foreach ($c in @($PreferredColumns)) { if ($c -and $present.ContainsKey($c) -and -not $seen.ContainsKey($c)) { $seen[$c] = $true; $columns.Add($c) } }
+    $order = New-Object System.Collections.Generic.List[string]
     foreach ($r in $list) {
-        foreach ($n in @(Get-IQExtrasMemberName -Object $r)) { if (-not $seen.ContainsKey($n)) { $seen[$n] = $true; $columns.Add($n) } }
+        if ($r -is [System.Collections.IDictionary]) {
+            foreach ($k in $r.Keys) { $n = [string]$k; if (-not $present.ContainsKey($n)) { $present[$n] = $true; $order.Add($n) } }
+        }
+        else {
+            foreach ($p in $r.PSObject.Properties) { $n = $p.Name; if (-not $present.ContainsKey($n)) { $present[$n] = $true; $order.Add($n) } }
+        }
     }
+    foreach ($c in @($PreferredColumns)) { if ($c -and $present.ContainsKey($c) -and -not $seen.ContainsKey($c)) { $seen[$c] = $true; $columns.Add($c) } }
+    foreach ($n in $order) { if (-not $seen.ContainsKey($n)) { $seen[$n] = $true; $columns.Add($n) } }
     $uniform = New-Object System.Collections.Generic.List[object]
     foreach ($r in $list) {
         $o = [ordered]@{}
-        foreach ($c in $columns) { $o[$c] = ConvertTo-IQExtrasScalar -Value (Get-IQExtrasMember -Object $r -Name $c) }
+        $isDict = ($r -is [System.Collections.IDictionary])
+        foreach ($c in $columns) {
+            $v = $null
+            if ($isDict) { if ($r.Contains($c)) { $v = $r[$c] } }
+            else { $prop = $r.PSObject.Properties[$c]; if ($null -ne $prop) { $v = $prop.Value } }
+            if ($null -ne $v -and -not ($v -is [string] -or $v -is [bool] -or $v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [datetime] -or $v -is [decimal])) { $v = ConvertTo-IQExtrasScalar -Value $v }
+            $o[$c] = $v
+        }
         $uniform.Add([PSCustomObject]$o)
     }
     return [ordered]@{
@@ -400,12 +481,14 @@ function Test-IQAdminAccess {
     .SYNOPSIS
     $true when the signed-in user can call the Power BI admin APIs (GET admin/capacities?$top=1 succeeds).
     .DESCRIPTION
-    401/403 (or any transport failure) means "not a Fabric administrator" for this run; the reason is logged once.
-    Returns @{ IsAdmin; Message }.
+    A $null response (HTTP 401/403/404) means "not a Fabric administrator" for this run (IsAdmin = $false,
+    Transient = $false). Any other failure (5xx after the retries, network, token refresh) is transient: IsAdmin =
+    $false and Transient = $true, so the caller records the admin collectors as Failed (retried on resume) instead of
+    Skipped. Returns @{ IsAdmin; Transient; Message }.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][string]$Stage = 'Extras')
-    $result = @{ IsAdmin = $false; Message = '' }
+    $result = @{ IsAdmin = $false; Transient = $false; Message = '' }
     try {
         $response = Invoke-IQApi -Method GET -Path 'admin/capacities' -Query @{ '$top' = 1 } -AllowNotFound -NoPaging -Stage $Stage
         if ($null -eq $response) {
@@ -417,7 +500,8 @@ function Test-IQAdminAccess {
         return $result
     }
     catch {
-        $result.Message = 'Admin API probe failed (' + $_.Exception.Message + '): -IncludeAdminApis collectors are skipped.'
+        $result.Transient = $true
+        $result.Message = 'Admin API probe failed (' + $_.Exception.Message + '): the -IncludeAdminApis collectors are recorded as Failed and retried on the next start.'
         return $result
     }
 }
@@ -431,7 +515,9 @@ function Get-IQAdminGroupInventory {
     .SYNOPSIS
     Collector admin-groups: pages GET admin/groups with $top/$skip and $expand, saves each page under extracts\admin and writes the AdminWorkspaces / AdminWorkspaceUsers sheets.
     .DESCRIPTION
-    Returns @{ Success; Message; Outputs; WorkspaceCount; UserCount; Pages }. Never throws for API failures.
+    Returns @{ Success; Message; Outputs; WorkspaceCount; UserCount; Pages }. Never throws for API failures. A page
+    after the first that returns nothing (HTTP 400/403/404) fails the collector: a truncated list must not be
+    checkpointed as the complete tenant.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][string]$Stage = 'Extras')
@@ -450,19 +536,21 @@ function Get-IQAdminGroupInventory {
     try {
         while ($true) {
             $page++
-            $response = Invoke-IQApi -Method GET -Path 'admin/groups' -Query @{ '$top' = $pageSize; '$skip' = $skip; '$expand' = $expand } -NoPaging -Stage $Stage
-            if ($null -eq $response) {
+            # -Raw: the page body (up to 5 000 expanded workspaces) is written verbatim and parsed once.
+            $raw = Invoke-IQApi -Method GET -Path 'admin/groups' -Query @{ '$top' = $pageSize; '$skip' = $skip; '$expand' = $expand } -NoPaging -Raw -Stage $Stage
+            if ($null -eq $raw -or [string]::IsNullOrWhiteSpace([string]$raw)) {
                 if ($page -eq 1) {
                     $result.Message = 'GET admin/groups returned no response (HTTP 400/403/404 - see the Warn line above)'
                     return $result
                 }
-                Write-IQLog -Level Warn -Stage $Stage -Item $collector -Message ("admin/groups page {0} returned nothing; keeping the {1} workspace(s) collected so far" -f $page, $groups.Count)
-                break
+                $result.Message = ('GET admin/groups page {0} ($skip={1}) returned no response (HTTP 400/403/404 - see the Warn line above); {2} workspace(s) read before it - the collector is retried on the next start' -f $page, $skip, $groups.Count)
+                return $result
             }
+            $response = ConvertFrom-Json -InputObject ([string]$raw)
             $rows = @(Get-IQExtrasMember -Object $response -Name 'value')
             $rows = @($rows | Where-Object { $null -ne $_ })
             $rawPath = Join-Path $folder ('groups-' + $page.ToString('000') + '.json')
-            ConvertTo-IQJsonFile -Object $response -Path $rawPath
+            Write-IQExtrasRawFile -Text ([string]$raw) -Path $rawPath
             $rawFiles += $rawPath
             foreach ($g in $rows) { $groups.Add($g) }
             Write-IQLog -Level Debug -Stage $Stage -Item $collector -Message ("admin/groups page {0}: {1} workspace(s) (skip {2})" -f $page, $rows.Count, $skip)
@@ -537,12 +625,23 @@ function Get-IQAdminScanWorkspaceId {
     <#
     .SYNOPSIS
     The workspace ids to scan: GET admin/workspaces/modified (personal and inactive workspaces excluded), optionally restricted to the run scope / a maximum count (private).
+    .DESCRIPTION
+    The ids are returned sorted (ordinal, case-insensitive) so a retry slices the same batches and finds the cached
+    batch files; the API's own order is unspecified. An empty list ("[]" - a tenant or scope without active
+    non-personal workspaces) is returned as @(), which is not the same as a 403/404 ($null -> throw).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][string]$Stage = 'Extras')
     $collector = 'admin-scan'
-    $response = Invoke-IQApi -Method GET -Path 'admin/workspaces/modified' -Query @{ excludePersonalWorkspaces = 'True'; excludeInActiveWorkspaces = 'True' } -NoPaging -Stage $Stage
-    if ($null -eq $response) { throw 'GET admin/workspaces/modified returned no response (HTTP 400/403/404 - see the Warn line above)' }
+    $raw = Invoke-IQApi -Method GET -Path 'admin/workspaces/modified' -Query @{ excludePersonalWorkspaces = 'True'; excludeInActiveWorkspaces = 'True' } -NoPaging -Raw -Stage $Stage
+    if ($null -eq $raw) { throw 'GET admin/workspaces/modified returned no response (HTTP 400/403/404 - see the Warn line above)' }
+    $text = ([string]$raw).Trim()
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1).Trim() }
+    if ($text -eq '' -or $text -eq '[]') {
+        Write-IQLog -Level Info -Stage $Stage -Item $collector -Message 'admin/workspaces/modified returned no workspaces (nothing to scan)'
+        return @()
+    }
+    $response = ConvertFrom-Json -InputObject $text
     $entries = @()
     if ($response -is [System.Management.Automation.PSCustomObject] -and $null -ne $response.PSObject.Properties['value']) { $entries = @($response.value) }
     else { $entries = @($response) }
@@ -558,6 +657,7 @@ function Get-IQAdminScanWorkspaceId {
         $seen[$key] = $true
         $ids.Add($id)
     }
+    $ids.Sort([System.StringComparer]::OrdinalIgnoreCase)
     $total = $ids.Count
     if ([bool](Get-IQExtrasOption -Name 'AdminScanScopeOnly' -Default $false)) {
         $inScope = @{}
@@ -594,16 +694,55 @@ function Get-IQAdminScanBatchHash {
     return (([System.BitConverter]::ToString($bytes) -replace '-', '').Substring(0, 8).ToLowerInvariant())
 }
 
+function Get-IQAdminScanStatus {
+    <#
+    .SYNOPSIS
+    One GET admin/workspaces/scanStatus/{id} through the Http request core; returns @{ Status; Error; RetryAfter } (RetryAfter = the header in seconds, or $null) (private).
+    .DESCRIPTION
+    Invoke-IQApi hides the response headers, and the Scanner API tells the caller how long to wait through
+    Retry-After on a 200 "Running"/"NotStarted" answer; polling faster than that only burns the getInfo/scanStatus
+    quota. Throws when the request fails (after the Http module's own retries) or returns no body.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$ScanId,
+        [Parameter(Mandatory = $false)][string]$Stage = 'Extras'
+    )
+    $url = Get-IQApiUrl -Path ('admin/workspaces/scanStatus/' + $ScanId) -Api 'PowerBI'
+    $response = Invoke-IQHttpRequest -Method GET -Url $url -Api 'PowerBI' -Stage $Stage
+    if ($null -eq $response) { throw ('GET admin/workspaces/scanStatus/' + $ScanId + ' returned no response') }
+    $content = $null
+    if ($response -is [System.Collections.IDictionary]) { $content = $response['Content'] } else { $content = Get-IQExtrasMember -Object $response -Name 'Content' }
+    if ($null -eq $content -or [string]::IsNullOrWhiteSpace([string]$content)) { throw ('GET admin/workspaces/scanStatus/' + $ScanId + ' returned an empty body') }
+    $parsed = ConvertFrom-Json -InputObject ([string]$content)
+    $headers = $null
+    if ($response -is [System.Collections.IDictionary]) { $headers = $response['Headers'] } else { $headers = Get-IQExtrasMember -Object $response -Name 'Headers' }
+    $retryAfter = $null
+    if ($null -ne $headers) {
+        try { $retryAfter = ConvertTo-IQRetryAfterDelay -Value (Get-IQHttpHeaderValue -Headers $headers -Name 'Retry-After') } catch { $retryAfter = $null }
+    }
+    return @{
+        Status     = [string](Get-IQExtrasMember -Object $parsed -Name 'status')
+        Error      = (Get-IQExtrasMember -Object $parsed -Name 'error')
+        RetryAfter = $retryAfter
+    }
+}
+
 function Invoke-IQAdminScanBatch {
     <#
     .SYNOPSIS
-    Runs one Scanner API batch (getInfo -> scanStatus polling -> scanResult) and returns the parsed scanResult, or throws with the reason (private).
+    Runs one Scanner API batch (getInfo -> scanStatus polling -> scanResult), writes the scanResult body verbatim to -OutPath and returns it parsed, or throws with the reason (private).
+    .DESCRIPTION
+    The poll waits max(Retry-After, ExtrasPollSeconds) between scanStatus calls, checks Test-IQTimeBudget on every
+    turn (throws [System.OperationCanceledException] when the budget is used up) and gives up after
+    AdminScanTimeoutMinutes with a [System.TimeoutException], so the caller can tell the three outcomes apart.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Ids,
         [Parameter(Mandatory = $false)][string]$Stage = 'Extras',
-        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Item
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Item,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$OutPath
     )
     $query = @{ lineage = 'True'; datasourceDetails = 'True'; datasetSchema = 'True'; datasetExpressions = 'True'; getArtifactUsers = 'True' }
     $body = @{ workspaces = @($Ids) }
@@ -612,24 +751,32 @@ function Invoke-IQAdminScanBatch {
     $scanId = [string](Get-IQExtrasMember -Object $accepted -Name 'id')
     if ([string]::IsNullOrWhiteSpace($scanId)) { throw 'POST admin/workspaces/getInfo returned no scan id' }
     $status = [string](Get-IQExtrasMember -Object $accepted -Name 'status')
+    $scanError = Get-IQExtrasMember -Object $accepted -Name 'error'
     $pollSeconds = [int](Get-IQExtrasOption -Name 'ExtrasPollSeconds' -Default 10)
     if ($pollSeconds -lt 0) { $pollSeconds = 0 }
     $timeoutMinutes = [int](Get-IQExtrasOption -Name 'AdminScanTimeoutMinutes' -Default 30)
     if ($timeoutMinutes -lt 1) { $timeoutMinutes = 1 }
     $deadline = [datetime]::UtcNow.AddMinutes($timeoutMinutes)
     $polls = 0
+    $wait = $pollSeconds
     while ($status -ine 'Succeeded') {
-        if ($status -ieq 'Failed') { throw ('scan ' + $scanId + ' ended with status Failed: ' + (ConvertTo-IQExtrasScalar -Value (Get-IQExtrasMember -Object $accepted -Name 'error'))) }
-        if ([datetime]::UtcNow -ge $deadline) { throw ('scan ' + $scanId + ' did not finish within ' + $timeoutMinutes + ' minute(s) (last status ' + $status + ')') }
-        Start-IQExtrasSleep -Seconds $pollSeconds
+        if ($status -ieq 'Failed') { throw ('scan ' + $scanId + ' ended with status Failed: ' + (ConvertTo-IQExtrasScalar -Value $scanError)) }
+        if ([datetime]::UtcNow -ge $deadline) { throw (New-Object System.TimeoutException(('scan ' + $scanId + ' did not finish within ' + $timeoutMinutes + ' minute(s) (last status ' + $status + ')'))) }
+        if (Test-IQTimeBudget -Stage $Stage -Item $Item) { throw (New-Object System.OperationCanceledException(('time budget reached while polling scan ' + $scanId + ' (last status ' + $status + '); the batch is scanned again on the next start'))) }
+        Start-IQExtrasSleep -Seconds $wait
         $polls++
-        $accepted = Invoke-IQApi -Method GET -Path ('admin/workspaces/scanStatus/' + $scanId) -NoPaging -Stage $Stage
-        if ($null -eq $accepted) { throw ('GET admin/workspaces/scanStatus/' + $scanId + ' returned no response') }
-        $status = [string](Get-IQExtrasMember -Object $accepted -Name 'status')
+        $poll = Get-IQAdminScanStatus -ScanId $scanId -Stage $Stage
+        $status = [string]$poll.Status
+        $scanError = $poll.Error
+        $wait = $pollSeconds
+        if ($null -ne $poll.RetryAfter -and [int]$poll.RetryAfter -gt $wait) { $wait = [math]::Min(300, [int]$poll.RetryAfter) }
         if ($polls -gt 100000) { throw 'scanStatus polling guard hit' }
     }
-    $scanResult = Invoke-IQApi -Method GET -Path ('admin/workspaces/scanResult/' + $scanId) -NoPaging -TimeoutSec 600 -Stage $Stage
-    if ($null -eq $scanResult) { throw ('GET admin/workspaces/scanResult/' + $scanId + ' returned no response') }
+    $rawResult = Invoke-IQApi -Method GET -Path ('admin/workspaces/scanResult/' + $scanId) -NoPaging -Raw -TimeoutSec 600 -Stage $Stage
+    if ($null -eq $rawResult -or [string]::IsNullOrWhiteSpace([string]$rawResult)) { throw ('GET admin/workspaces/scanResult/' + $scanId + ' returned no response') }
+    $scanResult = ConvertFrom-Json -InputObject ([string]$rawResult)
+    if ($null -eq $scanResult) { throw ('GET admin/workspaces/scanResult/' + $scanId + ' returned an empty body') }
+    if (-not [string]::IsNullOrWhiteSpace($OutPath)) { Write-IQExtrasRawFile -Text ([string]$rawResult) -Path $OutPath }
     Write-IQLog -Level Debug -Stage $Stage -Item $Item -Message ("scan {0}: {1} workspace id(s), {2} poll(s)" -f $scanId, $Ids.Count, $polls)
     return $scanResult
 }
@@ -979,15 +1126,19 @@ function Get-IQAdminScanInventory {
     .SYNOPSIS
     Collector admin-scan: Scanner API over the tenant's (or the scope's) workspaces in batches of 100, results cached per batch under extracts\admin, flattened into the Scan* sheets.
     .DESCRIPTION
-    A batch whose scan-<n>-<hash>.json already exists (non-empty) is reused, so a re-run only scans the batches that
-    are missing. Returns @{ Success; Message; Outputs; WorkspaceCount; BatchCount; BatchesReused; BatchesFailed;
-    RowCounts }. Success is $false when any batch failed (the item is re-tried on the next run, reusing the cached
-    batches) or when the workspace list could not be read.
+    A batch whose scan-<n>-<hash>.json already exists (non-empty) is reused - the ids are sorted before slicing so a
+    retry produces the same batches, and a cached scan-*-<hash>.json is matched by its hash even when the batch
+    number moved because a workspace appeared or disappeared - so a re-run only scans the batches that are missing.
+    Returns @{ Success; Message; Outputs; WorkspaceCount; BatchCount; BatchesReused; BatchesFailed; RowCounts; Paused }.
+    Success is $false when any batch failed (the item is re-tried on the next run, reusing the cached batches) or
+    when the workspace list could not be read; a batch that timed out stops the remaining submissions for this run
+    (a throttled tenant must not cascade into a series of 30-minute failures). Paused = $true (Success = $false, no
+    sheets) when Test-IQTimeBudget stopped the loop: the caller must not checkpoint the item.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][string]$Stage = 'Extras')
     $collector = 'admin-scan'
-    $result = @{ Success = $false; Message = ''; Outputs = @(); WorkspaceCount = 0; BatchCount = 0; BatchesReused = 0; BatchesFailed = 0; RowCounts = @{} }
+    $result = @{ Success = $false; Message = ''; Outputs = @(); WorkspaceCount = 0; BatchCount = 0; BatchesReused = 0; BatchesFailed = 0; RowCounts = @{}; Paused = $false }
     $folder = Get-IQExtrasFolder -Name 'admin'
     $ids = @()
     try { $ids = @(Get-IQAdminScanWorkspaceId -Stage $Stage) }
@@ -995,16 +1146,27 @@ function Get-IQAdminScanInventory {
         $result.Message = 'Scanner API workspace list failed: ' + $_.Exception.Message
         return $result
     }
+    # Deterministic batches (the id list is already sorted; kept here so the cache stays valid whatever the source order).
+    $sortedIds = [string[]]@($ids | ForEach-Object { [string]$_ })
+    [Array]::Sort($sortedIds, [System.StringComparer]::OrdinalIgnoreCase)
+    $ids = @($sortedIds)
     $result.WorkspaceCount = $ids.Count
     $batchSize = [int](Get-IQExtrasOption -Name 'AdminScanBatchSize' -Default 100)
     if ($batchSize -lt 1 -or $batchSize -gt 100) { $batchSize = 100 }
+    # Cached batch files of this run, by hash (scan-<n>-<hash8>.json): the index in the name is informational.
+    $cachedByHash = @{}
+    foreach ($f in @(Get-ChildItem -LiteralPath $folder -Filter 'scan-*.json' -File -ErrorAction SilentlyContinue)) {
+        if ($f.Name -match '^scan-\d+-([0-9a-f]{8})\.json$' -and $f.Length -gt 0 -and -not $cachedByHash.ContainsKey($Matches[1])) { $cachedByHash[$Matches[1]] = $f.FullName }
+    }
     $batches = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt $ids.Count; $i += $batchSize) {
         $end = [math]::Min($ids.Count, $i + $batchSize) - 1
         $slice = @($ids[$i..$end])
         $index = $batches.Count + 1
         $hash = Get-IQAdminScanBatchHash -Ids $slice
-        $batches.Add([ordered]@{ Index = $index; Ids = $slice; Hash = $hash; File = (Join-Path $folder ('scan-' + $index.ToString('000') + '-' + $hash + '.json')) })
+        $file = Join-Path $folder ('scan-' + $index.ToString('000') + '-' + $hash + '.json')
+        if (-not (Test-IQExtrasFileHasContent -Path $file) -and $cachedByHash.ContainsKey($hash)) { $file = $cachedByHash[$hash] }
+        $batches.Add([ordered]@{ Index = $index; Ids = $slice; Hash = $hash; File = $file })
     }
     $layoutPath = Join-Path $folder 'scan-workspaces.json'
     ConvertTo-IQJsonFile -Object ([ordered]@{ CollectedUtc = [datetime]::UtcNow.ToString('o'); WorkspaceCount = $ids.Count; BatchSize = $batchSize; Batches = @($batches | ForEach-Object { [ordered]@{ Index = $_.Index; Hash = $_.Hash; File = $_.File; WorkspaceIds = $_.Ids } }) }) -Path $layoutPath
@@ -1014,6 +1176,8 @@ function Get-IQAdminScanInventory {
     $scanResults = New-Object System.Collections.Generic.List[object]
     $failedBatches = @()
     $batchFiles = @()
+    $stopReason = ''
+    $pending = 0
     foreach ($b in $batches) {
         $item = ('admin-scan batch ' + $b.Index + '/' + $batches.Count)
         if (Test-IQExtrasFileHasContent -Path $b.File) {
@@ -1029,17 +1193,34 @@ function Get-IQAdminScanInventory {
             }
             catch { Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ('Cached scan result unreadable, scanning again: ' + $_.Exception.Message) }
         }
+        if ($stopReason -ne '') { $pending++; continue }
+        # Budget check before every submission: the finished batches are on disk, so stopping here loses nothing.
+        if (Test-IQTimeBudget -Stage $Stage -Item $item) {
+            $result.Paused = $true
+            $result.Message = ('Time budget reached before batch {0} of {1}; {2} batch(es) cached - the scan continues on the next start' -f $b.Index, $batches.Count, $scanResults.Count)
+            Write-IQLog -Level Warn -Stage $Stage -Item $collector -Message $result.Message
+            return $result
+        }
         try {
-            $scan = Invoke-IQAdminScanBatch -Ids $b.Ids -Stage $Stage -Item $item
-            ConvertTo-IQJsonFile -Object $scan -Path $b.File
+            $scan = Invoke-IQAdminScanBatch -Ids $b.Ids -Stage $Stage -Item $item -OutPath $b.File
             $scanResults.Add($scan)
             $batchFiles += $b.File
             Write-IQLog -Level Info -Stage $Stage -Item $item -Message ("Scanned {0} workspace(s)" -f $b.Ids.Count)
         }
         catch {
+            if ($_.Exception -is [System.OperationCanceledException]) {
+                $result.Paused = $true
+                $result.Message = ('Time budget reached during batch {0} of {1}: {2}' -f $b.Index, $batches.Count, $_.Exception.Message)
+                Write-IQLog -Level Warn -Stage $Stage -Item $collector -Message $result.Message
+                return $result
+            }
             $failedBatches += $b.Index
             $result.BatchesFailed++
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ('Scan batch failed: ' + $_.Exception.Message)
+            if ($_.Exception -is [System.TimeoutException]) {
+                $stopReason = ('batch {0} timed out ({1}); the remaining batches are not submitted in this run and are scanned on the next start' -f $b.Index, $_.Exception.Message)
+                Write-IQLog -Level Warn -Stage $Stage -Item $collector -Message $stopReason
+            }
         }
     }
 
@@ -1054,6 +1235,7 @@ function Get-IQAdminScanInventory {
     $summary = ('{0} workspace(s) in {1} batch(es) ({2} reused): {3} datasets, {4} tables, {5} columns, {6} measures, {7} datasources, {8} reports, {9} dashboards, {10} dataflows, {11} user rows' -f $ids.Count, $batches.Count, $result.BatchesReused, $result.RowCounts['ScanDatasets'], $result.RowCounts['ScanTables'], $result.RowCounts['ScanColumns'], $result.RowCounts['ScanMeasures'], $result.RowCounts['ScanDatasources'], $result.RowCounts['ScanReports'], $result.RowCounts['ScanDashboards'], $result.RowCounts['ScanDataflows'], $result.RowCounts['ScanUsers'])
     if ($failedBatches.Count -gt 0) {
         $result.Message = ('{0} of {1} scan batch(es) failed (batch {2}); partial sheets written from the other batches. ' -f $failedBatches.Count, $batches.Count, ($failedBatches -join ', ')) + $summary
+        if ($pending -gt 0) { $result.Message = ('{0} batch(es) not submitted after a timeout; ' -f $pending) + $result.Message }
         return $result
     }
     $result.Success = $true
@@ -1070,7 +1252,9 @@ function Get-IQAdminActivityDay {
     .SYNOPSIS
     Reads every activity event of one UTC day (GET admin/activityevents with continuationUri paging) and saves extracts\admin\activity-<day>.json (private).
     .DESCRIPTION
-    Returns @{ Success; Message; Path; EventCount; Pages; Partial }. Never throws for API failures.
+    Returns @{ Success; Message; Path; EventCount; Pages; Partial }. Never throws for API failures. A continuation
+    page that returns nothing (HTTP 400/403/404, e.g. an expired continuation token) fails the day - a truncated day
+    must not be checkpointed Succeeded, it is re-read on the next start.
     #>
     [CmdletBinding()]
     param(
@@ -1081,7 +1265,7 @@ function Get-IQAdminActivityDay {
     $item = 'admin-activity-' + $dayText
     $folder = Get-IQExtrasFolder -Name 'admin'
     $path = Join-Path $folder ('activity-' + $dayText + '.json')
-    $partial = ($dayText -eq [datetime]::UtcNow.ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture))
+    $partial = ($dayText -eq (Get-IQExtrasNowUtc).ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture))
     $result = @{ Success = $false; Message = ''; Path = $path; EventCount = 0; Pages = 0; Partial = $partial }
     $start = "'" + $dayText + "T00:00:00.000Z'"
     $end = "'" + $dayText + "T23:59:59.999Z'"
@@ -1102,8 +1286,8 @@ function Get-IQAdminActivityDay {
             if ($pages -ge 10000) { Write-IQLog -Level Warn -Stage $Stage -Item $item -Message 'activityevents paging guard hit (10000 pages)'; break }
             $response = Invoke-IQApi -Method GET -Path $next -NoPaging -Stage $Stage
             if ($null -eq $response) {
-                Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("activityevents continuation returned nothing after page {0}; keeping {1} event(s)" -f $pages, $events.Count)
-                break
+                $result.Message = ('activityevents continuation page {0} returned no response (HTTP 400/403/404 - see the Warn line above) after {1} event(s); the day is re-read on the next start' -f ($pages + 1), $events.Count)
+                return $result
             }
         }
     }
@@ -1145,8 +1329,12 @@ function Save-IQActivitySheet {
     param([Parameter(Mandatory = $false)][string]$Stage = 'Extras')
     $collector = 'admin-activity'
     $folder = Get-IQExtrasFolder -Name 'admin'
-    $maxRows = [int](Get-IQExtrasOption -Name 'ActivityMaxRows' -Default 250000)
-    if ($maxRows -lt 1) { $maxRows = 250000 }
+    # Windows PowerShell 5.1 serialises a sheet of this size an order of magnitude slower than PowerShell 7 (the
+    # per-day JSON files keep every event either way), so the default cap is lower there.
+    $defaultMax = 250000
+    if ($PSVersionTable.PSVersion.Major -lt 6) { $defaultMax = 100000 }
+    $maxRows = [int](Get-IQExtrasOption -Name 'ActivityMaxRows' -Default $defaultMax)
+    if ($maxRows -lt 1) { $maxRows = $defaultMax }
     $rows = New-Object System.Collections.Generic.List[object]
     $days = 0
     $truncated = $false
@@ -1178,7 +1366,12 @@ function Save-IQActivitySheet {
 function Get-IQAdminActivityDayList {
     <#
     .SYNOPSIS
-    The UTC days to collect: the last -ActivityDays days ending today, clamped to Options.ActivityMaxDays (28, the API window) (private).
+    The UTC days to collect: the last -ActivityDays days ending on the run's start date, clamped to Options.ActivityMaxDays (28, the API window) (private).
+    .DESCRIPTION
+    The window ends on the day the run started (manifest startedUtc when this is a resumed run, else the run clock -
+    Options.NowUtc in tests), so a run resumed days later collects the same days it checkpointed. The entry point's
+    default -ActivityDays 30 is above the API window by design (collect everything available): that clamp is logged
+    at Info; an explicit larger value is logged at Warn.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false)][string]$Stage = 'Extras')
@@ -1187,10 +1380,25 @@ function Get-IQAdminActivityDayList {
     if ($maxDays -lt 1) { $maxDays = 28 }
     if ($days -lt 1) { $days = 1 }
     if ($days -gt $maxDays) {
-        Write-IQLog -Level Warn -Stage $Stage -Item 'admin-activity' -Message ("-ActivityDays {0} exceeds the activity log window; collecting the last {1} day(s)" -f $days, $maxDays)
+        $level = 'Warn'
+        if ($days -eq 30) { $level = 'Info' }
+        Write-IQLog -Level $level -Stage $Stage -Item 'admin-activity' -Message ("-ActivityDays {0} exceeds the activity log window; collecting the last {1} day(s)" -f $days, $maxDays)
         $days = $maxDays
     }
-    $today = [datetime]::UtcNow.Date
+    $today = (Get-IQExtrasNowUtc).Date
+    if ($script:IQ -and $script:IQ.ContainsKey('IsResume') -and [bool]$script:IQ['IsResume'] -and $null -ne $script:IQ.Manifest) {
+        $startedText = [string](Get-IQExtrasMember -Object $script:IQ.Manifest -Name 'startedUtc')
+        if (-not [string]::IsNullOrWhiteSpace($startedText)) {
+            try {
+                $started = [datetime]::Parse($startedText, [System.Globalization.CultureInfo]::InvariantCulture, ([System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal))
+                if ($started.Date -lt $today) {
+                    Write-IQLog -Level Debug -Stage $Stage -Item 'admin-activity' -Message ('Resumed run: the activity window ends on the run start date ' + $started.ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture))
+                    $today = $started.Date
+                }
+            }
+            catch { Write-IQLog -Level Debug -Stage $Stage -Item 'admin-activity' -Message ('manifest startedUtc not parseable (' + $startedText + '); using the clock') }
+        }
+    }
     $list = @()
     for ($i = $days - 1; $i -ge 0; $i--) { $list += $today.AddDays(-$i) }
     return $list
@@ -1359,7 +1567,7 @@ function Invoke-IQUsageCollector {
 function Invoke-IQExtrasCollector {
     <#
     .SYNOPSIS
-    Runs one single-checkpoint collector (admin-groups / admin-scan): skip when done, run, checkpoint Succeeded/Failed (private).
+    Runs one single-checkpoint collector (admin-groups / admin-scan): skip when done, run, checkpoint Succeeded/Failed; a body that reports Paused (time budget) is not checkpointed (private).
     #>
     [CmdletBinding()]
     param(
@@ -1390,9 +1598,18 @@ function Invoke-IQExtrasCollector {
         $result = @{ Success = $false; Message = ('Unexpected error: ' + $_.Exception.Message); Outputs = @() }
         Write-IQLog -Level Debug -Stage $Stage -Item $Item -Message $_.Exception.ToString()
     }
+    if ($null -eq $result -or -not ($result -is [System.Collections.IDictionary])) {
+        $result = @{ Success = $false; Message = 'Collector returned no result'; Outputs = @() }
+    }
+    if ($result.Contains('Paused') -and [bool]$result['Paused']) {
+        # The budget stopped the collector mid-way: its cached files stay, no checkpoint is written, and Invoke-IQStage
+        # marks the stage Paused (Test-IQTimeBudget set BudgetExceeded) so the next start resumes it.
+        Write-IQLog -Level Warn -Stage $Stage -Item $Item -Message ('Time budget reached - ' + [string]$result.Message)
+        return 'Paused'
+    }
     $data = @{}
     foreach ($k in @($result.Keys)) {
-        if ($k -in @('Success', 'Message', 'Outputs')) { continue }
+        if ($k -in @('Success', 'Message', 'Outputs', 'Paused')) { continue }
         $data[$k] = $result[$k]
     }
     if (-not $result.Success) {
@@ -1410,8 +1627,10 @@ function Invoke-IQExtrasStage {
     Extras stage body: optional admin-API collectors (-IncludeAdminApis) and per-workspace usage metrics (-IncludeUsageMetrics), each an item checkpoint.
     .DESCRIPTION
     -IncludeAdminApis: probe admin/capacities; when the user is a Fabric administrator run admin-groups, admin-scan and
-    one admin-activity-<day> item per UTC day of the last -ActivityDays days (max 28); otherwise record the two admin
-    items as Skipped with the reason. -IncludeUsageMetrics: usage-<workspaceId> per real workspace in scope. Sheet
+    one admin-activity-<day> item per UTC day of the last -ActivityDays days (max 28); when the probe says "not an
+    administrator" (401/403/404) record the two admin items as Skipped with the reason; when the probe failed for a
+    transient reason (5xx, network, token) record them as Failed so the stage ends CompletedWithErrors and the next
+    start retries them. -IncludeUsageMetrics: usage-<workspaceId> per real workspace in scope. Sheet
     files are rebuilt from the raw extracts on every run so Assemble always sees the complete data. Returns
     @{ AdminRequested; AdminAvailable; UsageRequested; Items = @{ <itemKey> = <status> }; Usage = <usage summary>;
     Outputs }.
@@ -1432,11 +1651,16 @@ function Invoke-IQExtrasStage {
         $summary.AdminAvailable = [bool]$probe.IsAdmin
         if (-not $probe.IsAdmin) {
             Write-IQLog -Level Warn -Stage $stage -Message $probe.Message
+            $probeStatus = 'Skipped'
+            if ([bool](Get-IQExtrasMember -Object $probe -Name 'Transient')) { $probeStatus = 'Failed' }
             foreach ($pair in @(@('admin-groups', 'Admin workspaces (admin/groups)'), @('admin-scan', 'Scanner API (admin/workspaces)'))) {
-                if (-not (Test-IQItemDone -Stage $stage -ItemKey $pair[0])) {
-                    Set-IQItemDone -Stage $stage -ItemKey $pair[0] -Item $pair[1] -Status Skipped -Method 'AdminApi' -Message $probe.Message | Out-Null
+                if (Test-IQItemDone -Stage $stage -ItemKey $pair[0]) {
+                    $previousStatus = [string](Get-IQExtrasMember -Object (Get-IQItemCheckpoint -Stage $stage -ItemKey $pair[0]) -Name 'status')
+                    if ($previousStatus -eq 'Succeeded') { $summary.Items[$pair[0]] = 'AlreadyDone'; continue }
+                    if ($probeStatus -eq 'Skipped') { $summary.Items[$pair[0]] = 'Skipped'; continue }
                 }
-                $summary.Items[$pair[0]] = 'Skipped'
+                Set-IQItemDone -Stage $stage -ItemKey $pair[0] -Item $pair[1] -Status $probeStatus -Method 'AdminApi' -Message $probe.Message | Out-Null
+                $summary.Items[$pair[0]] = $probeStatus
             }
         }
         else {
@@ -1480,7 +1704,14 @@ function Invoke-IQExtrasStage {
                     $summary.Items[$key] = 'Failed'
                 }
             }
-            $summary.Outputs += Save-IQActivitySheet -Stage $stage
+            if ($script:IQ.ContainsKey('BudgetExceeded') -and [bool]$script:IQ['BudgetExceeded']) {
+                # Rebuilding a sheet of up to ActivityMaxRows rows does not fit in the 2-minute shutdown grace; the day
+                # files are complete and the sheet is rebuilt when the run resumes.
+                Write-IQLog -Level Warn -Stage $stage -Item 'admin-activity' -Message 'Time budget reached - the ActivityEvents sheet is rebuilt from the day files on the next start.'
+            }
+            else {
+                $summary.Outputs += Save-IQActivitySheet -Stage $stage
+            }
             $level = 'Info'
             if ($activityFailed -gt 0) { $level = 'Warn' }
             Write-IQLog -Level $level -Stage $stage -Item 'admin-activity' -Message ("Activity events: {0} day(s) collected, {1} failed, {2} already done of {3}" -f $activityDone, $activityFailed, $activitySkipped, $days.Count)

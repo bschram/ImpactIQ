@@ -10,11 +10,16 @@
 #
 # Steps, in order:
 #   1. checkout (self)
-#   2. restore State\ (runs + encrypted token cache) from the latest run of THIS pipeline   [restoreState]
+#   2. restore State\ (runs + encrypted token cache + the backup folders of unfinished runs) from the latest run of
+#      THIS pipeline and move those backup folders back next to State                          [restoreState]
 #   3. install PowerShell modules (ImportExcel by default)
 #   4. run ImpactIQ.ps1 headless; exit code 2 (item failures) and 3 (paused: time budget reached, resumed by the
 #      next run) -> SucceededWithIssues, 1 -> Failed
-#   5. stage artifacts (always) and upload a run summary to the pipeline UI
+#   5. stage artifacts (always) and upload a run summary to the pipeline UI. impactiq-state keeps only the runs
+#      updated in the last stateRetentionDays days (the newest run is always kept) and carries
+#      Model/Report/Dataflow Backups\<RunId> for every run that is still resumable (manifest status <> Completed):
+#      the checkpoints point at those files, so without them a resumed run on a fresh hosted VM re-exports every
+#      item (never converging) and Assemble builds empty Model/Report Detail workbooks.
 #   6. publish impactiq-state / impactiq-outputs / impactiq-logs (always) and impactiq-backups [publishBackups]
 #   7. optionally commit the workbooks to an outputs branch (Azure Repos -> Power BI via Web.Contents + PAT)
 #   8. optionally copy the workbooks to a OneDrive/SharePoint sync folder (self-hosted agents only)
@@ -71,6 +76,9 @@ parameters:
   - name: timeBudgetMinutes
     type: number
     default: 0
+  - name: stateRetentionDays
+    type: number
+    default: 7
 
 steps:
   - checkout: self
@@ -93,6 +101,43 @@ steps:
           allowFailedBuilds: true
           artifactName: ${{ parameters.stateArtifact }}
           targetPath: ${{ parameters.baseFolder }}/State
+
+      - task: PowerShell@2
+        displayName: Restore run backups next to State
+        inputs:
+          pwsh: ${{ parameters.usePwsh }}
+          targetType: inline
+          errorActionPreference: continue
+          failOnStderr: false
+          script: |
+            # impactiq-state carries backups\<Kind>\<RunId>\ for every run that was still resumable when it was published
+            # (see "Stage artifacts"). Merge them into <BaseFolder>\<Kind>\<RunId>\: the checkpoints in State\runs record
+            # those files as their outputs and Test-IQItemDone rejects a checkpoint whose output is missing, so without
+            # this step a resumed run on a fresh hosted VM exports every item again and Assemble reads empty folders.
+            # (Hosted agents check out to the same path every run - D:\a\1\s - so the absolute paths still match.)
+            $ErrorActionPreference = 'Continue'
+            $base = $env:IMPACTIQ_P_BASEFOLDER
+            $restored = Join-Path (Join-Path $base 'State') 'backups'
+            if (-not (Test-Path -LiteralPath $restored)) { Write-Host 'No backup folders in the restored state (no unfinished run to resume).'; exit 0 }
+            $files = 0
+            foreach ($kindDir in @(Get-ChildItem -LiteralPath $restored -Directory)) {
+              foreach ($runDir in @(Get-ChildItem -LiteralPath $kindDir.FullName -Directory)) {
+                $dest = Join-Path (Join-Path $base $kindDir.Name) $runDir.Name
+                foreach ($f in @(Get-ChildItem -LiteralPath $runDir.FullName -Recurse -File)) {
+                  $rel = $f.FullName.Substring($runDir.FullName.Length).TrimStart('\', '/')
+                  $target = Join-Path $dest $rel
+                  $targetDir = Split-Path -Parent $target
+                  if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Force -Path $targetDir | Out-Null }
+                  Copy-Item -LiteralPath $f.FullName -Destination $target -Force
+                  $files++
+                }
+                Write-Host "Restored $($kindDir.Name)\$($runDir.Name)"
+              }
+            }
+            Remove-Item -LiteralPath $restored -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Restored $files backup file(s) next to State for -Resume Auto."
+        env:
+          IMPACTIQ_P_BASEFOLDER: ${{ parameters.baseFolder }}
 
   - task: PowerShell@2
     displayName: Install PowerShell modules
@@ -135,6 +180,14 @@ steps:
       ignoreLASTEXITCODE: true
       script: |
         $ErrorActionPreference = 'Continue'
+        # Azure Pipelines leaves an undefined macro as the literal text "$(<name>)" - it is NOT an empty string. Drop such
+        # IMPACTIQ_* values here so ImpactIQ (a child process that inherits this environment) sees them as "not set"
+        # instead of, for example, signing in against tenant "$(<name>)" or AES-encrypting the token cache with that text.
+        $unexpanded = @()
+        foreach ($v in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'IMPACTIQ_*' })) {
+          if ([string]$v.Value -match '^\$\([A-Za-z0-9_.]+\)$') { [Environment]::SetEnvironmentVariable($v.Name, $null, 'Process'); $unexpanded += $v.Name }
+        }
+        if ($unexpanded.Count -gt 0) { Write-Host "Pipeline variables not defined (ignored): $($unexpanded -join ', ')" }
         $base = $env:IMPACTIQ_P_BASEFOLDER
         $entry = Join-Path $base 'ImpactIQ.ps1'
         if (-not (Test-Path -LiteralPath $entry)) {
@@ -212,8 +265,9 @@ steps:
       IMPACTIQ_P_SKIPTOOLUPDATE: ${{ parameters.skipToolUpdate }}
       IMPACTIQ_P_USEPWSH: ${{ parameters.usePwsh }}
       IMPACTIQ_ENVIRONMENT: ${{ parameters.environment }}
-      # Secret pipeline variables / variable-group secrets. Undefined ones arrive as empty strings, which ImpactIQ
-      # treats as "not set". Define only the ones your authMode needs (docs/Auth-Options.md).
+      # Secret pipeline variables / variable-group secrets. Define only the ones your authMode needs
+      # (docs/Auth-Options.md): an undefined one arrives as the literal text "$(<name>)" (Azure Pipelines macro
+      # syntax is not replaced by an empty string) and is dropped by the script above before ImpactIQ reads it.
       IMPACTIQ_USERNAME: $(IMPACTIQ_USERNAME)
       IMPACTIQ_PASSWORD: $(IMPACTIQ_PASSWORD)
       IMPACTIQ_TOKEN_CACHE_KEY: $(IMPACTIQ_TOKEN_CACHE_KEY)
@@ -233,24 +287,99 @@ steps:
       failOnStderr: false
       script: |
         $ErrorActionPreference = 'Continue'
+        # Azure Pipelines leaves an undefined macro as the literal text "$(<name>)" - it is NOT an empty string. Drop such
+        # IMPACTIQ_* values here so ImpactIQ (a child process that inherits this environment) sees them as "not set"
+        # instead of, for example, signing in against tenant "$(<name>)" or AES-encrypting the token cache with that text.
+        $unexpanded = @()
+        foreach ($v in @(Get-ChildItem Env: | Where-Object { $_.Name -like 'IMPACTIQ_*' })) {
+          if ([string]$v.Value -match '^\$\([A-Za-z0-9_.]+\)$') { [Environment]::SetEnvironmentVariable($v.Name, $null, 'Process'); $unexpanded += $v.Name }
+        }
+        if ($unexpanded.Count -gt 0) { Write-Host "Pipeline variables not defined (ignored): $($unexpanded -join ', ')" }
         $base = $env:IMPACTIQ_P_BASEFOLDER
         $staging = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'impactiq'
         foreach ($n in @('state', 'outputs', 'backups', 'logs')) { New-Item -ItemType Directory -Force -Path (Join-Path $staging $n) | Out-Null }
+        $stagedState = Join-Path $staging 'state'
 
-        # --- state: State\runs (manifests, checkpoints, extracts, tool logs) + State\auth only when an AES key is set
-        $runs = Join-Path $base 'State\runs'
-        if (Test-Path -LiteralPath $runs) { Copy-Item -LiteralPath $runs -Destination (Join-Path $staging 'state\runs') -Recurse -Force }
+        # --- state: State\runs (manifests, checkpoints, extracts, tool logs) limited to the runs updated within
+        #     stateRetentionDays (0 = keep all; the newest run is always kept, so the artifact stops growing without
+        #     bound), the backup folders of every run that is still resumable (manifest status <> Completed - see the
+        #     header), and State\auth only when an AES key is set.
+        $retentionDays = 7
+        if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_P_STATERETENTIONDAYS)) { $retentionDays = [int]$env:IMPACTIQ_P_STATERETENTIONDAYS }
+        $runs = Join-Path (Join-Path $base 'State') 'runs'
+        $stagedRuns = Join-Path $stagedState 'runs'
+        $stagedBackups = Join-Path $stagedState 'backups'
+        $newest = $null
+        function Get-RunManifestInfo([string]$Folder) {
+          # @{ Status; UpdatedUtc } from <run>\manifest.json, $null when missing or unreadable. Windows PowerShell 5.1
+          # ConvertFrom-Json already turns ISO-8601 strings into [datetime] (PowerShell 7 keeps the string): accept both.
+          $p = Join-Path $Folder 'manifest.json'
+          if (-not (Test-Path -LiteralPath $p)) { return $null }
+          try {
+            $m = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json
+            $stamp = $null
+            foreach ($field in @('updatedUtc', 'startedUtc')) {
+              $v = $m.$field
+              if ($null -eq $v -or [string]::IsNullOrWhiteSpace([string]$v)) { continue }
+              if ($v -is [datetime]) { $stamp = $v.ToUniversalTime() }
+              else { $stamp = [datetime]::Parse([string]$v, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal) }
+              break
+            }
+            return @{ Status = [string]$m.status; UpdatedUtc = $stamp }
+          } catch { Write-Host "##vso[task.logissue type=warning]manifest.json in $Folder is unreadable: $($_.Exception.Message)"; return $null }
+        }
+        if (Test-Path -LiteralPath $runs) {
+          New-Item -ItemType Directory -Force -Path $stagedRuns | Out-Null
+          $now = (Get-Date).ToUniversalTime()
+          $runDirs = @(Get-ChildItem -LiteralPath $runs -Directory)
+          $info = @{}
+          foreach ($d in $runDirs) {
+            $mi = Get-RunManifestInfo -Folder $d.FullName
+            $stamp = $d.LastWriteTimeUtc
+            if ($null -ne $mi -and $null -ne $mi.UpdatedUtc) { $stamp = $mi.UpdatedUtc }
+            $info[$d.Name] = @{ Manifest = $mi; Stamp = $stamp }
+            if ($null -eq $newest -or $stamp -gt $info[$newest].Stamp) { $newest = $d.Name }
+          }
+          $kept = 0; $pruned = 0
+          foreach ($d in $runDirs) {
+            $i = $info[$d.Name]
+            if ($retentionDays -gt 0 -and $d.Name -ne $newest -and $i.Stamp -lt $now.AddDays(-$retentionDays)) {
+              Write-Host ("Run '{0}' not re-published: last updated {1:u}, older than stateRetentionDays={2} (it stays in the artifacts of earlier runs)" -f $d.Name, $i.Stamp, $retentionDays)
+              $pruned++
+              continue
+            }
+            Copy-Item -LiteralPath $d.FullName -Destination (Join-Path $stagedRuns $d.Name) -Recurse -Force
+            $kept++
+            $status = ''
+            if ($null -ne $i.Manifest) { $status = $i.Manifest.Status }
+            if ($null -eq $i.Manifest -or $status -eq 'Completed') { continue }
+            # Resumable run: its checkpoints point at files in the backup folders. Ship them inside impactiq-state so
+            # the next run (restored by "Restore run backups next to State") skips the items already exported.
+            $backupFiles = 0
+            foreach ($kind in @('Model Backups', 'Report Backups', 'Dataflow Backups')) {
+              $src = Join-Path (Join-Path $base $kind) $d.Name
+              if (-not (Test-Path -LiteralPath $src)) { continue }
+              $kindDir = Join-Path $stagedBackups $kind
+              New-Item -ItemType Directory -Force -Path $kindDir | Out-Null
+              Copy-Item -LiteralPath $src -Destination (Join-Path $kindDir $d.Name) -Recurse -Force
+              $backupFiles += @(Get-ChildItem -LiteralPath $src -Recurse -File).Count
+            }
+            Write-Host "Run '$($d.Name)' (status $status) is resumable: $backupFiles backup file(s) travel in impactiq-state\backups"
+          }
+          foreach ($f in @(Get-ChildItem -LiteralPath $runs -File)) { Copy-Item -LiteralPath $f.FullName -Destination $stagedRuns -Force }
+          Write-Host "State\runs: $kept run(s) staged, $pruned older than $retentionDays day(s) not re-published"
+        }
         else { Write-Host 'No State\runs folder found (nothing ran?)' }
-        $auth = Join-Path $base 'State\auth'
+        $auth = Join-Path (Join-Path $base 'State') 'auth'
         if (Test-Path -LiteralPath $auth) {
           if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_TOKEN_CACHE_KEY)) {
-            Copy-Item -LiteralPath $auth -Destination (Join-Path $staging 'state\auth') -Recurse -Force
+            Copy-Item -LiteralPath $auth -Destination (Join-Path $stagedState 'auth') -Recurse -Force
             Write-Host 'Token cache included in impactiq-state (AES-256 encrypted with IMPACTIQ_TOKEN_CACHE_KEY).'
           } else {
             Write-Host 'Token cache NOT published: IMPACTIQ_TOKEN_CACHE_KEY is not set (a DPAPI cache only works on this machine/user anyway).'
           }
         }
-        Set-Content -LiteralPath (Join-Path $staging 'state\README.txt') -Value "ImpactIQ state published by $env:BUILD_BUILDNUMBER on $((Get-Date).ToUniversalTime().ToString('u')). Restored into <BaseFolder>\State by the next run for -Resume Auto."
+        Set-Content -LiteralPath (Join-Path $stagedState 'README.txt') -Value "ImpactIQ state published by $env:BUILD_BUILDNUMBER on $((Get-Date).ToUniversalTime().ToString('u')). Restored into <BaseFolder>\State by the next run for -Resume Auto; backups\<Kind>\<RunId> are moved next to State by the 'Restore run backups' step."
 
         # --- outputs: the four workbooks
         $missing = @()
@@ -277,10 +406,13 @@ steps:
         $logs = Join-Path $base 'Logs'
         if (Test-Path -LiteralPath $logs) { Copy-Item -Path (Join-Path $logs '*') -Destination (Join-Path $staging 'logs') -Recurse -Force }
 
-        # --- run summary for the pipeline UI (from the newest manifest)
+        # --- run summary for the pipeline UI (from the manifest updated last - the run that just ran or resumed)
         try {
           $manifest = $null
-          if (Test-Path -LiteralPath $runs) {
+          if ($null -ne $newest -and (Test-Path -LiteralPath (Join-Path (Join-Path $runs $newest) 'manifest.json'))) {
+            $manifest = Get-Item -LiteralPath (Join-Path (Join-Path $runs $newest) 'manifest.json')
+          }
+          elseif (Test-Path -LiteralPath $runs) {
             $manifest = Get-ChildItem -LiteralPath $runs -Filter 'manifest.json' -Recurse -File | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
           }
           $md = New-Object System.Text.StringBuilder
@@ -315,6 +447,7 @@ steps:
     env:
       IMPACTIQ_P_BASEFOLDER: ${{ parameters.baseFolder }}
       IMPACTIQ_P_PUBLISHBACKUPS: ${{ parameters.publishBackups }}
+      IMPACTIQ_P_STATERETENTIONDAYS: ${{ parameters.stateRetentionDays }}
       IMPACTIQ_TOKEN_CACHE_KEY: $(IMPACTIQ_TOKEN_CACHE_KEY)
 
   - task: PublishPipelineArtifact@1

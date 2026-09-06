@@ -1592,6 +1592,69 @@ function Get-IQReportDetailTxtName {
     return @('CustomVisuals.txt', 'ReportFilters.txt', 'PageFilters.txt', 'VisualFilters.txt', 'VisualObjects.txt', 'Visuals.txt', 'Bookmarks.txt', 'Pages.txt', 'Connections.txt', 'VisualInteractions.txt', 'ReportLevelMeasures.txt')
 }
 
+function Get-IQReportDetailStaleFileName {
+    <#
+    .SYNOPSIS
+    Every file the csx scripts write into the run folder and that must be gone before a (re-)run: the eleven TXT files plus ExtractErrors.txt and ReportObjects_UnusedObjects.txt (private).
+    .DESCRIPTION
+    Both csx scripts APPEND to ExtractErrors.txt and write its header only when the file is absent; the classic script
+    writes ReportObjects_UnusedObjects.txt (its savePrefix output). A retried extraction that starts with those files
+    still present re-appends every error below the stale ones, and Assemble turns every *.txt into a sheet, so the
+    ExtractErrors sheet would double-count (audit C8-08).
+    #>
+    [CmdletBinding()]
+    param()
+    return @(@(Get-IQReportDetailTxtName) + @('ExtractErrors.txt', 'ReportObjects_UnusedObjects.txt'))
+}
+
+function Get-IQReportDetailPbixSet {
+    <#
+    .SYNOPSIS
+    Sorted, lower-cased file names of every .pbix/.pbit in the run folder - the input set the csx scripts process (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$RunFolder)
+    if (-not (Test-Path -LiteralPath $RunFolder)) { return @() }
+    $names = @(Get-ChildItem -LiteralPath $RunFolder -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ieq '.pbix' -or $_.Extension -ieq '.pbit' } | ForEach-Object { $_.Name.ToLowerInvariant() })
+    return @($names | Sort-Object)
+}
+
+function Test-IQReportDetailCheckpointCurrent {
+    <#
+    .SYNOPSIS
+    Returns @{ Current; Reason }: Current is $true when the ReportDetail "all" checkpoint is valid AND covers exactly the PBIX/PBIT files now in the run folder (private).
+    .DESCRIPTION
+    Test-IQItemDone only proves the TXT outputs still exist. The checkpoint's data.PbixFiles (data.PbixCount for a
+    checkpoint written without that field) is compared with Get-IQReportDetailPbixSet: a report exported after the csx
+    scripts ran (a resumed ReportBackup whose retried exports succeeded, a file restored by hand) or a removed file makes
+    the checkpoint stale, so the extraction runs again instead of Report Detail.xlsx silently missing those reports.
+    Reason is 'no valid checkpoint' when Test-IQItemDone itself is false.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$RunFolder)
+    if (-not (Test-IQItemDone -Stage 'ReportDetail' -ItemKey 'all')) { return @{ Current = $false; Reason = 'no valid checkpoint' } }
+    $cp = $null
+    try { $cp = Get-IQItemCheckpoint -Stage 'ReportDetail' -ItemKey 'all' } catch { $cp = $null }
+    $data = Get-IQReportMember -Object $cp -Name 'data'
+    $current = @(Get-IQReportDetailPbixSet -RunFolder $RunFolder)
+    $recordedList = Get-IQReportMember -Object $data -Name 'PbixFiles'
+    if ($null -eq $recordedList) {
+        # Older checkpoint (or an empty list, which PowerShell returns as $null): fall back to the count.
+        $count = Get-IQReportMember -Object $data -Name 'PbixCount'
+        if ($null -eq $count) { return @{ Current = $false; Reason = 'the checkpoint does not record which PBIX/PBIT files were processed' } }
+        if ([int]$count -ne $current.Count) { return @{ Current = $false; Reason = ('{0} PBIX/PBIT file(s) were processed, {1} are in the run folder now' -f [int]$count, $current.Count) } }
+        return @{ Current = $true; Reason = '' }
+    }
+    $recorded = @(@($recordedList) | Where-Object { $null -ne $_ } | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object)
+    $added = @($current | Where-Object { $recorded -notcontains $_ })
+    $removed = @($recorded | Where-Object { $current -notcontains $_ })
+    if ($added.Count -eq 0 -and $removed.Count -eq 0) { return @{ Current = $true; Reason = '' } }
+    $parts = @()
+    if ($added.Count -gt 0) { $parts += ('{0} new: {1}' -f $added.Count, (@($added | Select-Object -First 5) -join ', ')) }
+    if ($removed.Count -gt 0) { $parts += ('{0} removed: {1}' -f $removed.Count, (@($removed | Select-Object -First 5) -join ', ')) }
+    return @{ Current = $false; Reason = ('the PBIX/PBIT set changed since the extraction (' + ($parts -join '; ') + ')') }
+}
+
 function Remove-IQReportDetailSubfolder {
     <#
     .SYNOPSIS
@@ -1709,11 +1772,15 @@ function Invoke-IQReportDetailStage {
     Port of monolith lines 3046-3135. "Report Detail Extract Script-PBIR.csx" (unzips every .pbix/.pbit in the newest dated
     folder under <CWD>\Report Backups and writes the eleven tab-separated TXT files with headers) runs first, then
     "Report Detail Extract Script.csx" (appends the classic-Layout rows), both through Invoke-IQTabularEditor with
-    WorkingDirectory = BaseFolder and a timeout of ToolTimeoutMinutes * 3. When the run folder is not the newest dated
-    folder a scratch working directory with a junction makes it so. Stale TXT files and leftover unzip folders are removed
-    before the run (audit C8-08/X4-13); the classic script only runs after the PBIR script succeeded; leftover VOL
-    sub-folders are deleted afterwards. Failure -> checkpoint Failed (stage CompletedWithErrors); Assemble still builds
-    the workbook from whatever *.txt exist. Returns @{ Status; PbixCount; TxtFiles; Message }.
+    WorkingDirectory = BaseFolder and a timeout of ToolTimeoutMinutes * 3. IMPACTIQ_DATE_FOLDER tells both scripts which
+    folder to process; when the run folder is not the newest dated folder a scratch working directory with a junction
+    additionally makes it so (best-effort: without a link the scripts still run from BaseFolder). The "all" checkpoint
+    records the PBIX/PBIT names it processed and is treated as stale when the folder's set differs
+    (Test-IQReportDetailCheckpointCurrent). Stale TXT files (incl. ExtractErrors.txt / ReportObjects_UnusedObjects.txt)
+    and leftover unzip folders are removed before the run (audit C8-08/X4-13); the classic script only runs after the
+    PBIR script succeeded; leftover VOL sub-folders are deleted afterwards. Failure -> checkpoint Failed (stage
+    CompletedWithErrors); Assemble still builds the workbook from whatever *.txt exist. Returns @{ Status; PbixCount;
+    TxtFiles; Message }.
     #>
     [CmdletBinding()]
     param()
@@ -1721,10 +1788,16 @@ function Invoke-IQReportDetailStage {
     $key = 'all'
     $runFolder = Get-IQReportRunFolder
     $summary = @{ Status = 'Pending'; PbixCount = 0; TxtFiles = @(); Message = '' }
-    if (Test-IQItemDone -Stage $stage -ItemKey $key) {
-        Write-IQLog -Level Info -Stage $stage -Message 'Report detail already extracted (checkpoint); skipping'
+    # The single "all" checkpoint is only honoured when it covers exactly the PBIX/PBIT files in the folder now: a report
+    # exported after the csx scripts ran (retried export on a resumed run) makes it stale (R-01).
+    $freshness = Test-IQReportDetailCheckpointCurrent -RunFolder $runFolder
+    if ($freshness.Current) {
+        Write-IQLog -Level Info -Stage $stage -Message 'Report detail already extracted (checkpoint covers every PBIX/PBIT file in the run folder); skipping'
         $summary.Status = 'AlreadyDone'
         return $summary
+    }
+    if ($freshness.Reason -ne 'no valid checkpoint') {
+        Write-IQLog -Level Info -Stage $stage -Message ('Report Detail checkpoint is stale: ' + $freshness.Reason + '; the csx scripts run again over the run folder')
     }
     Write-IQReportExportSummary -RunFolder $runFolder | Out-Null   # keep ReportExports.txt current even if ReportBackup crashed
     if (Test-IQTimeBudget -Stage $stage -Item 'Report Detail') {
@@ -1734,17 +1807,18 @@ function Invoke-IQReportDetailStage {
         return $summary
     }
     $pbixFiles = @(Get-ChildItem -LiteralPath $runFolder -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -ieq '.pbix' -or $_.Extension -ieq '.pbit' })
+    $pbixNames = @(Get-IQReportDetailPbixSet -RunFolder $runFolder)   # recorded in the checkpoint so a later run can tell whether the set changed
     $summary.PbixCount = $pbixFiles.Count
     Write-IQLog -Level Info -Stage $stage -Message ("Report detail extraction: {0} PBIX/PBIT file(s) in {1}" -f $pbixFiles.Count, $runFolder)
 
     if (-not (Test-IQReportTabularEditorAvailable)) {
         $reason = Get-IQReportTabularEditorReason
         if ($pbixFiles.Count -eq 0) {
-            Set-IQItemDone -Stage $stage -ItemKey $key -Item 'Report Detail' -Status Skipped -Message ('No PBIX files to process; ' + $reason) -Data @{ PbixCount = 0 } | Out-Null
+            Set-IQItemDone -Stage $stage -ItemKey $key -Item 'Report Detail' -Status Skipped -Message ('No PBIX files to process; ' + $reason) -Data @{ PbixCount = 0; PbixFiles = @() } | Out-Null
             $summary.Status = 'Skipped'
         }
         else {
-            Set-IQItemDone -Stage $stage -ItemKey $key -Item 'Report Detail' -Status Failed -Message ($reason + '; the Report Detail csx scripts cannot run') -Data @{ PbixCount = $pbixFiles.Count } | Out-Null
+            Set-IQItemDone -Stage $stage -ItemKey $key -Item 'Report Detail' -Status Failed -Message ($reason + '; the Report Detail csx scripts cannot run') -Data @{ PbixCount = $pbixFiles.Count; PbixFiles = $pbixNames } | Out-Null
             $summary.Status = 'Failed'
         }
         $summary.Message = $reason
@@ -1759,7 +1833,7 @@ function Invoke-IQReportDetailStage {
     foreach ($f in @($blankModel, $script1, $script2)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { $missing += $f } }
     if ($missing.Count -gt 0) {
         $message = 'Required file(s) missing: ' + ($missing -join ', ')
-        Set-IQItemDone -Stage $stage -ItemKey $key -Item 'Report Detail' -Status Failed -Message $message -Data @{ PbixCount = $pbixFiles.Count } | Out-Null
+        Set-IQItemDone -Stage $stage -ItemKey $key -Item 'Report Detail' -Status Failed -Message $message -Data @{ PbixCount = $pbixFiles.Count; PbixFiles = $pbixNames } | Out-Null
         $summary.Status = 'Failed'; $summary.Message = $message
         return $summary
     }
@@ -1769,31 +1843,35 @@ function Invoke-IQReportDetailStage {
     $timeout = $timeout * 3
 
     # Working directory: BaseFolder when the run folder is the newest dated folder (monolith behaviour), else a scratch
-    # folder whose only "Report Backups\<date>" entry is a link to the run folder.
+    # folder whose only "Report Backups\<date>" entry is a link to the run folder. The link is best-effort (R-05): the
+    # csx scripts select their input from IMPACTIQ_DATE_FOLDER (set below) before the newest-folder heuristic, so when
+    # no junction/symlink can be created (policy, a locked leftover rd-<hash> folder, a non-Windows host) the scripts
+    # still run from BaseFolder against the run folder instead of the whole stage being failed without an attempt.
     $dateName = [string]$script:IQ.RunId
     if ($dateName -notmatch '^\d{4}-\d{2}-\d{2}$') { $dateName = (Get-Date).ToString('yyyy-MM-dd') }
     $workingDirectory = [string]$script:IQ.BaseFolder
     $linkInfo = $null
+    $linkFallback = $false
     $newest = $null
     try { $newest = Get-IQDateFolder -Root ([string]$script:IQ.Paths.ReportBackups) } catch { $newest = $null }
     if (-not (Test-IQReportSamePath -A $newest -B $runFolder)) {
         Write-IQLog -Level Info -Stage $stage -Message ("Run folder '{0}' is not the newest dated folder under Report Backups; using a linked working folder" -f $runFolder)
         $linkInfo = New-IQReportDetailWorkingFolder -RunFolder $runFolder -DateName $dateName
         if ($null -eq $linkInfo) {
-            $message = 'The run folder is not the newest dated folder under Report Backups and no link could be created; the csx scripts would process the wrong folder'
-            Set-IQItemDone -Stage $stage -ItemKey $key -Item 'Report Detail' -Status Failed -Message $message -Data @{ PbixCount = $pbixFiles.Count; NewestDateFolder = [string]$newest } | Out-Null
-            $summary.Status = 'Failed'; $summary.Message = $message
-            return $summary
+            $linkFallback = $true
+            Write-IQLog -Level Warn -Stage $stage -Message ("No working-folder link could be created; running the csx scripts from '{0}' with IMPACTIQ_DATE_FOLDER='{1}' selecting the run folder (the newest dated folder '{2}' is not the input)" -f $workingDirectory, $runFolder, [string]$newest)
         }
-        $workingDirectory = [string]$linkInfo.WorkingDirectory
+        else { $workingDirectory = [string]$linkInfo.WorkingDirectory }
     }
 
-    # Fresh start for the extraction: stale TXT files from an earlier attempt and leftover unzip folders are removed.
-    foreach ($name in @(Get-IQReportDetailTxtName)) { Remove-IQReportPath -Path (Join-Path $runFolder $name) }
+    # Fresh start for the extraction: stale TXT files from an earlier attempt (including the append-only ExtractErrors.txt
+    # and the classic script's ReportObjects_UnusedObjects.txt, R-06) and leftover unzip folders are removed.
+    foreach ($name in @(Get-IQReportDetailStaleFileName)) { Remove-IQReportPath -Path (Join-Path $runFolder $name) }
     $removedBefore = Remove-IQReportDetailSubfolder -RunFolder $runFolder
     if ($removedBefore -gt 0) { Write-IQLog -Level Debug -Stage $stage -Message "Removed $removedBefore leftover folder(s) before extraction" }
 
     $previousEnv = @{ IMPACTIQ_BASE = $env:IMPACTIQ_BASE; IMPACTIQ_DATE_FOLDER = $env:IMPACTIQ_DATE_FOLDER; IMPACTIQ_REPORT_DATE = $env:IMPACTIQ_REPORT_DATE }
+    $extractStartedUtc = [datetime]::UtcNow
     $r1 = $null
     $r2 = $null
     try {
@@ -1836,12 +1914,31 @@ function Invoke-IQReportDetailStage {
     }
     $summary.TxtFiles = $txtFiles
     $problems = @()
+    # Did the scripts really process the run folder? Its Visuals.txt must be newer than the start of the extraction, and
+    # with the link fallback in effect a fresh Visuals.txt in the newest dated folder instead means IMPACTIQ_DATE_FOLDER
+    # was ignored (outdated csx files in Config\).
+    $runVisuals = Join-Path $runFolder 'Visuals.txt'
+    if (Test-Path -LiteralPath $runVisuals -PathType Leaf) {
+        $written = [datetime]::MinValue
+        try { $written = (Get-Item -LiteralPath $runVisuals).LastWriteTimeUtc } catch { $written = [datetime]::MinValue }
+        if ($written -lt $extractStartedUtc.AddMinutes(-1)) { $problems += ("Visuals.txt in the run folder predates this extraction ({0:u}); the csx scripts did not write into '{1}'" -f $written, $runFolder) }
+        else { Write-IQLog -Level Debug -Stage $stage -Message ("Visuals.txt written into the run folder at {0:u}" -f $written) }
+    }
+    elseif ($linkFallback -and -not [string]::IsNullOrWhiteSpace($newest)) {
+        $otherVisuals = Join-Path $newest 'Visuals.txt'
+        $otherWritten = [datetime]::MinValue
+        try { if (Test-Path -LiteralPath $otherVisuals -PathType Leaf) { $otherWritten = (Get-Item -LiteralPath $otherVisuals).LastWriteTimeUtc } } catch { $otherWritten = [datetime]::MinValue }
+        if ($otherWritten -ge $extractStartedUtc.AddMinutes(-1)) {
+            $problems += ("the csx scripts wrote into the newest dated folder '{0}' instead of the run folder '{1}' (IMPACTIQ_DATE_FOLDER was not honoured - the csx files under Config\ are outdated)" -f $newest, $runFolder)
+        }
+    }
     if ($null -eq $r1 -or -not $r1.Success) { $problems += ('PBIR script failed: ' + (Get-IQReportProcessSummary -Result $r1)) }
     if ($null -ne $r1 -and $r1.Success -and $null -eq $r2) { $problems += 'classic script did not run' }
     if ($null -ne $r2 -and -not $r2.Success) { $problems += ('classic script failed: ' + (Get-IQReportProcessSummary -Result $r2)) }
     if ($txtFiles.Count -eq 0) { $problems += 'no TXT files were produced' }
     $data = @{
-        PbixCount = $pbixFiles.Count; TxtFiles = @($txtFiles | ForEach-Object { Split-Path -Path $_ -Leaf }); WorkingDirectory = $workingDirectory
+        PbixCount = $pbixFiles.Count; PbixFiles = $pbixNames; TxtFiles = @($txtFiles | ForEach-Object { Split-Path -Path $_ -Leaf }); WorkingDirectory = $workingDirectory
+        LinkFallback = $linkFallback; NewestDateFolder = [string]$newest
         Csx1ExitCode = $null; Csx1DurationSec = $null; Csx2ExitCode = $null; Csx2DurationSec = $null
     }
     if ($null -ne $r1) { $data.Csx1ExitCode = $r1.ExitCode; $data.Csx1DurationSec = $r1.DurationSec }

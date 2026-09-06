@@ -12,12 +12,18 @@
 # Fabric semanticModels/{id}/getDefinition?format=TMSL "model.bim" part. Dependency rows come from Get-IQDaxReferences
 # (ImpactIQ.Dax.ps1), an approximate regex extractor - see its help for what it does and does not resolve.
 #
-# Windows PowerShell 5.1 and PowerShell 7 compatible; nothing here is Windows-only. Requires ImpactIQ.Dax.ps1 (CSV building
-# blocks: Write-IQCsvFile, New-IQModelDetailRow, Get-IQModelDetailHeader, Get-IQMeasureDependencyHeader,
-# ConvertTo-IQMeasureDependencyRows) which ImpactIQ.ps1 loads first; when this file is dot-sourced on its own the Dax module
-# next to it is loaded automatically.
+# Windows PowerShell 5.1 and PowerShell 7 compatible; nothing here is Windows-only. Requires ImpactIQ.Dax.ps1, which
+# ImpactIQ.ps1 loads first; when this file is dot-sourced on its own the Dax module next to it is loaded automatically.
 #
-# Cross-module functions used (brief section 2): Write-IQLog. Private helpers are prefixed *-IQBim* and are not part of the contract.
+# Cross-module functions used:
+#   brief section 2 contract:   Write-IQLog (Common)
+#   ImpactIQ.Dax.ps1 CSV building blocks, NOT in the section 2 contract (shared by convention with the DAX path; their
+#   parameter sets are pinned by the "Dax helper contract" tests in tests/Bim.Tests.ps1 so a signature change fails a test
+#   instead of silently breaking this path):
+#     Get-IQModelDetailHeader, Get-IQMeasureDependencyHeader, New-IQModelDetailRow -Type -Common -Fields,
+#     Write-IQCsvFile -Path -Header -Rows, ConvertTo-IQMeasureDependencyRows -Objects -Common -KnownTables -KnownMeasures
+#     -KnownColumns -CalculationGroupTables
+# Private helpers are prefixed *-IQBim* and are not part of the contract.
 
 if (-not (Get-Command -Name 'Write-IQCsvFile' -ErrorAction SilentlyContinue)) {
     $iqBimDaxModule = Join-Path $PSScriptRoot 'ImpactIQ.Dax.ps1'
@@ -134,7 +140,7 @@ function ConvertFrom-IQBimModel {
       Measure:      @{ Name; Expression; FormatString; DisplayFolder; Description; IsHidden }
       Partition:    @{ Name; Description; Mode (Import|DirectQuery|Dual|Push|DirectLake|...); SourceType; Expression }
       Hierarchy:    @{ Name; DisplayFolder; Description; IsHidden; Levels = @(@{ Name; Column; Ordinal; Description }) }
-      CalculationItem: @{ Name; Expression; Description; Ordinal }
+      CalculationItem: @{ Name; Expression; Description; Ordinal }   (in TMSL array order, as the csx emits them)
       Relationship: @{ Name; FromTable; FromColumn; ToTable; ToColumn; FromCardinality (Many|One|None); ToCardinality; CrossFilteringBehavior (OneDirection|BothDirections|Automatic); IsActive }
       Role:         @{ Name; ModelPermission; TablePermissions = @(@{ Table; FilterExpression }) }
     TMSL defaults applied: fromCardinality many, toCardinality one, crossFilteringBehavior oneDirection, isActive true,
@@ -202,9 +208,10 @@ function ConvertFrom-IQBimModel {
             $expr = ''
             if ($null -ne $source) {
                 $sourceType = ConvertTo-IQBimEnumName -Value (Get-IQBimMember -Object $source -Name 'type') -Default ''
+                # p.Expression in the csx: the M / calculated expression or the legacy query. DirectLake "entity" partitions
+                # have neither (only entityName / schemaName), so the csx writes '' for them and so do we.
                 $expr = ConvertTo-IQBimText (Get-IQBimMember -Object $source -Name 'expression')
                 if ($expr -eq '') { $expr = ConvertTo-IQBimText (Get-IQBimMember -Object $source -Name 'query') }
-                if ($expr -eq '') { $expr = ConvertTo-IQBimText (Get-IQBimMember -Object $source -Name 'entityName') }
             }
             $partitions.Add(@{
                     Name = [string](Get-IQBimMember -Object $p -Name 'name'); Description = (ConvertTo-IQBimText (Get-IQBimMember -Object $p -Name 'description'))
@@ -233,8 +240,10 @@ function ConvertFrom-IQBimModel {
         $isCalcGroup = ($null -ne $calcGroup)
         if ($isCalcGroup) {
             $calcGroupNames.Add($tableName)
-            $ordered = @(Get-IQBimMember -Object $calcGroup -Name 'calculationItems') | Where-Object { $null -ne $_ } | Sort-Object { $o = Get-IQBimMember -Object $_ -Name 'ordinal'; if ($null -eq $o) { 0 } else { [double]$o } }
-            foreach ($ci in @($ordered)) {
+            # TMSL array order, exactly like the csx (foreach item in m.CalculationItems); not re-sorted by ordinal: TMSL omits
+            # ordinal at its default so keys collide, and Sort-Object is unstable on PowerShell 7 (-Stable is not on 5.1).
+            foreach ($ci in @(Get-IQBimMember -Object $calcGroup -Name 'calculationItems')) {
+                if ($null -eq $ci) { continue }
                 $items.Add(@{
                         Name = [string](Get-IQBimMember -Object $ci -Name 'name'); Expression = (ConvertTo-IQBimText (Get-IQBimMember -Object $ci -Name 'expression'))
                         Description = (ConvertTo-IQBimText (Get-IQBimMember -Object $ci -Name 'description')); Ordinal = (Get-IQBimMember -Object $ci -Name 'ordinal')

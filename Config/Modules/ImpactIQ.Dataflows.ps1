@@ -9,12 +9,15 @@
 #         "section X;" split, linear time, no $matches shadowing
 #   C9-04 the Gen1 "unescape" only runs when the document is demonstrably still escaped
 #   C9-06 per-dataflow checkpoints (Test-IQItemDone / Set-IQItemDone), no folder wipe, parsed queries persisted to
-#         State\runs\<RunId>\extracts\dataflows\<safeKey>.json immediately (Assemble rebuilds the workbook from those)
+#         State\runs\<RunId>\extracts\dataflows\<safeKey>.json immediately (Assemble rebuilds the workbook from those);
+#         a failed (re-)export removes that dataflow's stale extract; the Gen2 ".definition" folder is a checkpoint output
 #   C9-07 dataflow list comes from the inventory (ws-*.json) instead of re-listing; live listing only as a fallback
 #   C9-08 every failure is logged and recorded in the manifest; summary line at the end
-#   C9-09 ReportDate = RunId when it is a yyyy-MM-dd date (invariant), no "latest folder" heuristics
-#   C9-10 exact bytes for .pq (WriteAllBytes), UTF-8 without BOM for the Gen1 .txt, name-collision suffix "~<id8>",
-#         trailing "." / " " trimmed, > 240 char path warning
+#   C9-09 ReportDate = RunId when it is a yyyy-MM-dd date (invariant), else the run's start date (manifest startedUtc,
+#         one date per run even when it is resumed), no "latest folder" heuristics
+#   C9-10 exact bytes for .pq (WriteAllBytes), UTF-8 without BOM for the Gen1 .txt, name-collision suffix "~<id8>"
+#         (judged on the full file name, so "Sales.txt" and "Sales.pq" coexist), trailing "." / " " trimmed, > 240 char
+#         path warning; the Gen2 definition parts are staged in a temp folder and swapped in only when the export is good
 #   C9-12 / C9-13 queriesMetadata (Load Enabled, Query Group), Gen1 entities and every Gen2 definition part are kept
 #   C9-14 cheap derived columns per query (Source Functions, Referenced Queries, Line Count, Uses Native Query)
 #   C9-15 definition part paths are validated against the target folder before writing
@@ -100,19 +103,38 @@ function Get-IQDataflowExtractFolder {
 function Get-IQDataflowReportDate {
     <#
     .SYNOPSIS
-    The "Report Date" value (yyyy-MM-dd): the RunId when it is a date, else today (audit C9-09, invariant culture) (private).
+    The "Report Date" value (yyyy-MM-dd): the RunId when it is a date, else the run's start date (manifest startedUtc, local time), else today (audit C9-09, invariant culture) (private).
+    .DESCRIPTION
+    A custom RunId ("nightly-42") must still yield ONE date for the whole run: a run paused by the time budget and resumed
+    the next day, or a later re-run of only the Dataflows stage, would otherwise mix two "Report Date" values in one
+    workbook. The manifest's startedUtc is the stable anchor; Get-Date is only the fallback when no manifest exists.
     #>
     [CmdletBinding()]
     param()
+    $invariant = [System.Globalization.CultureInfo]::InvariantCulture
     $runId = ''
     if ($script:IQ) { $runId = [string]$script:IQ.RunId }
     if ($runId -match '^\d{4}-\d{2}-\d{2}$') {
         $parsed = [datetime]::MinValue
-        if ([datetime]::TryParseExact($runId, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
-            return $parsed.ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture)
+        if ([datetime]::TryParseExact($runId, 'yyyy-MM-dd', $invariant, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+            return $parsed.ToString('yyyy-MM-dd', $invariant)
         }
     }
-    return (Get-Date).ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture)
+    $started = $null
+    if ($script:IQ -and $script:IQ.ContainsKey('Manifest') -and $null -ne $script:IQ.Manifest) {
+        $started = Get-IQDataflowMember -Object $script:IQ.Manifest -Name 'startedUtc'
+    }
+    if ($null -ne $started -and -not [string]::IsNullOrWhiteSpace([string]$started)) {
+        $startedAt = [datetime]::MinValue
+        if ($started -is [datetime]) { $startedAt = $started }
+        elseif (-not [datetime]::TryParse([string]$started, $invariant, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$startedAt)) { $startedAt = [datetime]::MinValue }
+        if ($startedAt -ne [datetime]::MinValue) {
+            # startedUtc is UTC ("o" format); the date RunIds are local dates (Get-IQRunDate), so report the local date of the start.
+            if ($startedAt.Kind -eq [System.DateTimeKind]::Unspecified) { $startedAt = [datetime]::SpecifyKind($startedAt, [System.DateTimeKind]::Utc) }
+            return $startedAt.ToLocalTime().ToString('yyyy-MM-dd', $invariant)
+        }
+    }
+    return (Get-Date).ToString('yyyy-MM-dd', $invariant)
 }
 
 function Get-IQDataflowFileStem {
@@ -342,6 +364,9 @@ function Get-IQMDerivedColumn {
     Returns @{ SourceFunctions; ReferencedQueries; LineCount; UsesNativeQuery } - source connector functions
     (Sql.Database, Web.Contents, ...), the other shared members referenced by the expression, line count and a
     heuristic native-query flag (Value.NativeQuery or an options record with Query = "...").
+    Names the expression declares itself ("Source = ...", "Data = ..." let-steps, record fields, "let X = ...") shadow
+    the shared member of the same name in M, so they are never counted as references: nearly every query has a step
+    called Source, and a shared query named Source / Data / Result would otherwise appear in every row.
     #>
     [CmdletBinding()]
     param(
@@ -361,9 +386,20 @@ function Get-IQMDerivedColumn {
     }
     $result.SourceFunctions = ($found -join '; ')
 
+    # Identifiers the expression declares itself: "Name =" at a line start, after "let", after "," or inside a record
+    # "[Name =" (let-steps and record fields). Both the #"quoted" and the bare spelling are the same identifier in M.
+    $declared = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)   # M identifiers are case-sensitive
+    foreach ($d in [regex]::Matches($Expression, '(?m)(?:^[ \t]*|\blet[ \t]+|[,\[(][ \t]*)(?:#"((?:[^"]|"")*)"|([\p{L}_][\p{L}\p{N}_.]*))[ \t]*=(?![=>])')) {
+        $dn = ''
+        if ($d.Groups[1].Success) { $dn = $d.Groups[1].Value -replace '""', '"' }
+        elseif ($d.Groups[2].Success) { $dn = $d.Groups[2].Value }
+        if (-not [string]::IsNullOrEmpty($dn)) { $declared.Add($dn) | Out-Null }
+    }
+
     $refs = New-Object System.Collections.Generic.List[string]
     foreach ($n in @($AllNames)) {
         if ([string]::IsNullOrEmpty($n) -or $n -eq $OwnName) { continue }
+        if ($declared.Contains($n)) { continue }   # a local step/field of this query shadows the shared member
         $escaped = [regex]::Escape($n)
         $pattern = $null
         if ($n -match '^[\p{L}_][\p{L}\p{N}_.]*$') { $pattern = '(?:#"' + $escaped + '"|(?<![\p{L}\p{N}_."#])' + $escaped + '(?![\p{L}\p{N}_."]))' }
@@ -539,6 +575,40 @@ function Get-IQDataflowGen1Document {
     return $text
 }
 
+function Get-IQDataflowGen1QueryGroup {
+    <#
+    .SYNOPSIS
+    The query-group list ({ id; name; ... }[]) of a Gen1 model.json (private).
+    .DESCRIPTION
+    The service does not emit a top-level "pbi:QueryGroups" member: the groups live in annotations[] as
+    { "name": "pbi:QueryGroups", "value": "<JSON array as a string>" }. A top-level member is honoured when present
+    (hand-edited / older exports), otherwise the annotation value is parsed (guarded - a bad annotation yields no
+    groups, never an error). Returns an array (possibly empty).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()]$ModelJson)
+    if ($null -eq $ModelJson) { return @() }
+    $groups = @(Get-IQDataflowMember -Object $ModelJson -Name 'pbi:QueryGroups' | Where-Object { $null -ne $_ })
+    if ($groups.Count -gt 0) { return $groups }
+    foreach ($annotation in @(Get-IQDataflowMember -Object $ModelJson -Name 'annotations')) {
+        if ($null -eq $annotation) { continue }
+        if ([string](Get-IQDataflowMember -Object $annotation -Name 'name') -ne 'pbi:QueryGroups') { continue }
+        $value = Get-IQDataflowMember -Object $annotation -Name 'value'
+        if ($null -eq $value) { continue }
+        if ($value -is [string]) {
+            if ([string]::IsNullOrWhiteSpace($value)) { continue }
+            try { $value = ConvertFrom-Json -InputObject $value }
+            catch {
+                Write-IQLog -Level Debug -Stage 'Dataflows' -Message ('The pbi:QueryGroups annotation is not valid JSON: ' + $_.Exception.Message)
+                continue
+            }
+        }
+        $groups = @($value | Where-Object { $null -ne $_ })
+        if ($groups.Count -gt 0) { return $groups }
+    }
+    return @()
+}
+
 function ConvertTo-IQDataflowEntityRow {
     <#
     .SYNOPSIS
@@ -562,7 +632,12 @@ function ConvertTo-IQDataflowEntityRow {
         $policy = Get-IQDataflowMember -Object $entity -Name 'pbi:refreshPolicy'
         $policyJson = ''
         if ($null -ne $policy) { try { $policyJson = ConvertTo-Json -InputObject $policy -Depth 20 -Compress } catch { $policyJson = [string]$policy } }
-        $incremental = ($null -ne $policy)
+        # Every entity carries a pbi:refreshPolicy in the service's model.json: "FullRefreshPolicy" for plain entities and
+        # "IncrementalRefreshPolicy" (with incrementalPeriods / incrementalGranularity) for incremental ones - the
+        # flag comes from the policy TYPE, never from the policy's mere presence.
+        $policyType = ''
+        if ($null -ne $policy) { $policyType = [string](Get-IQDataflowMember -Object $policy -Name '$type') }
+        $incremental = ($policyType -match '(?i)Incremental') -or ($null -ne (Get-IQDataflowMember -Object $policy -Name 'incrementalPeriods'))
         $attributes = @(Get-IQDataflowMember -Object $entity -Name 'attributes')
         $partitionCount = @(Get-IQDataflowMember -Object $entity -Name 'partitions').Count
         if ($attributes.Count -eq 0) {
@@ -574,6 +649,7 @@ function ConvertTo-IQDataflowEntityRow {
                         'Column'                         = ''
                         'Data Type'                      = ''
                         'Incremental Refresh'            = $incremental
+                        'Refresh Policy Type'            = $policyType
                         'Refresh Policy JSON'            = $policyJson
                         'Description'                    = $description
                         'Partition Count'                = $partitionCount
@@ -591,6 +667,7 @@ function ConvertTo-IQDataflowEntityRow {
                         'Column'                         = [string](Get-IQDataflowMember -Object $attr -Name 'name')
                         'Data Type'                      = [string](Get-IQDataflowMember -Object $attr -Name 'dataType')
                         'Incremental Refresh'            = $incremental
+                        'Refresh Policy Type'            = $policyType
                         'Refresh Policy JSON'            = $policyJson
                         'Description'                    = $description
                         'Partition Count'                = $partitionCount
@@ -638,15 +715,17 @@ function Export-IQGen1Dataflow {
     $modelJson = $null
     try { $modelJson = ConvertFrom-Json -InputObject $body }
     catch {
-        $result.Message = 'Backup written but the response is not valid JSON: ' + $_.Exception.Message
-        $result.Success = $true   # the raw backup is still valuable
+        # A body that does not parse (truncated transfer, or on Windows PowerShell 5.1 queriesMetadata keys that differ
+        # only by case) yields no queries and no entities: that is a FAILURE that must show in the manifest and be
+        # retried on resume, not a silent "Succeeded" with zero rows. The raw .txt is kept on disk for inspection.
+        $result.Message = 'Raw backup written to ' + $Work.BackupPath + ' but the response is not valid JSON (no queries parsed): ' + $_.Exception.Message
         return $result
     }
     $document = Get-IQDataflowGen1Document -ModelJson $modelJson
     $mashup = Get-IQDataflowMember -Object $modelJson -Name 'pbi:mashup'
     $metadataMap = @{}
     if ($null -ne $mashup) {
-        $metadataMap = Get-IQDataflowQueryMetaMap -QueriesMetadata (Get-IQDataflowMember -Object $mashup -Name 'queriesMetadata') -QueryGroups (Get-IQDataflowMember -Object $modelJson -Name 'pbi:QueryGroups')
+        $metadataMap = Get-IQDataflowQueryMetaMap -QueriesMetadata (Get-IQDataflowMember -Object $mashup -Name 'queriesMetadata') -QueryGroups (Get-IQDataflowGen1QueryGroup -ModelJson $modelJson)
         $result.Metadata = @{
             FetchedTime        = [string](Get-IQDataflowMember -Object $mashup -Name 'fetchedTime')
             AllowNativeQueries = (Get-IQDataflowMember -Object $mashup -Name 'allowNativeQueries')
@@ -694,6 +773,43 @@ function Test-IQDataflowPartPathSafe {
     catch { return $false }
 }
 
+function Remove-IQDataflowTempFolder {
+    <#
+    .SYNOPSIS
+    Deletes a temp definition folder of a failed Gen2 export; never throws (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+function Move-IQDataflowDefinitionFolder {
+    <#
+    .SYNOPSIS
+    Swaps a fully written temp definition folder into place: the previous "<stem>.definition" is removed and the temp folder renamed to it (private).
+    .DESCRIPTION
+    Called only after the export is known to be good. Returns $true on success; on failure the temp folder is removed,
+    $Result.Message is set and $false is returned (the caller returns the failed result).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$TempFolder,
+        [Parameter(Mandatory = $true)][string]$Folder,
+        [Parameter(Mandatory = $true)][hashtable]$Result
+    )
+    try {
+        if (Test-Path -LiteralPath $Folder) { Remove-Item -LiteralPath $Folder -Recurse -Force -ErrorAction Stop }
+        Move-Item -LiteralPath $TempFolder -Destination $Folder -Force -ErrorAction Stop
+        return $true
+    }
+    catch {
+        $Result.Message = 'Could not replace the definition folder ' + $Folder + ': ' + $_.Exception.Message
+        Remove-IQDataflowTempFolder -Path $TempFolder
+        return $false
+    }
+}
+
 function Export-IQFabricDataflow {
     <#
     .SYNOPSIS
@@ -734,13 +850,16 @@ function Export-IQFabricDataflow {
         return $result
     }
 
+    # The parts are written to a temp folder next to the target and swapped into place only once the export is known to
+    # be good (C9-01 "nothing stale is written"): a getDefinition that decodes to nothing must not destroy the previous
+    # run's definition and leave an empty "<stem>.definition" beside a stale .pq.
     $folder = $Work.DefinitionFolder
+    $tempFolder = $folder + '.tmp-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     try {
-        if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction Stop }
-        New-Item -ItemType Directory -Path $folder -Force | Out-Null
+        New-Item -ItemType Directory -Path $tempFolder -Force | Out-Null
     }
     catch {
-        $result.Message = 'Could not prepare the definition folder ' + $folder + ': ' + $_.Exception.Message
+        $result.Message = 'Could not prepare the definition folder ' + $tempFolder + ': ' + $_.Exception.Message
         return $result
     }
 
@@ -752,7 +871,7 @@ function Export-IQFabricDataflow {
         $partPath = [string](Get-IQDataflowMember -Object $part -Name 'path')
         $payloadType = [string](Get-IQDataflowMember -Object $part -Name 'payloadType')
         $payload = Get-IQDataflowMember -Object $part -Name 'payload'
-        if (-not (Test-IQDataflowPartPathSafe -Folder $folder -PartPath $partPath)) {
+        if (-not (Test-IQDataflowPartPathSafe -Folder $tempFolder -PartPath $partPath)) {
             Write-IQLog -Level Warn -Stage $stage -Item $Work.Item -Message ("Skipping definition part with an unsafe path '{0}'" -f $partPath)
             continue
         }
@@ -767,7 +886,7 @@ function Export-IQFabricDataflow {
             continue
         }
         $relative = $partPath -replace '/', [System.IO.Path]::DirectorySeparatorChar
-        $target = Join-Path $folder $relative
+        $target = Join-Path $tempFolder $relative
         try { Write-IQDataflowBinaryFile -Path $target -Bytes $bytes; $written++ }
         catch {
             Write-IQLog -Level Warn -Stage $stage -Item $Work.Item -Message ("Definition part '{0}' could not be written: {1}" -f $partPath, $_.Exception.Message)
@@ -781,11 +900,20 @@ function Export-IQFabricDataflow {
         elseif ($leaf -ieq 'queryMetadata.json') { $metadataBytes = $bytes }
     }
     $result.PartsCount = $written
-    if ($null -eq $pqBytes) {
-        $result.Message = ('Definition saved ({0} part(s)) but it contains no .pq part' -f $written)
-        $result.Success = ($written -gt 0)
+    if ($written -eq 0) {
+        Remove-IQDataflowTempFolder -Path $tempFolder
+        $result.Message = ('Fabric getDefinition returned {0} part(s) but none could be saved (unsafe path / decode / write errors above); the previous definition backup is left untouched' -f $parts.Count)
         return $result
     }
+    if ($null -eq $pqBytes) {
+        # Parts were saved but there is no mashup: keep the definition (it is the backup), report the missing .pq.
+        if (-not (Move-IQDataflowDefinitionFolder -TempFolder $tempFolder -Folder $folder -Result $result)) { return $result }
+        $result.Message = ('Definition saved ({0} part(s)) but it contains no .pq part' -f $written)
+        $result.Success = $true
+        return $result
+    }
+    # Commit the definition first (the riskier step: when it fails nothing new has been written at all), then the .pq.
+    if (-not (Move-IQDataflowDefinitionFolder -TempFolder $tempFolder -Folder $folder -Result $result)) { return $result }
     try { Write-IQDataflowBinaryFile -Path $Work.BackupPath -Bytes $pqBytes }
     catch {
         $result.Message = 'Could not write ' + $Work.BackupPath + ': ' + $_.Exception.Message
@@ -918,24 +1046,32 @@ function Get-IQDataflowWorkList {
         $byId[$key] = $c
     }
 
-    $usedStems = @{}
+    $usedNames = @{}
     $work = New-Object System.Collections.Generic.List[object]
     foreach ($key in $byId.Keys) {
         $c = $byId[$key]
         $id = [string]$c.DataflowId
-        $stem = Get-IQDataflowFileStem -WorkspaceName $c.WorkspaceName -DataflowName $c.DataflowName
-        $stemKey = $stem.ToLowerInvariant()
-        if ($usedStems.ContainsKey($stemKey) -and $usedStems[$stemKey] -ne $key) {
-            $suffix = $id
-            if ($suffix.Length -gt 8) { $suffix = $suffix.Substring(0, 8) }
-            $stem = $stem + ' ~' + $suffix
-            $stemKey = $stem.ToLowerInvariant()
-            Write-IQLog -Level Debug -Stage $stage -Message ("Backup name collision for dataflow {0}; using '{1}'" -f $id, $stem)
-        }
-        $usedStems[$stemKey] = $key
         $isCicd = ([string]$c.DataflowGeneration -eq 'Gen 2 CICD')
         $extension = '.txt'
         if ($isCicd) { $extension = '.pq' }
+        # Collisions are judged on the full file name (stem + extension): a Gen1 "Sales" (.txt) and a Gen2 CI/CD "Sales"
+        # (.pq) in one workspace do not collide on disk and keep their monolith names. The " ~<id8>" suffix is added
+        # only when the file name is taken, and re-checked (full id as the last resort) so the result is always unique.
+        $baseStem = Get-IQDataflowFileStem -WorkspaceName $c.WorkspaceName -DataflowName $c.DataflowName
+        $stem = $baseStem
+        $nameKey = ($stem + $extension).ToLowerInvariant()
+        if ($usedNames.ContainsKey($nameKey) -and $usedNames[$nameKey] -ne $key) {
+            $suffix = $id
+            if ($suffix.Length -gt 8) { $suffix = $suffix.Substring(0, 8) }
+            $stem = $baseStem + ' ~' + $suffix
+            $nameKey = ($stem + $extension).ToLowerInvariant()
+            if ($usedNames.ContainsKey($nameKey) -and $usedNames[$nameKey] -ne $key) {
+                $stem = $baseStem + ' ~' + $id
+                $nameKey = ($stem + $extension).ToLowerInvariant()
+            }
+            Write-IQLog -Level Debug -Stage $stage -Message ("Backup name collision for dataflow {0}; using '{1}'" -f $id, ($stem + $extension))
+        }
+        $usedNames[$nameKey] = $key
         $backupPath = Join-Path $RunFolder ($stem + $extension)
         if ($backupPath.Length -gt 240) { Write-IQLog -Level Warn -Stage $stage -Message ("Backup path is {0} characters long and may exceed MAX_PATH: {1}" -f $backupPath.Length, $backupPath) }
         $generationText = [string]$c.DataflowGeneration
@@ -1044,13 +1180,13 @@ function Invoke-IQDataflowsStage {
     Port of monolith 3298-3735 with the audit C9 fixes (see the file header). Per dataflow: skip when
     Test-IQItemDone says so (resume); otherwise export (Export-IQGen1Dataflow / Export-IQFabricDataflow), write
     extracts\dataflows\<safeKey>.json, then Set-IQItemDone with the backup file and the extract as outputs.
-    Failures are recorded (Set-IQItemDone -Status Failed) and the loop continues. Returns
-    @{ Total; Done; Failed; AlreadyDone; Gen1; Gen2; Queries; RunFolder; ExtractFolder }.
+    Failures are recorded (Set-IQItemDone -Status Failed; a stale extract of the dataflow is removed) and the loop
+    continues. Returns @{ Total; Done; Failed; AlreadyDone; Gen1; Gen2; Queries; NoQueries; RunFolder; ExtractFolder }.
     #>
     [CmdletBinding()]
     param()
     $stage = 'Dataflows'
-    $summary = @{ Total = 0; Done = 0; Failed = 0; AlreadyDone = 0; Gen1 = 0; Gen2 = 0; Queries = 0; RunFolder = $null; ExtractFolder = $null; BudgetStop = $false }
+    $summary = @{ Total = 0; Done = 0; Failed = 0; AlreadyDone = 0; Gen1 = 0; Gen2 = 0; Queries = 0; NoQueries = 0; RunFolder = $null; ExtractFolder = $null; BudgetStop = $false }
     $runFolder = Get-IQDataflowRunFolder
     $extractFolder = Get-IQDataflowExtractFolder
     $summary.RunFolder = $runFolder
@@ -1103,6 +1239,9 @@ function Invoke-IQDataflowsStage {
         if (-not $result.Success) {
             # Never leave a stale/empty backup behind that could be mistaken for a good one (audit C9-01).
             if ((Test-Path -LiteralPath $w.BackupPath) -and -not (Test-IQDataflowFileHasContent -Path $w.BackupPath)) { Remove-Item -LiteralPath $w.BackupPath -Force -ErrorAction SilentlyContinue }
+            # A previous run's extract would make Assemble emit query rows (with the old Report Date) for a dataflow the
+            # manifest reports as failed - remove it so the workbook and the Failures sheet agree.
+            if (Test-Path -LiteralPath $w.ExtractPath) { Remove-Item -LiteralPath $w.ExtractPath -Force -ErrorAction SilentlyContinue }
             Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method ([string]$result.Method) -Message ([string]$result.Message) -Data $data | Out-Null
             $summary.Failed++
             continue
@@ -1119,15 +1258,24 @@ function Invoke-IQDataflowsStage {
         }
         $outputs = @($w.ExtractPath)
         if (Test-IQDataflowFileHasContent -Path $w.BackupPath) { $outputs = @($w.BackupPath) + $outputs }
+        # The definition folder is an output too: when it is deleted, Test-IQItemDone invalidates the checkpoint and the
+        # dataflow is re-exported on resume (same rule as the .pq / .txt).
+        if ($w.IsGen2Cicd -and $w.DefinitionFolder -and (Test-Path -LiteralPath $w.DefinitionFolder)) { $outputs += [string]$w.DefinitionFolder }
         Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Outputs $outputs -Method ([string]$result.Method) -Message ([string]$result.Message) -Data $data | Out-Null
         $summary.Done++
         $summary.Queries += @($result.Queries).Count
         if ($w.IsGen2Cicd) { $summary.Gen2++ } else { $summary.Gen1++ }
-        Write-IQLog -Level Success -Stage $stage -Item $w.Item -Message ([string]$result.Message)
+        if (@($result.Queries).Count -eq 0) {
+            # Backed up, but the dataflow contributes no rows to "Dataflow Detail.xlsx" (no mashup document / no .pq
+            # part): visible at Warn and counted, so an empty workbook is never a silent surprise.
+            $summary.NoQueries++
+            Write-IQLog -Level Warn -Stage $stage -Item $w.Item -Message ([string]$result.Message)
+        }
+        else { Write-IQLog -Level Success -Stage $stage -Item $w.Item -Message ([string]$result.Message) }
     }
 
     $level = 'Info'
-    if ($summary.Failed -gt 0) { $level = 'Warn' }
-    Write-IQLog -Level $level -Stage $stage -Message ("Dataflow backup finished: {0} Gen1, {1} Gen2 backed up ({2} queries), {3} failed, {4} already done of {5}" -f $summary.Gen1, $summary.Gen2, $summary.Queries, $summary.Failed, $summary.AlreadyDone, $summary.Total)
+    if ($summary.Failed -gt 0 -or $summary.NoQueries -gt 0) { $level = 'Warn' }
+    Write-IQLog -Level $level -Stage $stage -Message ("Dataflow backup finished: {0} Gen1, {1} Gen2 backed up ({2} queries; {3} without queries), {4} failed, {5} already done of {6}" -f $summary.Gen1, $summary.Gen2, $summary.Queries, $summary.NoQueries, $summary.Failed, $summary.AlreadyDone, $summary.Total)
     return $summary
 }

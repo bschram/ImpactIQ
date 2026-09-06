@@ -119,11 +119,32 @@ Describe 'Paging' {
         @($res.value).Count | Should -Be 1
         $script:Requests.Count | Should -Be 1
     }
-    It 'returns the rows collected so far when a later page fails with 404' {
+    It 'throws when a later page fails with 404 instead of returning a truncated list as complete' {
         Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 1 }); '@odata.nextLink' = 'https://api.powerbigov.us/v1.0/myorg/groups?$skip=1' })
         Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 404 -Body '{"error":{"code":"NotFound"}}')
-        $res = Invoke-IQApi -Method GET -Path 'groups'
+        { Invoke-IQApi -Method GET -Path 'groups' } | Should -Throw -ExpectedMessage '*page 2*404*'
+        $script:Requests.Count | Should -Be 2
+    }
+    It 'throws when a Fabric continuationToken is rejected with 400 even with -AllowNotFound' {
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 1 }); continuationToken = 'expired' })
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 400 -Body '{"error":{"code":"InvalidContinuationToken"}}')
+        { Invoke-IQApi -Method GET -Path 'workspaces' -Api Fabric -AllowNotFound } | Should -Throw -ExpectedMessage '*page 2*400*'
+    }
+    It 'with -AllowNotFound a 404 on a later page returns the rows so far stamped IQPartial' {
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 1 }); '@odata.nextLink' = 'https://api.powerbigov.us/v1.0/myorg/groups?$skip=1' })
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 404 -Body '{"error":{"code":"NotFound"}}')
+        $res = Invoke-IQApi -Method GET -Path 'groups' -AllowNotFound
         @($res.value).Count | Should -Be 1
+        $res.IQPartial | Should -BeTrue
+        $res.IQPagesFetched | Should -Be 1
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[WARN\].*Paging stopped at page 2.*partial'
+    }
+    It 'a complete paged result carries no IQPartial stamp' {
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 1 }); '@odata.nextLink' = 'https://api.powerbigov.us/v1.0/myorg/groups?$skip=1' })
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 2 }) })
+        $res = Invoke-IQApi -Method GET -Path 'groups' -AllowNotFound
+        @($res.value).Count | Should -Be 2
+        $res.PSObject.Properties['IQPartial'] | Should -BeNullOrEmpty
     }
 }
 
@@ -176,6 +197,90 @@ Describe 'Retry matrix' {
         $script:Requests.Count | Should -Be 1
         (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[WARN\].*HTTP 400.*INFO functions'
     }
+    It '400: records StatusCode and the body in $script:IQ.LastHttpError for the Dax module' {
+        $body = '{"error":{"code":"DaxQueryFailure","message":"INFO functions are not supported"}}'
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 400 -Body $body)
+        Invoke-IQApi -Method POST -Path 'datasets/x/executeQueries' -Body @{ q = 1 } -NoPaging | Should -BeNullOrEmpty
+        $script:IQ.ContainsKey('LastHttpError') | Should -BeTrue
+        $script:IQ.LastHttpError.StatusCode | Should -Be 400
+        $script:IQ.LastHttpError.Body | Should -Be $body
+        $script:IQ.LastHttpError.Method | Should -Be 'POST'
+        $script:IQ.LastHttpError.Url | Should -Match 'executeQueries'
+    }
+    It '403 records LastHttpError too, and a following successful request clears it' {
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 403 -Body 'Forbidden')
+        Invoke-IQApi -Method GET -Path 'groups/x/users' | Should -BeNullOrEmpty
+        $script:IQ.LastHttpError.StatusCode | Should -Be 403
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @() })
+        Invoke-IQApi -Method GET -Path 'groups' | Out-Null
+        $script:IQ.LastHttpError | Should -BeNullOrEmpty
+    }
+    It 'no Fabric token: records a LastHttpError without a status' {
+        Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'pbi-token' }
+        Invoke-IQApi -Method GET -Path 'workspaces' -Api Fabric | Should -BeNullOrEmpty
+        $script:IQ.LastHttpError | Should -Not -BeNullOrEmpty
+        $script:IQ.LastHttpError.StatusCode | Should -BeNullOrEmpty
+        $script:IQ.LastHttpError.Message | Should -Match 'Fabric token'
+    }
+    It '429 retries do not consume the 5xx budget: three 429s, a 503 and then 200 succeeds' {
+        foreach ($i in 1..3) { Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 429 -Headers @{ 'Retry-After' = '1' }) }
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 503)
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 1 }) })
+        $res = Invoke-IQApi -Method GET -Path 'groups'
+        @($res.value).Count | Should -Be 1
+        $script:Requests.Count | Should -Be 5
+        $script:Sleeps.Count | Should -Be 4
+        $script:Sleeps[3] | Should -Be 2 -Because 'the first 5xx backoff is 2 s regardless of earlier 429 waits'
+    }
+    It 'a 401 refresh does not consume the 5xx budget either' {
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 401)
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 500)
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 500)
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 1 }) })
+        $res = Invoke-IQApi -Method GET -Path 'groups'
+        @($res.value).Count | Should -Be 1
+        $script:Sleeps.Count | Should -Be 2
+        $script:Sleeps[0] | Should -Be 2
+        $script:Sleeps[1] | Should -Be 4
+    }
+    It 'stops retrying (throws, no sleep) when the run time budget is used up' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 5
+        $script:IQ.StartedUtc = [datetime]::UtcNow.AddMinutes(-10)
+        $script:IQ.BudgetExceeded = $false
+        try {
+            Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 429 -Headers @{ 'Retry-After' = '60' })
+            { Invoke-IQApi -Method GET -Path 'groups' } | Should -Throw -ExpectedMessage '*Time budget*'
+            $script:Sleeps.Count | Should -Be 0
+            $script:Requests.Count | Should -Be 1
+            $script:IQ.BudgetExceeded = $false
+            Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 503)
+            { Invoke-IQApi -Method GET -Path 'groups' } | Should -Throw -ExpectedMessage '*Time budget*503*'
+            $script:Sleeps.Count | Should -Be 0
+        }
+        finally {
+            $script:IQ.Options.Remove('TimeBudgetMinutes')
+            $script:IQ.StartedUtc = [datetime]::UtcNow
+            $script:IQ.BudgetExceeded = $false
+        }
+    }
+    It 'caps a long Retry-After to the seconds left in the time budget' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 10
+        $script:IQ.StartedUtc = [datetime]::UtcNow.AddMinutes(-7.5)   # 8 min usable -> about 30 s left
+        $script:IQ.BudgetExceeded = $false
+        try {
+            Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 429 -Headers @{ 'Retry-After' = '200' })
+            Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @() })
+            Invoke-IQApi -Method GET -Path 'groups' | Out-Null
+            $script:Sleeps.Count | Should -Be 1
+            $script:Sleeps[0] | Should -BeLessOrEqual 30
+            $script:Sleeps[0] | Should -BeGreaterOrEqual 1
+        }
+        finally {
+            $script:IQ.Options.Remove('TimeBudgetMinutes')
+            $script:IQ.StartedUtc = [datetime]::UtcNow
+            $script:IQ.BudgetExceeded = $false
+        }
+    }
     It '503: exponential backoff 2,4,... then success' {
         Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 503 -Body 'Service Unavailable')
         Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 502)
@@ -196,6 +301,21 @@ Describe 'Retry matrix' {
         Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @() })
         { Invoke-IQApi -Method GET -Path 'groups' } | Should -Not -Throw
         $script:Sleeps.Count | Should -Be 1
+    }
+    It 'certificate failures (WebException TrustFailure / SecureChannelFailure) are not retried' {
+        Add-HttpResponse (New-IQTestWebException -Status 'TrustFailure')
+        { Invoke-IQApi -Method GET -Path 'groups' } | Should -Throw
+        $script:Sleeps.Count | Should -Be 0
+        $script:Requests.Count | Should -Be 1
+        Add-HttpResponse (New-IQTestWebException -Status 'SecureChannelFailure')
+        { Invoke-IQApi -Method GET -Path 'groups' } | Should -Throw
+        $script:Sleeps.Count | Should -Be 0
+    }
+    It 'a non-JSON body (proxy HTML page) returns $null with a Warn instead of a raw string' {
+        Add-HttpResponse (New-IQTestHttpResponse -Content '<html><body>Access denied by proxy</body></html>' -Headers @{ 'Content-Type' = 'text/html' })
+        $res = Invoke-IQApi -Method GET -Path 'groups'
+        $res | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[WARN\].*not JSON.*text/html.*Access denied'
     }
     It 'other 4xx (409) throws without retry' {
         Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 409 -Body 'Conflict')
@@ -239,6 +359,20 @@ Describe 'Get-IQHttpErrorInfo' {
         $info.RetryAfter | Should -BeLessOrEqual 91
         $info.Body | Should -Be 'throttled'
     }
+    It 'reads a WebException TrustFailure as permanent (not transient)' {
+        $record = New-IQTestWebException -Status 'TrustFailure'
+        $info = $null
+        try { throw $record } catch { $info = Get-IQHttpErrorInfo -ErrorRecord $_ }
+        $info.StatusCode | Should -BeNullOrEmpty
+        $info.Transient | Should -BeFalse
+        $info.WebStatus | Should -Be 'TrustFailure'
+    }
+    It 'reads a WebException ConnectFailure as transient' {
+        $record = New-IQTestWebException -Status 'ConnectFailure'
+        $info = $null
+        try { throw $record } catch { $info = Get-IQHttpErrorInfo -ErrorRecord $_ }
+        $info.Transient | Should -BeTrue
+    }
     It 'returns a Message for a plain exception without response' {
         $record = New-Object System.Management.Automation.ErrorRecord ((New-Object System.Exception 'plain failure'), 'x', 'InvalidOperation', $null)
         $info = Get-IQHttpErrorInfo -ErrorRecord $record
@@ -272,9 +406,35 @@ Describe 'Invoke-IQFabricLro' {
         Add-HttpResponse (New-IQTestHttpResponse -Content @{ status = 'Failed'; error = @{ errorCode = 'X' } })
         Invoke-IQFabricLro -Method POST -Path 'workspaces/w/dataflows/d/getDefinition' -TimeoutMinutes 1 | Should -BeNullOrEmpty
     }
-    It 'returns $null on 403/404' {
-        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 404)
+    It 'returns $null on 403/404 with the status in the single Warn line' {
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 404 -Body '{"error":{"code":"ItemNotFound"}}')
         Invoke-IQFabricLro -Method POST -Path 'workspaces/w/dataflows/d/getDefinition' | Should -BeNullOrEmpty
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match '\[WARN\].*HTTP 404 for POST.*getDefinition.*ItemNotFound'
+        $log | Should -Not -Match 'was not accepted'
+    }
+    It 'returns $null with one Debug line and no request when no Fabric token is available' {
+        Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'pbi-token' }
+        Invoke-IQFabricLro -Method POST -Path 'workspaces/w/semanticModels/m/getDefinition' | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 0
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Not -Match '\[WARN\].*semanticModels/m/getDefinition'
+    }
+    It 'stops polling with $null when the run time budget is used up' {
+        Add-HttpResponse (New-IQTestHttpResponse -StatusCode 202 -Content '' -Headers @{ 'Location' = 'https://api.fabric.microsoft.us/v1/operations/op-3'; 'Retry-After' = '1' })
+        $script:IQ.Options['TimeBudgetMinutes'] = 5
+        $script:IQ.StartedUtc = [datetime]::UtcNow.AddMinutes(-10)
+        $script:IQ.BudgetExceeded = $false
+        try {
+            Invoke-IQFabricLro -Method POST -Path 'workspaces/w/dataflows/d/getDefinition' -TimeoutMinutes 1 | Should -BeNullOrEmpty
+            $script:Requests.Count | Should -Be 1
+            $script:Sleeps.Count | Should -Be 0
+            (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'Time budget reached while polling'
+        }
+        finally {
+            $script:IQ.Options.Remove('TimeBudgetMinutes')
+            $script:IQ.StartedUtc = [datetime]::UtcNow
+            $script:IQ.BudgetExceeded = $false
+        }
     }
 }
 
@@ -285,6 +445,12 @@ Describe 'Downloads (-OutFile / Invoke-IQDownload)' {
         Add-HttpResponse (New-IQTestHttpResponse -Content 'PBIX-BYTES' -Headers @{ 'Content-Type' = 'application/octet-stream' })
         Invoke-IQApi -Method GET -Path 'groups/w/reports/r/Export' -OutFile $target | Should -BeTrue
         $target | Should -Exist
+    }
+    It 'streams with -OutFile only (no -PassThru, which would buffer the whole download in memory on 5.1)' {
+        $target = Join-Path $script:Base 'dl/big.pbix'
+        Add-HttpResponse (New-IQTestHttpResponse -Content 'PBIX-BYTES' -Headers @{ 'Content-Type' = 'application/octet-stream' })
+        Invoke-IQApi -Method GET -Path 'groups/w/reports/r/Export' -OutFile $target | Should -BeTrue
+        Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { $OutFile -eq $target -and -not $PassThru }
     }
     It 'deletes a zero-byte file and returns $false' {
         $target = Join-Path $script:Base 'dl/empty.pbix'

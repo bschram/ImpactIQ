@@ -229,6 +229,13 @@ Describe 'DeviceCode flow with a mocked token endpoint' {
         (Get-Content -LiteralPath $script:CachePath -Raw | ConvertFrom-Json).format | Should -Be 'aes256'
         Get-IQAuthDescription | Should -Match 'DeviceCode'
         Get-IQAuthDescription | Should -Match 'svc@contoso.gov'
+        # The very first cache file (written during the initial sign-in) must already carry the account (brief 4.3).
+        (Restore-IQTokenCache).account | Should -Be 'svc@contoso.gov'
+    }
+    It 'applies the process HTTP defaults (proxy credentials) before the first OAuth call' {
+        $script:IQAuthHttpDefaultsApplied | Should -BeTrue
+        $proxy = [System.Net.WebRequest]::DefaultWebProxy
+        if ($null -ne $proxy) { $proxy.Credentials | Should -Not -BeNullOrEmpty }
     }
     It 'refreshes proactively when less than 5 minutes remain and rotates the refresh token' {
         Reset-AuthMock
@@ -279,6 +286,256 @@ Describe 'DeviceCode flow with a mocked token endpoint' {
         @($script:AuthCalls | Where-Object { $_.Key -eq 'devicecode' }).Count | Should -Be 0
         $script:AuthCalls[0].Body.grant_type | Should -Be 'refresh_token'
         Get-IQAuthDescription | Should -Match '(?i)cached'
+    }
+    It 'keeps polling through a transient token-endpoint failure while the device code is still valid' {
+        Reset-AuthMock
+        $jwt = New-IQTestJwt -Claims @{ upn = 'svc@contoso.gov' } -ExpiresInMinutes 60
+        Set-AuthQueue 'devicecode' @([pscustomobject]@{ device_code = 'DEV-3'; user_code = 'T'; verification_uri = 'https://microsoft.com/devicelogin'; expires_in = 900; interval = 5; message = 'code T' })
+        $blip = { throw (New-IQTestWebException -Status Timeout) }
+        Set-AuthQueue 'token' @(
+            $blip, $blip, $blip,                                                     # one poll: 3 transient attempts, all fail
+            '{"error":"authorization_pending","error_description":"AADSTS70016"}',
+            [pscustomobject]@{ access_token = $jwt; refresh_token = 'RT-T'; expires_in = 3600 }
+        )
+        $response = Invoke-IQDeviceCodeFlow
+        $response.access_token | Should -Be $jwt
+        @($script:AuthCalls | Where-Object { $_.Key -eq 'token' }).Count | Should -Be 5
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[WARN\].*(?i)poll failed transiently'
+    }
+    It 'gives up on a transient failure only once the device code has expired' {
+        Reset-AuthMock
+        Set-AuthQueue 'devicecode' @([pscustomobject]@{ device_code = 'DEV-4'; user_code = 'X'; verification_uri = 'https://microsoft.com/devicelogin'; expires_in = 1; interval = 1; message = 'code X' })
+        $blip = { throw (New-IQTestWebException -Status ConnectFailure) }
+        $slowBlip = { Start-Sleep -Milliseconds 1300; throw (New-IQTestWebException -Status ConnectFailure) }
+        Set-AuthQueue 'token' @($blip, $blip, $blip, $slowBlip, $blip, $blip)
+        { Invoke-IQDeviceCodeFlow } | Should -Throw -ExpectedMessage '*not completed before the code expired*'
+        @($script:AuthCalls | Where-Object { $_.Key -eq 'token' }).Count | Should -Be 6
+    }
+    It 'survives a longer outage when refreshing mid-run (6 attempts, capped backoff)' {
+        Reset-AuthMock
+        $script:IQ.Auth.Tokens['PowerBI'].ExpiresUtc = [datetime]::UtcNow.AddMinutes(1)
+        $newJwt = New-IQTestJwt -Claims @{ upn = 'svc@contoso.gov' } -ExpiresInMinutes 65
+        $blip = { throw (New-IQTestWebException -Status NameResolutionFailure) }
+        Set-AuthQueue 'token' @($blip, $blip, $blip, $blip, [pscustomobject]@{ access_token = $newJwt; refresh_token = 'RT-4'; expires_in = 3900 })
+        Get-IQToken -Resource PowerBI | Should -Be $newJwt
+        $script:AuthCalls.Count | Should -Be 5
+        @($script:AuthSleeps) | Should -Be @(2, 4, 8, 16)
+    }
+    It 'honours Retry-After on a throttled token endpoint and does not treat 429 as permanent' {
+        Reset-AuthMock
+        Set-AuthQueue 'token' @(
+            { throw (New-IQTestHttpErrorRecord -StatusCode 429 -Body '{"error":"temporarily_unavailable"}' -Headers @{ 'Retry-After' = '7' }) },
+            { throw (New-IQTestHttpErrorRecord -StatusCode 429 -Headers @{ 'Retry-After' = '9999' }) }
+        )
+        $r = Invoke-IQAuthRequest -Uri 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token' -Body @{ grant_type = 'x' } -MaxAttempts 2
+        $r.Ok | Should -BeFalse
+        [int]$r.StatusCode | Should -Be 429
+        @($script:AuthSleeps) | Should -Be @(7) -Because 'the first Retry-After is honoured; the last attempt does not sleep'
+        Test-IQAuthPermanentFailure -Result $r | Should -BeFalse
+        Test-IQAuthPermanentFailure -Result @{ StatusCode = 408; Error = $null } | Should -BeFalse
+        Test-IQAuthPermanentFailure -Result @{ StatusCode = 400; Error = 'invalid_grant' } | Should -BeTrue
+        Test-IQAuthPermanentFailure -Result @{ StatusCode = $null; Error = $null } | Should -BeFalse
+    }
+    It 'caps a huge Retry-After at 300 s' {
+        Reset-AuthMock
+        Set-AuthQueue 'token' @(
+            { throw (New-IQTestHttpErrorRecord -StatusCode 503 -Headers @{ 'Retry-After' = '9999' }) },
+            [pscustomobject]@{ access_token = 'x'; expires_in = 60 }
+        )
+        (Invoke-IQAuthRequest -Uri 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token' -Body @{ grant_type = 'x' } -MaxAttempts 2).Ok | Should -BeTrue
+        @($script:AuthSleeps) | Should -Be @(300)
+    }
+    It 'Fabric tokens are not permanently disabled by a throttled refresh grant' {
+        Reset-AuthMock
+        if ($script:IQ.Auth.Tokens.ContainsKey('Fabric')) { $script:IQ.Auth.Tokens.Remove('Fabric') }
+        $script:IQ.Auth.FabricUnavailable = $false
+        $throttle = { throw (New-IQTestHttpErrorRecord -StatusCode 429 -Headers @{ 'Retry-After' = '1' }) }
+        Set-AuthQueue 'token' @($throttle, $throttle, $throttle, $throttle, $throttle, $throttle)
+        Get-IQToken -Resource Fabric | Should -BeNullOrEmpty
+        $script:IQ.Auth.FabricUnavailable | Should -BeFalse
+        Reset-AuthMock
+        $fabJwt = New-IQTestJwt -Claims @{ aud = 'fabric' } -ExpiresInMinutes 60
+        Set-AuthQueue 'token' @([pscustomobject]@{ access_token = $fabJwt; expires_in = 3600 })
+        Get-IQToken -Resource Fabric | Should -Be $fabJwt
+    }
+}
+
+Describe 'DeviceCode start-up with a cached refresh token' {
+    BeforeAll {
+        Reset-IQTestEnvironment
+        Reset-AuthMock
+        Mock Invoke-RestMethod { Pop-AuthResponse -Uri $Uri -Body $Body -ContentType $ContentType }
+        Mock Start-IQAuthSleep { $script:AuthSleeps.Add([int]$Seconds) }
+        $script:StartCachePath = Join-Path $script:Base 'State/auth/startup-cache.json'
+    }
+    BeforeEach {
+        Reset-AuthMock
+        Initialize-IQContext -BaseFolder $script:Base -Options @{ Environment = 'USGov'; NonInteractive = $true } | Out-Null
+        $script:IQ.Interactive = $false
+        if (Test-Path -LiteralPath $script:StartCachePath) { Remove-Item -LiteralPath $script:StartCachePath -Force }
+        $script:IQ.Auth = @{ Mode = 'DeviceCode'; TokenCachePath = $script:StartCachePath; TokenCacheKey = 'unit-test-key'; RefreshToken = 'RT-CACHED'; Authority = 'https://login.microsoftonline.com'; ClientId = '1950a258-227b-4e31-a9cf-717495945fc2'; Environment = 'USGov'; TenantId = 'organizations'; Account = 'svc@contoso.gov'; CacheWarned = $false; Initialized = $true }
+        Save-IQTokenCache | Should -BeTrue
+    }
+    AfterAll { Reset-IQTestEnvironment }
+    It 'throws and leaves the cache untouched when the token endpoint is unreachable (no device-code prompt)' {
+        $blip = { throw (New-IQTestWebException -Status Timeout) }
+        Set-AuthQueue 'token' @($blip, $blip, $blip, $blip, $blip, $blip)
+        $before = Get-Content -LiteralPath $script:StartCachePath -Raw
+        { Initialize-IQAuth -Mode DeviceCode -Environment 'USGov' -TokenCacheKey 'unit-test-key' -TokenCachePath $script:StartCachePath } | Should -Throw -ExpectedMessage '*left untouched*'
+        @($script:AuthCalls | Where-Object { $_.Key -eq 'devicecode' }).Count | Should -Be 0
+        @($script:AuthCalls | Where-Object { $_.Key -eq 'token' }).Count | Should -Be 6 -Because 'the start-up refresh gets the full retry budget'
+        (Get-Content -LiteralPath $script:StartCachePath -Raw) | Should -Be $before
+        $script:IQ.Auth.TokenCacheKey = 'unit-test-key'
+        (Restore-IQTokenCache -Path $script:StartCachePath).refreshToken | Should -Be 'RT-CACHED'
+    }
+    It 'falls back to a fresh device-code sign-in only when the refresh token is permanently rejected' {
+        $jwt = New-IQTestJwt -Claims @{ upn = 'svc@contoso.gov' } -ExpiresInMinutes 60
+        Set-AuthQueue 'token' @(
+            '{"error":"invalid_grant","error_description":"AADSTS70008: The refresh token has expired","error_codes":[70008]}',
+            [pscustomobject]@{ access_token = $jwt; refresh_token = 'RT-NEW'; expires_in = 3600 }
+        )
+        Set-AuthQueue 'devicecode' @([pscustomobject]@{ device_code = 'DEV-5'; user_code = 'Z'; verification_uri = 'https://microsoft.com/devicelogin'; expires_in = 900; interval = 5; message = 'code Z' })
+        Initialize-IQAuth -Mode DeviceCode -Environment 'USGov' -TokenCacheKey 'unit-test-key' -TokenCachePath $script:StartCachePath | Should -Be 'DeviceCode'
+        @($script:AuthCalls | Where-Object { $_.Key -eq 'devicecode' }).Count | Should -Be 1
+        $script:IQ.Auth.RefreshToken | Should -Be 'RT-NEW'
+        (Restore-IQTokenCache -Path $script:StartCachePath).refreshToken | Should -Be 'RT-NEW'
+    }
+}
+
+Describe 'Interactive mode: Fabric minting via Az.Accounts gives up instead of retrying on every call' {
+    BeforeAll {
+        Reset-IQTestEnvironment
+        Initialize-IQContext -BaseFolder $script:Base -Options @{ Environment = 'USGov'; NonInteractive = $true } | Out-Null
+        Set-IQEnvironment -Environment 'USGov' | Out-Null
+        Mock Start-IQAuthSleep { $script:AuthSleeps.Add([int]$Seconds) }
+        Mock Connect-IQAzForFabric { $true }
+        $script:AzCalls = 0
+    }
+    BeforeEach {
+        Reset-AuthMock
+        $script:AzCalls = 0
+        $script:IQ.Auth = @{ Initialized = $true; Mode = 'Interactive'; Provider = 'Module'; Tokens = @{}; FabricUnavailable = $false; FabricWarned = $false; FabricFailures = 0; TenantId = 'organizations'; Account = 'user@contoso.gov' }
+    }
+    AfterAll { Reset-IQTestEnvironment }
+    It 'marks Fabric unavailable immediately when Get-AzAccessToken rejects the resource' {
+        Mock Get-IQAzAccessTokenValue { $script:AzCalls++; throw 'Get-AzAccessToken: the resource https://api.fabric.microsoft.us is not supported for this environment' }
+        Get-IQToken -Resource Fabric | Should -BeNullOrEmpty
+        Get-IQToken -Resource Fabric | Should -BeNullOrEmpty
+        Get-IQToken -Resource Fabric | Should -BeNullOrEmpty
+        $script:AzCalls | Should -Be 1
+        $script:IQ.Auth.FabricUnavailable | Should -BeTrue
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        ([regex]::Matches($log, '\[WARN\].*Fabric token refresh via Az\.Accounts failed: Get-AzAccessToken: the resource')).Count | Should -Be 1
+    }
+    It 'gives a transient error a second chance, then stops retrying and stops warning' {
+        Mock Get-IQAzAccessTokenValue { $script:AzCalls++; throw 'The operation has timed out' }
+        Get-IQToken -Resource Fabric | Should -BeNullOrEmpty
+        $script:IQ.Auth.FabricUnavailable | Should -BeFalse
+        Get-IQToken -Resource Fabric | Should -BeNullOrEmpty
+        $script:IQ.Auth.FabricUnavailable | Should -BeTrue
+        Get-IQToken -Resource Fabric | Should -BeNullOrEmpty
+        Get-IQToken -Resource Fabric | Should -BeNullOrEmpty
+        $script:AzCalls | Should -Be 2
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        ([regex]::Matches($log, '\[WARN\].*Fabric token refresh via Az\.Accounts failed: The operation has timed out')).Count | Should -Be 1
+    }
+    It 'resets the failure counter after a success' {
+        $fabJwt = New-IQTestJwt -Claims @{ aud = 'fabric' } -ExpiresInMinutes 60
+        $script:IQ.Auth.FabricFailures = 1
+        Mock Get-IQAzAccessTokenValue { $script:AzCalls++; return $fabJwt }
+        Get-IQToken -Resource Fabric | Should -Be $fabJwt
+        $script:IQ.Auth.FabricFailures | Should -Be 0
+    }
+}
+
+Describe 'Connect-PowerBIServiceAccount -Tenant is only passed when the user parameter set declares it' {
+    BeforeAll {
+        Reset-IQTestEnvironment
+        Initialize-IQContext -BaseFolder $script:Base -Options @{ Environment = 'USGov'; NonInteractive = $true } | Out-Null
+        Set-IQEnvironment -Environment 'USGov' | Out-Null
+        Mock Start-IQAuthSleep { $script:AuthSleeps.Add([int]$Seconds) }
+        Mock Import-IQAuthModule { $true }
+        $script:PbiJwt2 = New-IQTestJwt -Claims @{ upn = 'user@contoso.gov' } -ExpiresInMinutes 60
+        $script:ConnectCalls = New-Object System.Collections.Generic.List[object]
+        function Get-PowerBIAccessToken { [CmdletBinding()] param() return $script:PbiJwt2 }
+        function Disconnect-PowerBIServiceAccount { [CmdletBinding()] param() }
+        # Older module build: -Tenant lives only in the service-principal parameter sets.
+        $script:OldShape = {
+            [CmdletBinding(DefaultParameterSetName = 'User')]
+            param(
+                [Parameter(ParameterSetName = 'User')][Parameter(ParameterSetName = 'UserAndCredential')][Parameter(ParameterSetName = 'ServicePrincipal')][string]$Environment,
+                [Parameter(ParameterSetName = 'UserAndCredential')][System.Management.Automation.PSCredential]$Credential,
+                [Parameter(ParameterSetName = 'ServicePrincipal')][switch]$ServicePrincipal,
+                [Parameter(ParameterSetName = 'ServicePrincipal')][string]$Tenant
+            )
+            $script:ConnectCalls.Add(@{ Set = $PSCmdlet.ParameterSetName; Bound = @($PSBoundParameters.Keys) })
+            if ($PSCmdlet.ParameterSetName -eq 'ServicePrincipal' -and -not $ServicePrincipal) { throw 'fake: -Tenant selected the ServicePrincipal parameter set without -ServicePrincipal' }
+        }
+        # Newer module build: -Tenant is available for user sign-in as well.
+        $script:NewShape = {
+            [CmdletBinding(DefaultParameterSetName = 'User')]
+            param(
+                [Parameter(ParameterSetName = 'User')][Parameter(ParameterSetName = 'UserAndCredential')][Parameter(ParameterSetName = 'ServicePrincipal')][string]$Environment,
+                [Parameter(ParameterSetName = 'UserAndCredential')][Parameter(ParameterSetName = 'ServicePrincipal')][System.Management.Automation.PSCredential]$Credential,
+                [Parameter(ParameterSetName = 'ServicePrincipal')][switch]$ServicePrincipal,
+                [Parameter(ParameterSetName = 'User')][Parameter(ParameterSetName = 'UserAndCredential')][Parameter(ParameterSetName = 'ServicePrincipal')][string]$Tenant
+            )
+            $script:ConnectCalls.Add(@{ Set = $PSCmdlet.ParameterSetName; Bound = @($PSBoundParameters.Keys) })
+        }
+        # A build whose metadata advertises -Tenant for users but whose binder rejects it: retried once without -Tenant.
+        $script:BindingErrorShape = {
+            [CmdletBinding(DefaultParameterSetName = 'User')]
+            param(
+                [Parameter(ParameterSetName = 'User')][string]$Environment,
+                [Parameter(ParameterSetName = 'User')][string]$Tenant
+            )
+            $script:ConnectCalls.Add(@{ Set = $PSCmdlet.ParameterSetName; Bound = @($PSBoundParameters.Keys) })
+            if ($PSBoundParameters.ContainsKey('Tenant')) { throw (New-Object System.Management.Automation.ParameterBindingException 'Parameter set cannot be resolved using the specified named parameters.') }
+        }
+        $script:Cred2 = New-Object System.Management.Automation.PSCredential ('user@contoso.gov', (ConvertTo-SecureString -String 'p@ss' -AsPlainText -Force))
+    }
+    BeforeEach {
+        Reset-AuthMock
+        $script:ConnectCalls.Clear()
+        $script:IQ.Auth = @{ Initialized = $false; Mode = 'Interactive'; TenantId = 'aaaaaaaa-1111-4111-8111-111111111111'; Tokens = @{} }
+    }
+    AfterEach { Remove-Item -Path 'function:Connect-PowerBIServiceAccount' -ErrorAction SilentlyContinue }
+    AfterAll {
+        Remove-Item -Path 'function:Get-PowerBIAccessToken', 'function:Disconnect-PowerBIServiceAccount' -ErrorAction SilentlyContinue
+        Reset-IQTestEnvironment
+    }
+    It 'omits -Tenant when only the service-principal sets declare it (user sign-in)' {
+        Set-Item -Path 'function:Connect-PowerBIServiceAccount' -Value $script:OldShape
+        Connect-IQPowerBIModule -MaxAttempts 1 | Should -Be $script:PbiJwt2
+        $script:ConnectCalls.Count | Should -Be 1
+        $script:ConnectCalls[0].Set | Should -Be 'User'
+        @($script:ConnectCalls[0].Bound) | Should -Not -Contain 'Tenant'
+        @($script:ConnectCalls[0].Bound) | Should -Contain 'Environment'
+    }
+    It 'omits -Tenant when only the service-principal sets declare it (credential sign-in)' {
+        Set-Item -Path 'function:Connect-PowerBIServiceAccount' -Value $script:OldShape
+        Connect-IQPowerBIModule -Credential $script:Cred2 -MaxAttempts 1 | Should -Be $script:PbiJwt2
+        $script:ConnectCalls[0].Set | Should -Be 'UserAndCredential'
+        @($script:ConnectCalls[0].Bound) | Should -Not -Contain 'Tenant'
+    }
+    It 'passes -Tenant when the user parameter set declares it' {
+        Set-Item -Path 'function:Connect-PowerBIServiceAccount' -Value $script:NewShape
+        Connect-IQPowerBIModule -MaxAttempts 1 | Should -Be $script:PbiJwt2
+        @($script:ConnectCalls[0].Bound) | Should -Contain 'Tenant'
+        $script:ConnectCalls[0].Set | Should -Be 'User'
+    }
+    It 'does not pass -Tenant when the tenant id is not a GUID' {
+        Set-Item -Path 'function:Connect-PowerBIServiceAccount' -Value $script:NewShape
+        $script:IQ.Auth.TenantId = 'contoso.onmicrosoft.com'
+        Connect-IQPowerBIModule -MaxAttempts 1 | Should -Be $script:PbiJwt2
+        @($script:ConnectCalls[0].Bound) | Should -Not -Contain 'Tenant'
+    }
+    It 'retries once without -Tenant when binding fails' {
+        Set-Item -Path 'function:Connect-PowerBIServiceAccount' -Value $script:BindingErrorShape
+        Connect-IQPowerBIModule -MaxAttempts 1 | Should -Be $script:PbiJwt2
+        $script:ConnectCalls.Count | Should -Be 2
+        @($script:ConnectCalls[0].Bound) | Should -Contain 'Tenant'
+        @($script:ConnectCalls[1].Bound) | Should -Not -Contain 'Tenant'
     }
 }
 

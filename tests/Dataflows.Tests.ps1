@@ -60,6 +60,73 @@ Describe 'ConvertFrom-IQDataflowDocument (Gen1 mashup document)' {
     }
 }
 
+Describe 'Gen1 model.json helpers (entity rows, query groups) and Referenced Queries' {
+    It 'Incremental Refresh comes from the refresh policy TYPE (IncrementalRefreshPolicy), never from its mere presence' {
+        $rows = @(ConvertTo-IQDataflowEntityRow -ModelJson $script:Gen1Model -DataflowId $script:Ids.df1 -DataflowName 'Sales [Prod]/Data' -WorkspaceName 'Finance [Prod]')
+        $rows.Count | Should -Be 3
+        $sales = @($rows | Where-Object { $_.Entity -eq 'Sales' })
+        $sales.Count | Should -Be 2
+        foreach ($r in $sales) {
+            $r.'Incremental Refresh' | Should -BeTrue
+            $r.'Refresh Policy Type' | Should -Be 'IncrementalRefreshPolicy'
+        }
+        $empty = @($rows | Where-Object { $_.Entity -eq 'Empty' })[0]
+        $empty.'Incremental Refresh' | Should -BeFalse -Because 'FullRefreshPolicy is what the service emits for every non-incremental entity'
+        $empty.'Refresh Policy Type' | Should -Be 'FullRefreshPolicy'
+        $empty.Column | Should -Be ''
+    }
+    It 'a FullRefreshPolicy entity and an entity without a policy are both not incremental; incrementalPeriods alone still counts' {
+        $model = [pscustomobject]@{
+            entities = @(
+                [pscustomobject]@{ '$type' = 'LocalEntity'; name = 'Plain'; attributes = @(); 'pbi:refreshPolicy' = [pscustomobject]@{ '$type' = 'FullRefreshPolicy'; location = 'Plain.csv' } },
+                [pscustomobject]@{ '$type' = 'LocalEntity'; name = 'NoPolicy'; attributes = @() },
+                [pscustomobject]@{ '$type' = 'LocalEntity'; name = 'Periods'; attributes = @(); 'pbi:refreshPolicy' = [pscustomobject]@{ incrementalPeriods = 12; incrementalGranularity = 'Day' } }
+            )
+        }
+        $rows = @(ConvertTo-IQDataflowEntityRow -ModelJson $model -DataflowId 'x' -DataflowName 'x' -WorkspaceName 'x')
+        @($rows | Where-Object { $_.Entity -eq 'Plain' })[0].'Incremental Refresh' | Should -BeFalse
+        @($rows | Where-Object { $_.Entity -eq 'NoPolicy' })[0].'Incremental Refresh' | Should -BeFalse
+        @($rows | Where-Object { $_.Entity -eq 'NoPolicy' })[0].'Refresh Policy Type' | Should -Be ''
+        @($rows | Where-Object { $_.Entity -eq 'Periods' })[0].'Incremental Refresh' | Should -BeTrue
+    }
+    It 'query groups come from the "pbi:QueryGroups" annotation (JSON string); a top-level member wins; bad JSON yields none' {
+        $fromAnnotation = @(Get-IQDataflowGen1QueryGroup -ModelJson $script:Gen1Model)
+        $fromAnnotation.Count | Should -Be 1
+        $fromAnnotation[0].name | Should -Be 'Facts'
+        $topLevel = [pscustomobject]@{
+            'pbi:QueryGroups' = @([pscustomobject]@{ id = 'g1'; name = 'Top' })
+            annotations       = @([pscustomobject]@{ name = 'pbi:QueryGroups'; value = '[{"id":"g1","name":"Annotation"}]' })
+        }
+        @(Get-IQDataflowGen1QueryGroup -ModelJson $topLevel)[0].name | Should -Be 'Top'
+        $bad = [pscustomobject]@{ annotations = @([pscustomobject]@{ name = 'pbi:QueryGroups'; value = 'not json [' }, [pscustomobject]@{ name = 'other'; value = '[]' }) }
+        @(Get-IQDataflowGen1QueryGroup -ModelJson $bad).Count | Should -Be 0
+        @(Get-IQDataflowGen1QueryGroup -ModelJson $null).Count | Should -Be 0
+    }
+    It '"Query Group" shows the group NAME resolved through the annotation, not the group id' {
+        $map = Get-IQDataflowQueryMetaMap -QueriesMetadata $script:Gen1Model.'pbi:mashup'.queriesMetadata -QueryGroups (Get-IQDataflowGen1QueryGroup -ModelJson $script:Gen1Model)
+        $map['Sales'].QueryGroup | Should -Be 'Facts'
+        $rows = @(ConvertFrom-IQDataflowDocument -Content $script:Gen1Document -DataflowId $script:Ids.df1 -DataflowName 'Sales [Prod]/Data' -WorkspaceName 'Finance [Prod]' -ReportDate '2026-09-04' -QueryMetadata $map)
+        $sales = @($rows | Where-Object { $_.'Query Name' -eq 'Sales' })[0]
+        $sales.'Query Group' | Should -Be 'Facts'
+        $sales.'Load Enabled' | Should -BeTrue
+    }
+    It 'Referenced Queries ignores identifiers the expression declares itself (Source / Data let-steps) and keeps real references' {
+        $doc = "section Section1;`nshared Source = Sql.Database(`"srv`", `"db`");`nshared Sales = let`n    Source = Sql.Database(`"srv`", `"db`"),`n    Data = Source{[Schema = `"dbo`", Item = `"Sales`"]}[Data]`nin`n    Data;`nshared Data = let Pattern = Sales in Pattern;`nshared #`"Sales Copy`" = let Source = #`"Sales`" in Source;`nshared Single = let Data = 1 in Data;"
+        $rows = @(ConvertFrom-IQDataflowDocument -Content $doc -DataflowId 'x' -DataflowName 'x' -WorkspaceName 'x' -ReportDate '2026-09-04')
+        $byName = @{}
+        foreach ($r in $rows) { $byName[$r.'Query Name'] = $r }
+        $byName['Sales'].'Referenced Queries' | Should -Be '' -Because 'Source and Data are local steps of Sales, not the shared queries of the same name'
+        $byName['Data'].'Referenced Queries' | Should -Be 'Sales'
+        $byName['Sales Copy'].'Referenced Queries' | Should -Be 'Sales' -Because '#"Sales" is the same identifier as Sales; the local Source step is not a reference'
+        $byName['Single'].'Referenced Queries' | Should -Be '' -Because 'a single-line "let Data = ..." declares Data'
+        $byName['Source'].'Referenced Queries' | Should -Be ''
+        # the fixture: "Customers 2024" has "Source = Sales" -> Sales is referenced; Sales itself references nothing
+        $fixtureRows = @(ConvertFrom-IQDataflowDocument -Content $script:Gen1Document -DataflowId 'x' -DataflowName 'x' -WorkspaceName 'x' -ReportDate '2026-09-04')
+        @($fixtureRows | Where-Object { $_.'Query Name' -eq 'Customers 2024' })[0].'Referenced Queries' | Should -Be 'Sales'
+        @($fixtureRows | Where-Object { $_.'Query Name' -eq 'Sales' })[0].'Referenced Queries' | Should -Be ''
+    }
+}
+
 Describe 'ConvertFrom-IQDataflowDocument (Gen2 .pq with attribute records)' {
     BeforeAll {
         $script:G2 = @(ConvertFrom-IQDataflowDocument -Content $script:Gen2Pq -DataflowId $script:Ids.fdf1 -DataflowName 'Sales Gen2' -WorkspaceName 'Sales' -ReportDate '2026-09-04')
@@ -117,6 +184,11 @@ Describe 'Invoke-IQDataflowsStage' {
         [System.IO.File]::ReadAllBytes($pq).Length | Should -Be ([System.IO.File]::ReadAllBytes((Get-IQTestFixturePath -Relative 'dataflows/gen2-mashup.pq')).Length)
         @($script:IQTestApiCalls | Where-Object { $_ -like ('Fabric LRO POST workspaces/' + $script:Ids.ws2 + '/dataflows/' + $script:Ids.fdf1 + '/getDefinition') }).Count | Should -Be 1
         (Join-Path $script:RunFolder 'evil.txt') | Should -Not -Exist -Because 'definition parts outside the target folder are skipped'
+        $definition = Join-Path $script:RunFolder 'Sales ~ Sales Gen2.definition'
+        (Join-Path $definition 'mashup.pq') | Should -Exist
+        (Join-Path $definition 'queryMetadata.json') | Should -Exist
+        @((Get-IQItemCheckpoint -Stage Dataflows -ItemKey $script:Ids.fdf1).outputs) | Should -Contain $definition -Because 'a deleted definition folder must invalidate the checkpoint'
+        @(Get-ChildItem -LiteralPath $script:RunFolder -Directory | Where-Object { $_.Name -like '*.tmp-*' }).Count | Should -Be 0 -Because 'the temp folder is swapped into place'
     }
     It 'does not leave a stale or empty backup for the failed dataflow' {
         (Join-Path $script:RunFolder 'Finance (Prod) ~ Broken Flow.txt') | Should -Not -Exist
@@ -128,6 +200,9 @@ Describe 'Invoke-IQDataflowsStage' {
         [int]$extA.QueryCount | Should -Be 6
         @($extA.Queries)[0].'Query Name' | Should -Be 'Sales'
         @($extA.Queries)[0].'Report Date' | Should -Be $script:IQ.RunId
+        @($extA.Queries)[0].'Query Group' | Should -Be 'Facts' -Because 'the group name comes from the pbi:QueryGroups annotation'
+        [int]$extA.EntityCount | Should -Be 3
+        @($extA.Entities | Where-Object { $_.Entity -eq 'Empty' })[0].'Incremental Refresh' | Should -BeFalse
         $extC = ConvertFrom-IQJsonFile -Path (Join-Path $script:ExtractFolder ((Get-IQSafeKey -Value $script:Ids.fdf1) + '.json'))
         [int]$extC.QueryCount | Should -Be 3
         $extC.Generation | Should -Match 'Gen 2'
@@ -152,5 +227,76 @@ Describe 'Invoke-IQDataflowsStage' {
         $pq | Should -Exist
         (Get-IQItemCheckpoint -Stage Dataflows -ItemKey $script:BrokenId).status | Should -Be 'Succeeded'
         @($script:IQ.Manifest.failures | Where-Object { $_.itemKey -eq $script:BrokenId }).Count | Should -Be 0
+    }
+    It 'Report Date for a non-date RunId is the run start date from the manifest (one date per run), not today' {
+        $savedRunId = $script:IQ.RunId
+        $savedStart = $script:IQ.Manifest['startedUtc']
+        try {
+            $script:IQ.RunId = 'nightly-42'
+            $script:IQ.Manifest['startedUtc'] = '2026-01-15T12:00:00.0000000Z'
+            Get-IQDataflowReportDate | Should -Be '2026-01-15'
+            $script:IQ.RunId = '2026-09-04'
+            Get-IQDataflowReportDate | Should -Be '2026-09-04'
+        }
+        finally {
+            $script:IQ.RunId = $savedRunId
+            $script:IQ.Manifest['startedUtc'] = $savedStart
+        }
+    }
+    It 'backup names: a Gen1 and a Gen2 CI/CD dataflow with the same name keep "<stem>.txt" / "<stem>.pq"; a second Gen1 gets the " ~<id8>" suffix' {
+        Mock Get-IQAllWorkspaceInventories {
+            @([pscustomobject]@{
+                    WorkspaceId = 'ws-x'; WorkspaceName = 'WS'; IsSynthetic = $false
+                    Dataflows   = @(
+                        [pscustomobject]@{ DataflowId = '11111111-aaaa-4aaa-8aaa-000000000001'; DataflowName = 'Sales'; DataflowGeneration = 1; WorkspaceId = 'ws-x'; WorkspaceName = 'WS' },
+                        [pscustomobject]@{ DataflowId = '22222222-bbbb-4bbb-8bbb-000000000002'; DataflowName = 'Sales'; DataflowGeneration = 'Gen 2 CICD'; WorkspaceId = 'ws-x'; WorkspaceName = 'WS' },
+                        [pscustomobject]@{ DataflowId = '33333333-cccc-4ccc-8ccc-000000000003'; DataflowName = 'Sales'; DataflowGeneration = 1; WorkspaceId = 'ws-x'; WorkspaceName = 'WS' }
+                    )
+                })
+        }
+        $list = @(Get-IQDataflowWorkList -RunFolder $script:RunFolder -ExtractFolder $script:ExtractFolder)
+        @($list | ForEach-Object { Split-Path -Path $_.BackupPath -Leaf }) | Should -Be @('WS ~ Sales.txt', 'WS ~ Sales.pq', 'WS ~ Sales ~33333333.txt')
+        @($list | ForEach-Object { Split-Path -Path $_.DefinitionFolder -Leaf }) | Should -Be @('WS ~ Sales.definition', 'WS ~ Sales.definition', 'WS ~ Sales ~33333333.definition')
+    }
+    It 'Gen2: a re-export whose parts cannot be saved keeps the previous definition folder and .pq, leaves no temp folder, fails the checkpoint and removes the stale extract' {
+        $definition = Join-Path $script:RunFolder 'Sales ~ Sales Gen2.definition'
+        $pq = Join-Path $script:RunFolder 'Sales ~ Sales Gen2.pq'
+        $extract = Join-Path $script:ExtractFolder ((Get-IQSafeKey -Value $script:Ids.fdf1) + '.json')
+        (Join-Path $definition 'mashup.pq') | Should -Exist
+        $extract | Should -Exist
+        Remove-Item -LiteralPath $pq -Force   # invalidates the checkpoint so the dataflow is re-exported
+        Mock Invoke-IQFabricLro {
+            [pscustomobject]@{ definition = [pscustomobject]@{ parts = @([pscustomobject]@{ path = '../evil.txt'; payloadType = 'InlineBase64'; payload = 'eA==' }, [pscustomobject]@{ path = 'broken.pq'; payloadType = 'InlineBase64'; payload = '%%% not base64 %%%' }) } }
+        }
+        Invoke-IQStage -Name Dataflows -Body { Invoke-IQDataflowsStage | Out-Null } | Should -Be 'CompletedWithErrors'
+        (Get-IQItemCheckpoint -Stage Dataflows -ItemKey $script:Ids.fdf1).status | Should -Be 'Failed'
+        (Join-Path $definition 'mashup.pq') | Should -Exist -Because 'the previous definition is only replaced by a good export'
+        (Join-Path $definition 'broken.pq') | Should -Not -Exist
+        @(Get-ChildItem -LiteralPath $script:RunFolder -Directory | Where-Object { $_.Name -like '*.tmp-*' }).Count | Should -Be 0
+        (Join-Path $script:RunFolder 'evil.txt') | Should -Not -Exist
+        $extract | Should -Not -Exist -Because 'Assemble must not emit stale rows for a dataflow the manifest reports as failed'
+        @($script:IQ.Manifest.failures | Where-Object { $_.itemKey -eq $script:Ids.fdf1 }).Count | Should -Be 1
+    }
+    It 'Gen1: a body that is not valid JSON is a failure (retried on resume) that keeps the raw .txt and removes the stale extract' {
+        $txt = Join-Path $script:RunFolder 'Finance (Prod) ~ Sales (Prod) Data.txt'
+        $extract = Join-Path $script:ExtractFolder ((Get-IQSafeKey -Value $script:Ids.df1) + '.json')
+        $extract | Should -Exist
+        Remove-Item -LiteralPath $txt -Force
+        $script:IQTestApiOverrides[(ConvertTo-IQTestFixtureName -Api PowerBI -Path ('groups/' + $script:Ids.ws1 + '/dataflows/' + $script:Ids.df1))] = '{ "name": "Sales", "pbi:mashup": { "document": "section Section1;'
+        try {
+            Invoke-IQStage -Name Dataflows -Body { Invoke-IQDataflowsStage | Out-Null } | Should -Be 'CompletedWithErrors'
+        }
+        finally { $script:IQTestApiOverrides.Clear() }
+        $cp = Get-IQItemCheckpoint -Stage Dataflows -ItemKey $script:Ids.df1
+        $cp.status | Should -Be 'Failed'
+        $cp.message | Should -Match 'not valid JSON'
+        $txt | Should -Exist -Because 'the raw body is kept for inspection'
+        $extract | Should -Not -Exist
+        (Get-IQItemCheckpoint -Stage Dataflows -ItemKey $script:Ids.fdf1).status | Should -Be 'Succeeded' -Because 'the Gen2 dataflow that failed in the previous test is retried with the good definition'
+        (Test-IQItemDone -Stage Dataflows -ItemKey $script:Ids.df1) | Should -BeFalse -Because 'a failed dataflow is exported again on resume'
+        # and the fixed dataflow is picked up again on the next start
+        Invoke-IQStage -Name Dataflows -Body { Invoke-IQDataflowsStage | Out-Null } | Should -Be 'Completed'
+        (Get-IQItemCheckpoint -Stage Dataflows -ItemKey $script:Ids.df1).status | Should -Be 'Succeeded'
+        $extract | Should -Exist
     }
 }

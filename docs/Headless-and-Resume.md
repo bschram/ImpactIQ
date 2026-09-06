@@ -39,7 +39,7 @@ Contents: 1 parameters - 2 examples - 3 state layout and manifest - 4 resume rul
 | `-SkipToolUpdate` | off (`IMPACTIQ_OFFLINE=1`) | do not download Tabular Editor 2 / pbi-tools updates |
 | `-IncludeAdminApis` | off | Extras: admin groups, Scanner API, activity events (Fabric admin only; probed, else skipped) |
 | `-IncludeUsageMetrics` | off | Extras: per-workspace "Usage Metrics Report" model via DAX |
-| `-ActivityDays <int>` | `30` | days of `admin/activityevents` (API window is 28) |
+| `-ActivityDays <int>` | `30` | UTC days of `admin/activityevents`, one call per day ending on the run's start date; clamped to `ActivityMaxDays` (28) - the default 30 is trimmed with an Info line, an explicit larger value with a Warn line |
 | `-LogPath <file>` | `Logs\ImpactIQ_yyyyMMdd_HHmmss.log` | log file |
 | `-PassThru` | off | return the manifest object |
 
@@ -200,8 +200,9 @@ produce the same structure.
 * Redaction: `Password=...` (XMLA connection strings), `Bearer ...`, `access_token=`, `refresh_token=`,
   `client_secret=`, `password=` are replaced by `***` in every line. Tokens minted on Azure DevOps are registered as
   secrets with the agent.
-* Every HTTP call is logged at Debug as `METHOD path -> status (ms)`; `manifest.json` does not carry them, but
-  `$IQ.Stats` (ApiCalls, Retries) is printed in the final summary.
+* Every HTTP call is logged at Debug as `METHOD path -> status (ms)`. Neither `manifest.json` nor the final summary
+  carries call counts; `$IQ.Stats` (ApiCalls, Retries) is only an in-memory counter, so count the Debug lines in the
+  log file when you need totals.
 * External processes: `tool-logs\<Stage>\<item>.out.txt/.err.txt`; the first error lines are copied into the item's
   checkpoint message and the `Failures` sheet.
 

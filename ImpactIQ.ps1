@@ -64,7 +64,10 @@
 .PARAMETER DatasetId
     Semantic model ids (Models mode). Every accessible report using them is included automatically.
 .PARAMETER Stages
-    Only run these stages (canonical order is kept). Default: all.
+    Only run these stages (canonical order is kept): Inventory, ModelBackup, ReportBackup, ReportDetail, ModelDetail,
+    Dataflows, Extras, Assemble - as an array or one comma/semicolon-separated string (powershell.exe -File form).
+    Default: all. A list without Inventory runs on top of an existing run: today's run, else (without -RunId) the
+    newest run that has a manifest; when none exists the script stops before touching any folder.
 .PARAMETER SkipStages
     Stages to skip.
 .PARAMETER RunId
@@ -144,7 +147,10 @@ param(
     [Parameter(Mandatory = $false)][switch]$IncludeMyWorkspace,
     [Parameter(Mandatory = $false)][string[]]$ReportId,
     [Parameter(Mandatory = $false)][string[]]$DatasetId,
-    [Parameter(Mandatory = $false)][ValidateSet('Inventory', 'ModelBackup', 'ReportBackup', 'ReportDetail', 'ModelDetail', 'Dataflows', 'Extras', 'Assemble')][string[]]$Stages,
+    # No [ValidateSet]: "powershell.exe -File ImpactIQ.ps1 -Stages Inventory,Assemble" (Task Scheduler / runas) binds the
+    # comma list as ONE string, which a ValidateSet rejects before the script body runs; Get-IQEntryStageList splits
+    # and validates instead (unknown names throw). The completer keeps tab completion for console use.
+    [Parameter(Mandatory = $false)][ArgumentCompleter({ $w = [string]$args[2]; @('Inventory', 'ModelBackup', 'ReportBackup', 'ReportDetail', 'ModelDetail', 'Dataflows', 'Extras', 'Assemble') | Where-Object { $_ -like ($w + '*') } })][string[]]$Stages,
     [Parameter(Mandatory = $false)][string[]]$SkipStages,
     [Parameter(Mandatory = $false)][string]$RunId,
     [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Always', 'Never')][string]$Resume = 'Auto',
@@ -226,7 +232,10 @@ function Resolve-IQEntryBaseFolder {
         [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$ScriptRoot
     )
     if (-not [string]::IsNullOrWhiteSpace($Requested)) {
-        return [System.IO.Path]::GetFullPath($Requested)
+        # Through the provider, not [System.IO.Path]::GetFullPath: .NET resolves a relative path against the process
+        # working directory, which Windows PowerShell does not move on Set-Location, so ".\Backups" would land under
+        # the folder the console was started in (or System32 for a scheduled task). Works for paths that do not exist yet.
+        return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Requested)
     }
     if (-not [string]::IsNullOrWhiteSpace($ScriptRoot) -and (Test-Path -LiteralPath (Join-Path $ScriptRoot 'Config') -PathType Container)) {
         return [System.IO.Path]::GetFullPath($ScriptRoot)
@@ -273,6 +282,10 @@ function Get-IQEntryStageList {
     $wanted = @($script:IQEntryStageOrder)
     $req = @()
     foreach ($s in @($Requested)) { if ($null -ne $s) { foreach ($p in ([string]$s -split '[,;]')) { if ($p.Trim()) { $req += $p.Trim() } } } }
+    $bad = @($req | Where-Object { $name = $_; @($script:IQEntryStageOrder | Where-Object { $_ -ieq $name }).Count -eq 0 })
+    if ($bad.Count -gt 0) {
+        throw ("-Stages: unknown stage(s) {0} (valid: {1})." -f ($bad -join ', '), ($script:IQEntryStageOrder -join ', '))
+    }
     if ($req.Count -gt 0) {
         $wanted = @($script:IQEntryStageOrder | Where-Object { $name = $_; @($req | Where-Object { $_ -ieq $name }).Count -gt 0 })
     }
@@ -300,6 +313,22 @@ function Test-IQEntryScopeGiven {
     if (@($DatasetId | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) { return $true }
     if ($AllWorkspaces -or $IncludeMyWorkspace) { return $true }
     return $false
+}
+
+function Test-IQEntryScopeUsable {
+    <#
+    .SYNOPSIS
+        $true when the scope parameters satisfy the run mode the way Resolve-IQScope checks them: Reports needs -ReportId, Models needs -DatasetId, Workspaces any scope parameter.
+    .DESCRIPTION
+        Test-IQEntryScopeGiven only says "something was given"; "-RunMode Reports -WorkspaceName Finance" passes it and
+        then fails inside the Inventory stage - after sign-in, tool preflight and Initialize-IQRun (which may already
+        have archived today's Completed manifest and cleared today's backup folders). This check fails before all that.
+    #>
+    [CmdletBinding()]
+    param()
+    if ($RunMode -eq 'Reports') { return (@($ReportId | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) }
+    if ($RunMode -eq 'Models') { return (@($DatasetId | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) }
+    return (Test-IQEntryScopeGiven)
 }
 
 function Get-IQEntryNoScopeMessage {

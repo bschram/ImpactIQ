@@ -7,7 +7,7 @@
   "pbi:mashup": {
     "fetchedTime": "2026-08-30T12:00:00.000Z",
     "allowNativeQueries": true,
-    "document": "section Section1;\nshared Sales = let\n    Source = Sql.Database(\"sql-finance.contoso.gov\", \"Ledger\"),\n    T = Source{[Schema = \"dbo\", Item = \"Sales\"]}[Data]\nin\n    T;\nshared #\"Customers 2024\" = let\n    Source = Sales,\n    Note = \"see shared Foo = bar\"\nin\n    Source;\nshared Region.Lookup = Table.FromRecords({[Region = \"West\"], [Region = \"East\"]});\nshared \u00c4rzte = #table({\"Name\"}, {{\"Dr. M\u00fcller\"}});\n[Description = \"nested [bracket] record\", Tags = {\"a\", \"b\"}]\nshared Files = let\n    Source = Folder.Files(\"\\\\fileserver\\new reports\\\"),\n    Path = \"C:\\rn\\data\\\"\nin\n    Source;\nshared #\"Say \"\"Hi\"\"\" = Value.NativeQuery(Sql.Database(\"srv\",\"db\"), \"select 1\");",
+    "document": "section Section1;\nshared Sales = let\n    Source = Sql.Database(\"sql-finance.contoso.gov\", \"Ledger\"),\n    T = Source{[Schema = \"dbo\", Item = \"Sales\"]}[Data]\nin\n    T;\nshared #\"Customers 2024\" = let\n    Source = Sales,\n    Note = \"see shared Foo = bar\"\nin\n    Source;\nshared Region.Lookup = Table.FromRecords({[Region = \"West\"], [Region = \"East\"]});\nshared Ärzte = #table({\"Name\"}, {{\"Dr. Müller\"}});\n[Description = \"nested [bracket] record\", Tags = {\"a\", \"b\"}]\nshared Files = let\n    Source = Folder.Files(\"\\\\fileserver\\new reports\\\"),\n    Path = \"C:\\rn\\data\\\"\nin\n    Source;\nshared #\"Say \"\"Hi\"\"\" = Value.NativeQuery(Sql.Database(\"srv\",\"db\"), \"select 1\");",
     "queriesMetadata": {
       "Sales": {
         "queryId": "q1",
@@ -22,16 +22,10 @@
       }
     }
   },
-  "pbi:QueryGroups": [
-    {
-      "id": "g1",
-      "name": "Facts"
-    }
-  ],
   "annotations": [
     {
       "name": "pbi:QueryGroups",
-      "value": "[]"
+      "value": "[{\"id\":\"g1\",\"name\":\"Facts\",\"order\":0}]"
     }
   ],
   "entities": [
@@ -49,7 +43,8 @@
         }
       ],
       "pbi:refreshPolicy": {
-        "$type": "FullRefreshPolicy",
+        "$type": "IncrementalRefreshPolicy",
+        "location": "Sales.csv",
         "incrementalPeriods": 3,
         "incrementalGranularity": "Month"
       }
@@ -57,7 +52,11 @@
     {
       "$type": "LocalEntity",
       "name": "Empty",
-      "attributes": []
+      "attributes": [],
+      "pbi:refreshPolicy": {
+        "$type": "FullRefreshPolicy",
+        "location": "Empty.csv"
+      }
     }
   ]
 }
