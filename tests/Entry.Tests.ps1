@@ -105,6 +105,47 @@ Describe 'Headless run without a scope' -Skip:(-not $script:HasEntry) {
     }
 }
 
+Describe 'Headless run whose scope does not fit the run mode' -Skip:(-not $script:HasEntry) {
+    BeforeAll {
+        $script:Base3 = New-EntryBase -Prefix 'entry-modescope'
+        $script:Run3 = Invoke-Entry -Base $script:Base3 -Parameters @{ BaseFolder = $script:Base3; NonInteractive = $true; Environment = 'Public'; AuthMode = 'AccessToken'; SkipToolUpdate = $true; Stages = @('Inventory'); RunId = 'entry-modescope'; Resume = 'Never'; RunMode = 'Reports'; WorkspaceName = @('Finance') }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:Base3 }
+    It 'fails with the Reports-mode "no scope" message before a run folder is created' {
+        $script:Run3.ExitCode | Should -Not -Be 0 -Because $script:Run3.Output
+        $script:Run3.Output | Should -Match '(?i)no scope.*-ReportId'
+        (Join-Path (Join-Path (Join-Path $script:Base3 'State') 'runs') 'entry-modescope') | Should -Not -Exist -Because 'the check must run before Initialize-IQRun / sign-in'
+    }
+}
+
+Describe '-Stages validation and run resolution without Inventory' -Skip:(-not $script:HasEntry) {
+    BeforeAll {
+        $script:Base4 = New-EntryBase -Prefix 'entry-stages'
+        # one comma-separated string, the form powershell.exe -File passes: it must be split, then the unknown name refused
+        $script:RunBad = Invoke-Entry -Base $script:Base4 -Parameters @{ BaseFolder = $script:Base4; NonInteractive = $true; Environment = 'Public'; AuthMode = 'AccessToken'; SkipToolUpdate = $true; Stages = 'Assemble,Bogus' }
+        $script:RunNoRun = Invoke-Entry -Base $script:Base4 -Parameters @{ BaseFolder = $script:Base4; NonInteractive = $true; Environment = 'Public'; AuthMode = 'AccessToken'; SkipToolUpdate = $true; Stages = @('Assemble') }
+        $script:RunForce = Invoke-Entry -Base $script:Base4 -Parameters @{ BaseFolder = $script:Base4; NonInteractive = $true; Environment = 'Public'; AuthMode = 'AccessToken'; SkipToolUpdate = $true; Stages = @('Assemble'); RunId = 'entry-stages'; Force = $true }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:Base4 }
+    It 'splits a comma-separated -Stages string and refuses an unknown stage name' {
+        $script:RunBad.ExitCode | Should -Not -Be 0 -Because $script:RunBad.Output
+        $script:RunBad.Output | Should -Match '(?i)unknown stage.*Bogus'
+        $script:RunBad.Output | Should -Not -Match '(?i)Cannot validate argument'
+    }
+    It 'refuses -Stages Assemble when no run exists instead of assembling an empty fresh run' {
+        $script:RunNoRun.ExitCode | Should -Not -Be 0 -Because $script:RunNoRun.Output
+        $script:RunNoRun.Output | Should -Match '(?i)no previous run'
+        foreach ($f in @('Power BI Environment Detail.xlsx', 'Report Detail.xlsx', 'Model Detail.xlsx', 'Dataflow Detail.xlsx')) { (Join-Path $script:Base4 $f) | Should -Not -Exist }
+        $runs = Join-Path (Join-Path $script:Base4 'State') 'runs'
+        if (Test-Path -LiteralPath $runs) { @(Get-ChildItem -LiteralPath $runs -Directory).Count | Should -Be 0 -Because 'no run folder may be created for a stage list that cannot run' }
+    }
+    It 'refuses -Force combined with a stage list that lacks Inventory' {
+        $script:RunForce.ExitCode | Should -Not -Be 0 -Because $script:RunForce.Output
+        $script:RunForce.Output | Should -Match '(?i)-Force with -Stages'
+        (Join-Path (Join-Path (Join-Path $script:Base4 'State') 'runs') 'entry-stages') | Should -Not -Exist
+    }
+}
+
 Describe '-Stages Assemble on a prepared state folder' -Skip:(-not ($script:HasEntry -and $script:HasImportExcel)) {
     BeforeAll {
         Mock Get-IQToken { 'test-token' }

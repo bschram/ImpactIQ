@@ -35,7 +35,7 @@ function Initialize-IQContext {
     )
 
     if ($null -eq $Options) { $Options = @{} }
-    $BaseFolder = [System.IO.Path]::GetFullPath($BaseFolder)
+    $BaseFolder = Resolve-IQFullPath -Path $BaseFolder
 
     $configFolder = Join-Path $BaseFolder 'Config'
     $statePath = Join-Path $BaseFolder 'State'
@@ -54,7 +54,9 @@ function Initialize-IQContext {
         if ($logDir -and -not (Test-Path -LiteralPath $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
     }
     else {
-        $logFile = Join-Path $logsPath ('ImpactIQ_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.log')
+        # Invariant culture: Get-Date -Format uses the current culture's calendar (Buddhist/UmAlQura years on th-TH / ar-SA).
+        $stamp = [datetime]::Now.ToString('yyyyMMdd_HHmmss', [System.Globalization.CultureInfo]::InvariantCulture)
+        $logFile = Join-Path $logsPath ('ImpactIQ_' + $stamp + '.log')
     }
 
     $onWindows = ($env:OS -eq 'Windows_NT')
@@ -101,6 +103,23 @@ function Initialize-IQContext {
     Write-IQLog -Level Debug -Message ("Context initialised. BaseFolder='{0}' IsWindows={1} IsAzureDevOps={2} Interactive={3} PS={4}" -f `
             $BaseFolder, $onWindows, $isAzureDevOps, $script:IQ.Interactive, $PSVersionTable.PSVersion)
     return $script:IQ
+}
+
+function Resolve-IQFullPath {
+    <#
+    .SYNOPSIS
+        Turns a (possibly relative or PSDrive) path into a normalised absolute file-system path, resolved against $PWD.
+    .DESCRIPTION
+        [System.IO.Path]::GetFullPath alone resolves relative paths against the PROCESS working directory, which Windows
+        PowerShell does not update on Set-Location; the session path API honours $PWD and PSDrives on 5.1 and 7. The path
+        does not have to exist and wildcard characters are kept literal.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true, Position = 0)][string]$Path)
+    $resolved = $Path
+    try { $resolved = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path) }
+    catch { $resolved = $Path }
+    return [System.IO.Path]::GetFullPath($resolved)
 }
 
 function Get-IQContext {
@@ -159,7 +178,11 @@ function ConvertTo-IQRedactedText {
     $t = $Text
     $t = [regex]::Replace($t, '(?i)(Password\s*=)[^;"]+', '$1***')
     $t = [regex]::Replace($t, '(?i)(Bearer\s+)[A-Za-z0-9\-_\.=]+', '$1***')
-    $t = [regex]::Replace($t, '(?i)((?:refresh_token|access_token|id_token|client_secret|password)["'']?\s*[=:]\s*["'']?)[A-Za-z0-9\-_\.=%+/]+', '$1***')
+    # Key/value secrets: mask everything up to the next delimiter (a narrow value class left the tail of passwords with
+    # special characters, e.g. "Pa$$w0rd!x" -> "***$$w0rd!x", in clear text).
+    $t = [regex]::Replace($t, '(?i)((?:refresh_token|access_token|id_token|client_secret|client_assertion|device_code|password)["'']?\s*[=:]\s*["'']?)[^\s;"'',}&]+', '$1***')
+    # Raw JWTs anywhere in the text (e.g. a token echoed by an exception message without a "Bearer " prefix).
+    $t = [regex]::Replace($t, 'eyJ[A-Za-z0-9\-_]{5,}\.eyJ[A-Za-z0-9\-_]{5,}\.[A-Za-z0-9\-_]+', '***jwt***')
     return $t
 }
 
@@ -171,6 +194,8 @@ function Write-IQLog {
         Debug lines always go to the log file; they are echoed to the host only when Options.Verbose/Options.Debug or
         $env:IMPACTIQ_DEBUG=1. On Azure DevOps ($env:TF_BUILD -eq 'True') Warn/Error lines also emit
         ##vso[task.logissue type=warning|error] so they appear in the pipeline issues summary.
+    .PARAMETER Exception
+        A [System.Exception] or the ErrorRecord from a catch block ($_); anything else is appended as text.
     #>
     [CmdletBinding()]
     param(
@@ -178,13 +203,23 @@ function Write-IQLog {
         [Parameter(Mandatory = $false)][ValidateSet('Info', 'Warn', 'Error', 'Debug', 'Success')][string]$Level = 'Info',
         [Parameter(Mandatory = $false)][string]$Stage,
         [Parameter(Mandatory = $false)][string]$Item,
-        [Parameter(Mandatory = $false)][System.Exception]$Exception
+        [Parameter(Mandatory = $false)][AllowNull()]$Exception
     )
     try {
         $ctx = $script:IQ
         if ([string]::IsNullOrEmpty($Stage) -and $ctx -and $ctx.CurrentStage) { $Stage = [string]$ctx.CurrentStage }
 
+        # -Exception is untyped so that "catch { Write-IQLog ... -Exception $_ }" (an ErrorRecord) cannot fail at
+        # parameter binding, which happens before this try block: unwrap it here instead.
+        $otherText = $null
+        if ($Exception -is [System.Management.Automation.ErrorRecord]) { $Exception = $Exception.Exception }
+        elseif ($null -ne $Exception -and -not ($Exception -is [System.Exception])) {
+            $otherText = [string]$Exception
+            $Exception = $null
+        }
+
         $text = ConvertTo-IQRedactedText -Text ([string]$Message)
+        if (-not [string]::IsNullOrEmpty($otherText)) { $text = $text + ' :: ' + (ConvertTo-IQRedactedText -Text $otherText) }
         $exceptionText = $null
         if ($null -ne $Exception) {
             $exceptionText = ConvertTo-IQRedactedText -Text $Exception.Message
@@ -312,10 +347,14 @@ function Invoke-IQWithRetry {
             $shouldRetry = $true
             if ($null -ne $RetryOn) {
                 try {
-                    $verdict = @($err | ForEach-Object -Process $RetryOn) | Select-Object -Last 1
+                    # "& $RetryOn $_" makes the ErrorRecord available as $_, $args[0] and a param() argument alike.
+                    $verdict = @($err | ForEach-Object -Process { & $RetryOn $_ }) | Select-Object -Last 1
                     $shouldRetry = [bool]$verdict
                 }
-                catch { $shouldRetry = $false }
+                catch {
+                    Write-IQLog -Level Debug -Message ("{0}: RetryOn filter threw ({1}); not retrying." -f $Description, $_.Exception.Message)
+                    $shouldRetry = $false
+                }
             }
             if (-not $shouldRetry -or $attempt -ge $MaxAttempts) {
                 if ($attempt -ge $MaxAttempts -and $shouldRetry) {
@@ -336,12 +375,17 @@ function ConvertTo-IQJsonFile {
     <#
     .SYNOPSIS
         Atomically writes an object as JSON (UTF-8 without BOM, -Depth 20): writes "<path>.tmp" then Move-Item -Force.
+    .DESCRIPTION
+        A relative -Path is resolved against $PWD. Paths containing wildcard characters ([ ] * ?) are renamed with the
+        .NET file API instead, because Move-Item -Destination is not a literal path on Windows PowerShell 5.1.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true, Position = 0)][AllowNull()]$Object,
         [Parameter(Mandatory = $true, Position = 1)][string]$Path
     )
+    # Normalise once: the .NET file APIs resolve relative paths against the process directory, the cmdlets against $PWD.
+    $Path = Resolve-IQFullPath -Path $Path
     $dir = Split-Path -Path $Path -Parent
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $json = $null
@@ -350,6 +394,13 @@ function ConvertTo-IQJsonFile {
     $tmp = $Path + '.tmp'
     $enc = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($tmp, $json, $enc)
+    if ($Path.IndexOfAny([char[]]@('[', ']', '*', '?')) -ge 0) {
+        # Move-Item -Destination is not a literal path on Windows PowerShell 5.1 (brackets are wildcard syntax): rename in .NET.
+        # [NullString]::Value: PowerShell would otherwise pass $null as "" and File.Replace rejects an empty backup name.
+        if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Replace($tmp, $Path, [NullString]::Value) }
+        else { [System.IO.File]::Move($tmp, $Path) }
+        return
+    }
     Move-Item -LiteralPath $tmp -Destination $Path -Force
 }
 
@@ -363,6 +414,7 @@ function ConvertFrom-IQJsonFile {
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $true, Position = 0)][string]$Path)
+    $Path = Resolve-IQFullPath -Path $Path
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
     $text = [System.IO.File]::ReadAllText($Path)
     if ([string]::IsNullOrWhiteSpace($text)) { return $null }
@@ -411,10 +463,14 @@ function Test-IQInteractive {
 function Test-IQTimeBudget {
     <#
     .SYNOPSIS
-        $true when the run's time budget (Options.TimeBudgetMinutes, 0 = unlimited) minus a 2-minute grace has been used up by THIS process.
+        $true when the run's time budget (Options.TimeBudgetMinutes, 0 = unlimited) minus a grace period (default 2 min) has been used up by THIS process.
     .DESCRIPTION
         Elapsed time is measured from $script:IQ.StartedUtc (set by Initialize-IQContext in this process, so a resumed
-        run gets a full budget again). The first time the budget is found exhausted the function sets
+        run gets a full budget again). Two knobs exist for capped agents whose clock started before this process did
+        (checkout, tool download, pwsh start-up) or whose in-flight work after the budget trips exceeds 2 minutes:
+        Options.TimeBudgetGraceMinutes (minutes kept free at the end, default 2) and Options.BudgetStartUtc or
+        $env:IMPACTIQ_BUDGET_START_UTC (ISO 8601 UTC instant used as the clock origin instead of StartedUtc).
+        The first time the budget is found exhausted the function sets
         $script:IQ.BudgetExceeded = $true and logs one Warn; afterwards it keeps returning $true without logging.
         Stage bodies call it between items and stop cleanly; Invoke-IQStage then marks the stage Paused, Complete-IQRun
         marks the run Paused (exit code 3) and the next start resumes it. Never throws.
@@ -438,13 +494,30 @@ function Test-IQTimeBudget {
         if ($budget -le 0) { return $false }
         $started = $null
         if ($script:IQ.ContainsKey('StartedUtc') -and $script:IQ['StartedUtc'] -is [datetime]) { $started = [datetime]$script:IQ['StartedUtc'] }
+        # Optional clock origin for agents whose job timeout started before this process (Options.BudgetStartUtc or env).
+        $origin = $null
+        if ($script:IQ.Options -and $script:IQ.Options.Contains('BudgetStartUtc')) { $origin = $script:IQ.Options['BudgetStartUtc'] }
+        if ($null -eq $origin -or ($origin -is [string] -and [string]::IsNullOrWhiteSpace($origin))) { $origin = $env:IMPACTIQ_BUDGET_START_UTC }
+        if ($origin -is [datetime]) { $started = $origin }
+        elseif (-not [string]::IsNullOrWhiteSpace([string]$origin)) {
+            $parsedOrigin = [datetime]::MinValue
+            if ([datetime]::TryParse([string]$origin, [System.Globalization.CultureInfo]::InvariantCulture,
+                    [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$parsedOrigin)) {
+                $started = [datetime]::SpecifyKind($parsedOrigin, [System.DateTimeKind]::Utc)
+            }
+        }
         if ($null -eq $started) { return $false }
+        $grace = 2
+        if ($script:IQ.Options -and $script:IQ.Options.Contains('TimeBudgetGraceMinutes') -and $null -ne $script:IQ.Options['TimeBudgetGraceMinutes']) {
+            $grace = [int]$script:IQ.Options['TimeBudgetGraceMinutes']
+            if ($grace -lt 0) { $grace = 0 }
+        }
         $elapsedMinutes = ([datetime]::UtcNow - $started.ToUniversalTime()).TotalMinutes
-        $limit = $budget - 2
+        $limit = $budget - $grace
         if ($limit -le 0) { $limit = $budget }
         if ($elapsedMinutes -lt $limit) { return $false }
         $script:IQ['BudgetExceeded'] = $true
-        $logArgs = @{ Level = 'Warn'; Message = ('Time budget of {0} min reached ({1:N1} min elapsed, 2 min grace kept for shutdown): stopping cleanly after the current item. The run will be marked Paused (exit code 3) and resumed by the next start.' -f $budget, $elapsedMinutes) }
+        $logArgs = @{ Level = 'Warn'; Message = ('Time budget of {0} min reached ({1:N1} min elapsed, {2} min grace kept for shutdown): stopping cleanly after the current item. The run will be marked Paused (exit code 3) and resumed by the next start.' -f $budget, $elapsedMinutes, $grace) }
         if (-not [string]::IsNullOrWhiteSpace($Stage)) { $logArgs['Stage'] = $Stage }
         if (-not [string]::IsNullOrWhiteSpace($Item)) { $logArgs['Item'] = $Item }
         Write-IQLog @logArgs
@@ -578,13 +651,18 @@ function Get-IQExitCode {
     switch ($status) {
         'Completed' {
             # Defensive: a "Completed" run that still carries failures or non-completed stages is an errors run.
-            $failures = @(Get-IQMemberValue -Object $Manifest -Name 'failures')
+            # A missing/null "failures" member emits $null, and @($null).Count is 1: drop nulls before counting.
+            $failures = @(Get-IQMemberValue -Object $Manifest -Name 'failures' | Where-Object { $null -ne $_ })
             if ($failures.Count -gt 0) { return 2 }
             $stages = Get-IQMemberValue -Object $Manifest -Name 'stages'
-            foreach ($st in @(Get-IQMemberValueList -Object $stages)) {
+            $hasErrors = $false
+            foreach ($st in @(Get-IQMemberValueList -Object $stages | Where-Object { $null -ne $_ })) {
                 $sStatus = [string](Get-IQMemberValue -Object $st -Name 'status')
-                if ($sStatus -in @('Failed', 'CompletedWithErrors')) { return 2 }
+                # Paused wins over 2 (State's Get-IQRunStatus treats any Paused stage as a Paused run): a resume is required.
+                if ($sStatus -eq 'Paused') { return 3 }
+                if ($sStatus -in @('Failed', 'CompletedWithErrors')) { $hasErrors = $true }
             }
+            if ($hasErrors) { return 2 }
             return 0
         }
         'CompletedWithErrors' { return 2 }

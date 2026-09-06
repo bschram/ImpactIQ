@@ -278,6 +278,10 @@ Describe 'Write-IQWorkbook: per-sheet isolation, literal paths, stale temp files
         New-Item -ItemType Directory -Path $script:WbFolder -Force | Out-Null
         New-Item -ItemType Directory -Path $script:WbPlain -Force | Out-Null
         # The sheet 'Bad' fails in EPPlus when it carries its data rows; the header-only retry (one placeholder row) succeeds.
+        # Pester 6 no longer falls back to the real command when no -ParameterFilter matches (Pester 5 did), so a default
+        # mock that calls the real ImportExcel Export-Excel is registered first; the filtered mock (defined last) wins for 'Bad'.
+        $script:RealExportExcel = Get-Command -Name 'Export-Excel' -Module 'ImportExcel' -ErrorAction Stop
+        Mock Export-Excel { & $script:RealExportExcel @PesterBoundParameters }
         Mock Export-Excel -ParameterFilter { $WorksheetName -eq 'Bad' -and $null -ne $InputObject -and $InputObject.Rows.Count -ge 2 } { throw 'EPPlus: simulated LoadFromDataTable failure' }
     }
     AfterAll { Remove-IQTestFolder -Path $script:WbFolder; Remove-IQTestFolder -Path $script:WbPlain }

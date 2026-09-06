@@ -366,10 +366,14 @@ function Get-IQEntryPersistedScopeManifest {
     [CmdletBinding()]
     param()
     if ($Force -or $Resume -eq 'Never') { return $null }
+    # Same readers as Initialize-IQRun (State is loaded before this runs): Read-IQManifestFile tolerates a corrupt
+    # manifest.json (Warn + $null instead of a JSON exception under $ErrorActionPreference = 'Stop') and
+    # Find-IQResumableRun applies rule 2 exactly (status list, dated RunIds only, same environment, ConvertTo-IQDateTimeUtc),
+    # so this peek cannot disagree with the real resume decision.
     $runsRoot = Join-Path $script:IQ.StatePath 'runs'
     $effectiveRunId = $RunId
-    if ([string]::IsNullOrWhiteSpace($effectiveRunId)) { $effectiveRunId = (Get-Date).ToString('yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture) }
-    $manifest = ConvertFrom-IQJsonFile -Path (Join-Path (Join-Path $runsRoot $effectiveRunId) 'manifest.json')
+    if ([string]::IsNullOrWhiteSpace($effectiveRunId)) { $effectiveRunId = Get-IQRunDate }
+    $manifest = Read-IQManifestFile -Path (Join-Path (Join-Path $runsRoot $effectiveRunId.Trim()) 'manifest.json')
     if ($null -ne $manifest) {
         $status = [string](Get-IQMemberValue -Object $manifest -Name 'status')
         if ($Resume -eq 'Always' -or $status -ne 'Completed') {
@@ -378,22 +382,66 @@ function Get-IQEntryPersistedScopeManifest {
         }
     }
     if ($Resume -ne 'Auto' -or -not [string]::IsNullOrWhiteSpace($RunId)) { return $null }
-    # Rule 2: the newest unfinished run within -ResumeMaxAgeDays is resumed.
+    $candidate = Find-IQResumableRun -MaxAgeDays $ResumeMaxAgeDays -ExcludeRunId $effectiveRunId.Trim()
+    if ($null -ne $candidate -and (Test-IQEntryManifestHasScope -Manifest $candidate.Manifest)) { return $candidate.Manifest }
+    return $null
+}
+
+function Resolve-IQEntryExistingRunId {
+    <#
+    .SYNOPSIS
+        For a stage list without Inventory: the RunId of the run those stages work on (today's run, an explicit -RunId, or the newest run that has a manifest); throws when there is nothing to work on.
+    .DESCRIPTION
+        ModelBackup ... Assemble need an inventory that only an earlier Inventory stage produced. With the RunId
+        defaulting to today, "-Stages Assemble" run the day after the extraction would start an EMPTY manifest for
+        today and rebuild the four workbooks in BaseFolder as header-only sheets (exit 0) - the opposite of the
+        documented "rebuild the workbooks from the latest run". So: -RunId given => its manifest must exist (a run whose
+        State folder was not restored is still accepted when one of its backup folders exists - Assemble reads the files);
+        else today's manifest when present; else the newest readable manifest of any status for the current environment;
+        else throw before Initialize-IQRun touches any folder. -Force / -Resume Never would clear the run's backup
+        folders and then have nothing to process, so they are refused for such a stage list.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$StageList)
+    $stageText = ($StageList -join ', ')
+    if ($Force -or $Resume -eq 'Never') {
+        $flag = '-Force'
+        if (-not $Force) { $flag = '-Resume Never' }
+        throw ("{0} with -Stages {1} would delete the run's backup folders and then have no inventory to process. Add Inventory to -Stages for a fresh run, or drop {0} to work on the existing run." -f $flag, $stageText)
+    }
+    $runsRoot = Join-Path $script:IQ.StatePath 'runs'
+    if (-not [string]::IsNullOrWhiteSpace($RunId)) {
+        $id = $RunId.Trim()
+        if (Test-Path -LiteralPath (Join-Path (Join-Path $runsRoot $id) 'manifest.json')) { return $id }
+        $backupFolders = @((Join-Path $script:IQ.Paths.ModelBackups $id), (Join-Path $script:IQ.Paths.ReportBackups $id), (Join-Path $script:IQ.Paths.DataflowBackups $id))
+        if (@($backupFolders | Where-Object { Test-Path -LiteralPath $_ -PathType Container }).Count -gt 0) {
+            Write-IQEntryMessage -Level Warn -Message ("Run '{0}' has backup folders but no State\runs\{0}\manifest.json - the stages work on the files that are there (a new manifest is started for it)." -f $id)
+            return $id
+        }
+        throw ("No run state or backup folders exist for -RunId '{0}', so -Stages {1} has nothing to process. Run the Inventory stage for it first, or pass the -RunId of an existing run." -f $id, $stageText)
+    }
+    $today = Get-IQRunDate
+    if (Test-Path -LiteralPath (Join-Path (Join-Path $runsRoot $today) 'manifest.json')) { return $today }
+    $currentEnv = ''
+    if ($script:IQ.Environment) { $currentEnv = [string]$script:IQ.Environment }
     $best = $null
     $bestStart = [datetime]::MinValue
     foreach ($dir in @(Get-ChildItem -LiteralPath $runsRoot -Directory -ErrorAction SilentlyContinue)) {
-        if ($dir.Name -eq $effectiveRunId) { continue }
-        $m = ConvertFrom-IQJsonFile -Path (Join-Path $dir.FullName 'manifest.json')
+        $mPath = Join-Path $dir.FullName 'manifest.json'
+        if (-not (Test-Path -LiteralPath $mPath)) { continue }
+        $m = Read-IQManifestFile -Path $mPath
         if ($null -eq $m) { continue }
-        if ([string](Get-IQMemberValue -Object $m -Name 'status') -notin @('Running', 'Paused', 'Failed', 'CompletedWithErrors')) { continue }
-        $started = $null
-        try { $started = ([datetime](Get-IQMemberValue -Object $m -Name 'startedUtc')).ToUniversalTime() } catch { $started = $null }
+        $runEnv = [string](Get-IQMemberValue -Object $m -Name 'environment')
+        if ($currentEnv -and $runEnv -and $runEnv -ne $currentEnv) { continue }
+        $started = ConvertTo-IQDateTimeUtc -Value (Get-IQMemberValue -Object $m -Name 'startedUtc')
         if ($null -eq $started) { continue }
-        if (([datetime]::UtcNow - $started).TotalDays -gt $ResumeMaxAgeDays) { continue }
-        if ($started -gt $bestStart) { $bestStart = $started; $best = $m }
+        if ($started -gt $bestStart) { $bestStart = $started; $best = @{ RunId = $dir.Name; Status = [string](Get-IQMemberValue -Object $m -Name 'status') } }
     }
-    if ($null -ne $best -and (Test-IQEntryManifestHasScope -Manifest $best)) { return $best }
-    return $null
+    if ($null -ne $best) {
+        Write-IQEntryMessage -Level Info -Message ("No run for today ({0}): -Stages {1} works on the latest run '{2}' (status {3}, started {4:yyyy-MM-dd HH:mm} UTC). Pass -RunId to pick another run." -f $today, $stageText, $best.RunId, $best.Status, $bestStart)
+        return $best.RunId
+    }
+    throw ("No previous run to work on: -Stages {0} needs the inventory of an earlier run and State\runs holds no manifest{1}. Run the Inventory stage first (for example without -Stages), or pass the -RunId of an existing run." -f $stageText, $(if ($currentEnv) { " for environment '$currentEnv'" } else { '' }))
 }
 
 function Invoke-IQEntryScopeDialog {
@@ -462,6 +510,17 @@ function Install-IQEntryModule {
         if ($null -eq $provider) { Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction Stop | Out-Null }
     }
     catch { Write-IQEntryMessage -Level Debug -Message ("NuGet provider bootstrap: {0}" -f $_.Exception.Message) }
+    if (-not [bool]$script:IQ.Interactive) {
+        # Headless (Task Scheduler / runas without -NonInteractive, CI): when the provider could not be bootstrapped
+        # (offline, proxy), Install-Module on stock 5.1 PowerShellGet falls back to the "NuGet provider is required ...
+        # [Y] Yes [N] No" host prompt that nobody can answer, so the run would hang. Fail fast with the manual command.
+        $provider = $null
+        try { $provider = Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue | Where-Object { $_.Version -ge [version]'2.8.5.201' } | Select-Object -First 1 } catch { $provider = $null }
+        if ($null -eq $provider) {
+            Write-IQEntryMessage -Level Warn -Message ("Module '{0}' cannot be installed unattended: the NuGet package provider is not available and could not be bootstrapped (offline or proxy?). Install it once from a console with: Install-PackageProvider NuGet -Force; Install-Module {0} -Scope CurrentUser" -f $Name)
+            return $false
+        }
+    }
     try {
         Install-Module -Name $Name -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
         Write-IQEntryMessage -Level Success -Message ("Installed module '{0}'." -f $Name)
@@ -487,11 +546,21 @@ function Initialize-IQEntryModuleSet {
     $needed = @()
     if ($StageList -contains 'Assemble') { $needed += 'ImportExcel' }
     if ($NeedAuth) {
-        $envCredential = (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_USERNAME) -and -not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_PASSWORD))
-        $envToken = -not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_PBI_TOKEN)
-        $interactiveAuth = ($AuthMode -eq 'Interactive') -or ($AuthMode -eq 'Auto' -and [bool]$script:IQ.Interactive -and $null -eq $Credential -and -not $envCredential -and -not $envToken)
-        if ($interactiveAuth) { $needed += 'MicrosoftPowerBIMgmt'; $needed += 'Az.Accounts' }
-        if ($AuthMode -eq 'AzContext') { $needed += 'Az.Accounts' }
+        # The same decision Initialize-IQAuth makes (brief 4.1: Credential > AccessToken > DeviceCode when the token
+        # cache exists > Interactive > DeviceCode), with the same effective cache path - an interactive console that
+        # holds a cached refresh token signs in with DeviceCode and must not pull MicrosoftPowerBIMgmt / Az.Accounts
+        # (minutes from the Gallery, a Warn when offline) for a mode that is never used.
+        $cachePath = $TokenCachePath
+        if ([string]::IsNullOrWhiteSpace($cachePath)) {
+            if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_TOKEN_CACHE_PATH)) { $cachePath = $env:IMPACTIQ_TOKEN_CACHE_PATH }
+            else { $cachePath = Join-Path (Join-Path $script:IQ.StatePath 'auth') 'token-cache.json' }
+        }
+        elseif (-not [System.IO.Path]::IsPathRooted($cachePath)) { $cachePath = Join-Path $script:IQ.BaseFolder $cachePath }
+        $resolveArgs = @{ Mode = $AuthMode; TokenCachePath = $cachePath; Interactive = [bool]$script:IQ.Interactive }
+        if ($null -ne $Credential) { $resolveArgs['Credential'] = $Credential }
+        $predictedMode = Resolve-IQAuthMode @resolveArgs
+        if ($predictedMode -eq 'Interactive') { $needed += 'MicrosoftPowerBIMgmt'; $needed += 'Az.Accounts' }
+        if ($predictedMode -eq 'AzContext') { $needed += 'Az.Accounts' }
     }
     foreach ($name in @($needed | Select-Object -Unique)) { Install-IQEntryModule -Name $name -AllowInstall:$allowInstall | Out-Null }
 }
@@ -514,7 +583,8 @@ function Write-IQEntrySummary {
         $dur = ''
         if ($null -ne $r.DurationSeconds -and [string]$r.DurationSeconds -ne '') {
             $ts = [timespan]::FromSeconds([double]$r.DurationSeconds)
-            $dur = ('{0:00}:{1:00}:{2:00}' -f [int]$ts.TotalHours, $ts.Minutes, $ts.Seconds)
+            # [math]::Floor, not [int]: PowerShell's [int] cast rounds (1 h 45 m would print as 02:45).
+            $dur = ('{0:00}:{1:00}:{2:00}' -f [math]::Floor($ts.TotalHours), $ts.Minutes, $ts.Seconds)
         }
         $status = [string]$r.Status
         if ([string]::IsNullOrEmpty($status)) { $status = 'NotRun' }
@@ -534,7 +604,7 @@ function Write-IQEntrySummary {
     }
     $elapsed = [datetime]::UtcNow - $script:IQEntryStartUtc
     Write-IQEntryMessage -Level Info -Message ('Log file: {0}' -f $script:IQ.LogFile)
-    Write-IQEntryMessage -Level Info -Message ('Total elapsed: {0:00}:{1:00}:{2:00}' -f [int]$elapsed.TotalHours, $elapsed.Minutes, $elapsed.Seconds)
+    Write-IQEntryMessage -Level Info -Message ('Total elapsed: {0:00}:{1:00}:{2:00}' -f [math]::Floor($elapsed.TotalHours), $elapsed.Minutes, $elapsed.Seconds)
 }
 
 function Invoke-IQEntryStageBody {
@@ -642,9 +712,7 @@ try {
     Write-IQEntryMessage -Level Info -Message ('Stages: {0}' -f ($stageList -join ', '))
     $needAuth = (@($stageList | Where-Object { $script:IQEntryApiStages -contains $_ }).Count -gt 0)
     $scopeGiven = Test-IQEntryScopeGiven
-    if ($stageList -contains 'Inventory' -and -not $scopeGiven -and -not $script:IQ.Interactive) {
-        if ($null -eq (Get-IQEntryPersistedScopeManifest)) { throw (Get-IQEntryNoScopeMessage) }
-    }
+    $scopeUsable = Test-IQEntryScopeUsable
 
     # ---- 5. environment: parameter -> IMPACTIQ_ENVIRONMENT -> interactive dialog -> Public -------------------------
     $envName = $null
@@ -664,6 +732,15 @@ try {
     $endpoints = Set-IQEnvironment -Environment $envName
     $script:IQ.Options['Environment'] = $endpoints.Name
     Write-IQEntryMessage -Level Info -Message ('Environment {0}: API {1}, Fabric {2}' -f $endpoints.Name, $endpoints.ApiPrefix, $endpoints.FabricApiPrefix)
+
+    # ---- 5b. early "no scope" check (after the environment is known so the resume peek applies the same environment
+    #          rule as Initialize-IQRun): fail before any sign-in when nothing could possibly run. Headless runs need a
+    #          scope that fits the run mode unless a resumable run with a persisted scope exists; an interactive run
+    #          with scope parameters that do not fit the mode ("-RunMode Reports -WorkspaceName X") fails here too,
+    #          because Resolve-IQScope does not open the dialogs when parameters were given.
+    if ($stageList -contains 'Inventory' -and -not $scopeUsable -and ($scopeGiven -or -not $script:IQ.Interactive)) {
+        if ($null -eq (Get-IQEntryPersistedScopeManifest)) { throw (Get-IQEntryNoScopeMessage) }
+    }
 
     # ---- 6. PowerShell modules, authentication ---------------------------------------------------------------------
     Initialize-IQEntryModuleSet -StageList $stageList -NeedAuth $needAuth
@@ -688,13 +765,16 @@ try {
     # ---- 8. tools, run manifest --------------------------------------------------------------------------------------
     Initialize-IQTools -SkipToolUpdate:$SkipToolUpdate | Out-Null
     $resumePolicy = $Resume
-    if ($resumePolicy -eq 'Auto' -and -not $Force -and $stageList -notcontains 'Inventory') {
-        # Later stages only make sense on top of an existing run's inventory; a fresh run here would also clear
-        # today's backup folders (legacy re-run semantics) - so "-Stages X" without Inventory implies -Resume Always.
+    $effectiveRunId = $RunId
+    if ($stageList -notcontains 'Inventory') {
+        # Later stages only make sense on top of an existing run's inventory: resolve WHICH run (today's, -RunId, or
+        # the newest one - never an empty fresh run for today) and resume it (-Resume Always implied). Refuses
+        # -Force / -Resume Never, which would clear that run's backup folders first.
+        $effectiveRunId = Resolve-IQEntryExistingRunId -StageList $stageList
         $resumePolicy = 'Always'
-        Write-IQEntryMessage -Level Info -Message '-Stages does not include Inventory: resuming the existing run for this RunId (-Resume Always implied).'
+        Write-IQEntryMessage -Level Info -Message ("-Stages does not include Inventory: working on run '{0}' (-Resume Always implied)." -f $effectiveRunId)
     }
-    Initialize-IQRun -RunId $RunId -ResumePolicy $resumePolicy -ResumeMaxAgeDays $ResumeMaxAgeDays -Force:$Force | Out-Null
+    Initialize-IQRun -RunId $effectiveRunId -ResumePolicy $resumePolicy -ResumeMaxAgeDays $ResumeMaxAgeDays -Force:$Force | Out-Null
     $runStarted = $true
     if ($script:IQ.IsResume) { Write-IQEntryMessage -Level Info -Message ('Resuming run {0} ({1})' -f $script:IQ.RunId, $script:IQ.RunPath) }
     else { Write-IQEntryMessage -Level Info -Message ('Fresh run {0} ({1})' -f $script:IQ.RunId, $script:IQ.RunPath) }
@@ -725,7 +805,19 @@ catch {
     if ($cancelled) {
         $exitCode = 0
         Write-IQEntryMessage -Level Warn -Message $_.Exception.Message
-        if ($runStarted -and $script:IQ -and $null -ne $script:IQ.Manifest) { try { Complete-IQRun -Status 'Cancelled' | Out-Null } catch { $null = $_ } }
+        if ($runStarted -and $script:IQ -and $null -ne $script:IQ.Manifest) {
+            try {
+                # A dialog cancelled inside the Inventory stage was recorded by Invoke-IQStage as a Failed stage with an
+                # error text; the summary must show a cancellation, not a failure (the stage re-runs on resume either way).
+                $stages = $script:IQ.Manifest['stages']
+                if ($stages -is [System.Collections.IDictionary] -and $stages.Contains('Inventory') -and $stages['Inventory'] -is [System.Collections.IDictionary] -and [string]$stages['Inventory']['status'] -eq 'Failed') {
+                    $stages['Inventory']['status'] = 'Cancelled'
+                    $stages['Inventory']['error'] = $null
+                }
+                Complete-IQRun -Status 'Cancelled' | Out-Null
+            }
+            catch { $null = $_ }
+        }
     }
     else {
         $exitCode = 1
@@ -755,7 +847,9 @@ if ($runStarted -and $script:IQ -and $null -ne $script:IQ.Manifest) {
 }
 
 if ($cancelled) {
-    if ($runStarted -and $script:IQ -and $script:IQ.RunId) { Write-IQEntryMessage -Level Warn -Message ('ImpactIQ cancelled - run {0} is marked Cancelled and will be resumed by the next start. Exit code 0.' -f $script:IQ.RunId) }
+    # Only rule 1 of the resume decision (same RunId, status <> Completed) picks a Cancelled run up again; the
+    # cross-day rule 2 (Find-IQResumableRun) does not, so say exactly when it is resumed.
+    if ($runStarted -and $script:IQ -and $script:IQ.RunId) { Write-IQEntryMessage -Level Warn -Message ('ImpactIQ cancelled - run {0} is marked Cancelled; a start later today (or any start with -RunId {0}) resumes it, a start on another day begins a new run. Exit code 0.' -f $script:IQ.RunId) }
     else { Write-IQEntryMessage -Level Warn -Message 'ImpactIQ cancelled before the run started - nothing was changed. Exit code 0.' }
 }
 elseif ($null -ne $fatal) {
@@ -767,8 +861,23 @@ elseif ($null -ne $fatal) {
 else {
     switch ($exitCode) {
         0 { Write-IQEntryMessage -Level Success -Message 'ImpactIQ completed successfully (exit code 0).' }
-        2 { Write-IQEntryMessage -Level Warn -Message 'ImpactIQ completed with errors (exit code 2) - the outputs were produced; check the Failures sheet and the log.' }
-        3 { Write-IQEntryMessage -Level Warn -Message ('ImpactIQ paused (exit code 3) - the time budget of {0} min was reached; partial workbooks were produced. Start it again (same parameters) to resume run {1}.' -f $TimeBudgetMinutes, $script:IQ.RunId) }
+        2 {
+            # Say what actually happened: the failed stage may be Assemble itself, in which case no workbook exists.
+            $outputs = Get-IQMemberValue -Object $script:IQ.Manifest -Name 'outputs'
+            $produced = @(@('environmentWorkbook', 'reportWorkbook', 'modelWorkbook', 'dataflowWorkbook') | Where-Object { -not [string]::IsNullOrWhiteSpace([string](Get-IQMemberValue -Object $outputs -Name $_)) })
+            $assembleStatus = [string](Get-IQMemberValue -Object (Get-IQMemberValue -Object (Get-IQMemberValue -Object $script:IQ.Manifest -Name 'stages') -Name 'Assemble') -Name 'status')
+            if ($produced.Count -gt 0 -and $assembleStatus -ne 'Failed') { Write-IQEntryMessage -Level Warn -Message 'ImpactIQ completed with errors (exit code 2) - the workbooks were produced; check the Failures sheet and the log.' }
+            elseif ($assembleStatus -eq 'Failed') { Write-IQEntryMessage -Level Warn -Message 'ImpactIQ completed with errors (exit code 2) - the Assemble stage failed, so the workbooks were NOT produced; check the log, then re-run with -Stages Assemble.' }
+            else { Write-IQEntryMessage -Level Warn -Message 'ImpactIQ completed with errors (exit code 2) - no workbook was produced (Assemble did not run); check the Failures sheet and the log.' }
+        }
+        3 {
+            $paused = @()
+            $stageMap = Get-IQMemberValue -Object $script:IQ.Manifest -Name 'stages'
+            foreach ($n in $script:IQEntryStageOrder) { if ([string](Get-IQMemberValue -Object (Get-IQMemberValue -Object $stageMap -Name $n) -Name 'status') -eq 'Paused') { $paused += $n } }
+            $why = 'the time budget was reached in an earlier attempt'
+            if ($script:IQ.ContainsKey('BudgetExceeded') -and [bool]$script:IQ['BudgetExceeded']) { $why = ('the time budget of {0} min was reached' -f $TimeBudgetMinutes) }
+            Write-IQEntryMessage -Level Warn -Message ('ImpactIQ paused (exit code 3) - {0}; stages still pending: {1}. Partial workbooks were produced. Start it again (same parameters) to resume run {2}.' -f $why, ($paused -join ', '), $script:IQ.RunId)
+        }
         default { Write-IQEntryMessage -Level Error -Message ('ImpactIQ ended with exit code {0}.' -f $exitCode) }
     }
 }

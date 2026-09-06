@@ -34,6 +34,29 @@ Describe 'Initialize-IQContext / Get-IQContext' {
         (Get-IQContext).Environment | Should -Be 'USGov'
         (Get-IQContext).Endpoints.ApiPrefix | Should -Be 'https://api.powerbigov.us'
     }
+    It 'resolves a relative BaseFolder against $PWD, not the process working directory' {
+        $saved = $script:IQ
+        $parent = Join-Path $script:Base 'relbase'
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        Push-Location -LiteralPath $parent
+        try {
+            $ctx = Initialize-IQContext -BaseFolder 'sub' -Options @{ NonInteractive = $true }
+            $ctx.BaseFolder | Should -Be ([System.IO.Path]::GetFullPath((Join-Path $parent 'sub')))
+            (Join-Path (Join-Path $parent 'sub') 'State') | Should -Exist
+        }
+        finally { Pop-Location; $script:IQ = $saved }
+    }
+    It 'names the default log file with the Gregorian calendar whatever the current culture' {
+        $saved = $script:IQ
+        $culture = [System.Threading.Thread]::CurrentThread.CurrentCulture
+        try {
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo('th-TH')
+            $ctx = Initialize-IQContext -BaseFolder (Join-Path $script:Base 'culture') -Options @{ NonInteractive = $true }
+            $year = [datetime]::Now.ToString('yyyy', [System.Globalization.CultureInfo]::InvariantCulture)
+            Split-Path -Leaf $ctx.LogFile | Should -Match ('^ImpactIQ_' + $year + '\d{4}_\d{6}\.log$')
+        }
+        finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $culture; $script:IQ = $saved }
+    }
 }
 
 Describe 'Get-IQCleanName (monolith parity)' {
@@ -111,6 +134,24 @@ Describe 'JSON file helpers' {
         ConvertTo-IQJsonFile -Object @{ v = 2 } -Path $script:JsonPath
         (ConvertFrom-IQJsonFile -Path $script:JsonPath).v | Should -Be 2
     }
+    It 'resolves a relative -Path against $PWD for both write and read' {
+        Push-Location -LiteralPath $script:Base
+        try {
+            ConvertTo-IQJsonFile -Object @{ rel = $true } -Path 'relative.json'
+            (Join-Path $script:Base 'relative.json') | Should -Exist
+            (Join-Path $script:Base 'relative.json.tmp') | Should -Not -Exist
+            (ConvertFrom-IQJsonFile -Path 'relative.json').rel | Should -BeTrue
+        }
+        finally { Pop-Location }
+    }
+    It 'writes and replaces files under a folder whose name contains brackets' {
+        $p = Join-Path (Join-Path $script:Base 'ws [Prod]') 'state.json'
+        ConvertTo-IQJsonFile -Object @{ v = 1 } -Path $p
+        ConvertTo-IQJsonFile -Object @{ v = 2 } -Path $p
+        [System.IO.File]::Exists($p) | Should -BeTrue
+        [System.IO.File]::Exists($p + '.tmp') | Should -BeFalse
+        (ConvertFrom-IQJsonFile -Path $p).v | Should -Be 2
+    }
 }
 
 Describe 'Invoke-IQWithRetry' {
@@ -145,6 +186,19 @@ Describe 'Invoke-IQWithRetry' {
         $before = [int](Get-IQContext).Stats.Retries
         Invoke-IQWithRetry -ScriptBlock { $script:Attempts++; if ($script:Attempts -lt 2) { throw 'x' }; 1 } -MaxAttempts 3 -InitialDelaySeconds 1 | Out-Null
         [int](Get-IQContext).Stats.Retries | Should -Be ($before + 1)
+    }
+    It 'passes the ErrorRecord to -RetryOn as $_, $args[0] and a param() argument' {
+        foreach ($filter in @({ $_.Exception.Message -eq 'transient' }, { $args[0].Exception.Message -eq 'transient' }, { param($rec) $rec.Exception.Message -eq 'transient' })) {
+            $script:Attempts = 0
+            $r = Invoke-IQWithRetry -ScriptBlock { $script:Attempts++; if ($script:Attempts -lt 2) { throw 'transient' }; 'ok' } -MaxAttempts 3 -InitialDelaySeconds 1 -RetryOn $filter
+            $r | Should -Be 'ok'
+            $script:Attempts | Should -Be 2 -Because "filter $filter must see the ErrorRecord"
+        }
+    }
+    It 'does not retry, and logs at Debug, when the -RetryOn filter itself throws' {
+        { Invoke-IQWithRetry -ScriptBlock { $script:Attempts++; throw 'nope' } -MaxAttempts 4 -InitialDelaySeconds 1 -RetryOn { throw 'filter broke' } -Description 'flaky' } | Should -Throw -ExpectedMessage '*nope*'
+        $script:Attempts | Should -Be 1
+        (Get-Content -LiteralPath (Get-IQContext).LogFile -Raw) | Should -Match 'flaky: RetryOn filter threw \(filter broke\)'
     }
 }
 
@@ -195,6 +249,25 @@ Describe 'Write-IQLog' {
         { Write-IQLog -Message $null -Level Error -Exception (New-Object System.Exception 'inner') } | Should -Not -Throw
         { Write-IQLog -Message 'x' -Level Debug -Stage $null -Item $null } | Should -Not -Throw
     }
+    It 'masks whole secret values (special characters included), raw JWTs and device codes' {
+        Write-IQLog -Message 'password: Pa$$w0rd!x device_code=ABCD-1234 token eyJhbGciOiJSUzI1NiJ9.eyJleHAiOjF9.abc-def_ghi client_secret="s3cr3t~!" tail' -Level Info
+        $log = Get-Content -LiteralPath (Get-IQContext).LogFile -Raw
+        $log | Should -Not -Match 'w0rd'
+        $log | Should -Not -Match 'ABCD-1234'
+        $log | Should -Not -Match 'eyJleHAiOjF9'
+        $log | Should -Not -Match 's3cr3t'
+        $log | Should -Match 'client_secret="\*\*\*" tail'
+    }
+    It 'accepts an ErrorRecord (or anything else) for -Exception without throwing' {
+        $rec = $null
+        try { throw 'from catch block' } catch { $rec = $_ }
+        $rec | Should -BeOfType [System.Management.Automation.ErrorRecord]
+        { Write-IQLog -Message 'wrapped' -Level Error -Exception $rec } | Should -Not -Throw
+        { Write-IQLog -Message 'weird' -Level Warn -Exception 'just a string' } | Should -Not -Throw
+        $log = Get-Content -LiteralPath (Get-IQContext).LogFile -Raw
+        $log | Should -Match 'wrapped :: from catch block'
+        $log | Should -Match 'weird :: just a string'
+    }
 }
 
 Describe 'Get-IQDateFolder' {
@@ -237,6 +310,30 @@ Describe 'Test-IQTimeBudget (time budget for capped agents)' {
         $script:IQ.BudgetExceeded = $true
         Test-IQTimeBudget | Should -BeTrue
     }
+    It 'honours Options.TimeBudgetGraceMinutes instead of the 2-minute default' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 60
+        $script:IQ.Options['TimeBudgetGraceMinutes'] = 25
+        try {
+            $script:IQ.StartedUtc = [datetime]::UtcNow.AddMinutes(-30)
+            Test-IQTimeBudget -Stage 'Inventory' | Should -BeFalse
+            $script:IQ.StartedUtc = [datetime]::UtcNow.AddMinutes(-36)
+            Test-IQTimeBudget -Stage 'Inventory' | Should -BeTrue
+            (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '25 min grace'
+        }
+        finally { $script:IQ.Options.Remove('TimeBudgetGraceMinutes') }
+    }
+    It 'uses IMPACTIQ_BUDGET_START_UTC / Options.BudgetStartUtc as the clock origin when given' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 60
+        $script:IQ.StartedUtc = [datetime]::UtcNow
+        $env:IMPACTIQ_BUDGET_START_UTC = [datetime]::UtcNow.AddMinutes(-59).ToString('o')
+        try {
+            Test-IQTimeBudget -Stage 'Inventory' | Should -BeTrue -Because 'the agent clock started 59 minutes ago'
+            $script:IQ.BudgetExceeded = $false
+            $script:IQ.Options['BudgetStartUtc'] = [datetime]::UtcNow.AddMinutes(-10)
+            Test-IQTimeBudget -Stage 'Inventory' | Should -BeFalse -Because 'the Options value wins over the environment variable'
+        }
+        finally { $env:IMPACTIQ_BUDGET_START_UTC = $null; $script:IQ.Options.Remove('BudgetStartUtc') }
+    }
 }
 
 Describe 'Get-IQExitCode (brief section 5.1)' {
@@ -249,9 +346,16 @@ Describe 'Get-IQExitCode (brief section 5.1)' {
         @{ Status = 'Paused'; Failures = @(@{ stage = 'x' }); Stages = @{ Dataflows = @{ status = 'Paused' } }; Expected = 3 }
         @{ Status = 'Completed'; Failures = @(@{ stage = 'x' }); Stages = @{}; Expected = 2 }
         @{ Status = 'Completed'; Failures = @(); Stages = @{ Dataflows = @{ status = 'Failed' } }; Expected = 2 }
+        @{ Status = 'Completed'; Failures = $null; Stages = @{}; Expected = 0 }
+        @{ Status = 'Completed'; Failures = @(); Stages = @{ ModelBackup = @{ status = 'Paused' } }; Expected = 3 }
+        @{ Status = 'Completed'; Failures = @(); Stages = @{ Inventory = @{ status = 'Failed' }; ModelBackup = @{ status = 'Paused' } }; Expected = 3 }
     ) {
         param($Status, $Failures, $Stages, $Expected)
         Get-IQExitCode -Manifest @{ status = $Status; failures = $Failures; stages = $Stages } | Should -Be $Expected
+    }
+    It 'returns 0 for a clean Completed manifest without a failures member (hashtable and object form)' {
+        Get-IQExitCode -Manifest ([ordered]@{ status = 'Completed'; stages = [ordered]@{} }) | Should -Be 0
+        Get-IQExitCode -Manifest ([pscustomobject]@{ status = 'Completed'; failures = $null }) | Should -Be 0
     }
     It 'returns 1 for a missing manifest' {
         Get-IQExitCode -Manifest $null | Should -Be 1

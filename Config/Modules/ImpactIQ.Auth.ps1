@@ -1199,6 +1199,18 @@ function Initialize-IQAuth {
     )
     if ($null -eq $script:IQ) { throw 'ImpactIQ context is not initialised (Initialize-IQContext must run before Initialize-IQAuth).' }
 
+    # --- defensive guard: Azure Pipelines leaves an undefined macro as the literal text "$(NAME)" (not empty). ---
+    # The pipeline template already drops such values; this guard makes the module safe for any other scheduler that
+    # forwards unexpanded placeholders, so a placeholder is never used as a password, token, cache key or webhook.
+    foreach ($envName in @('IMPACTIQ_USERNAME', 'IMPACTIQ_PASSWORD', 'IMPACTIQ_TOKEN_CACHE_KEY', 'IMPACTIQ_TOKEN_CACHE_PATH',
+            'IMPACTIQ_DEVICECODE_WEBHOOK', 'IMPACTIQ_PBI_TOKEN', 'IMPACTIQ_FABRIC_TOKEN', 'IMPACTIQ_TENANT_ID', 'IMPACTIQ_CLIENT_ID')) {
+        $envValue = [System.Environment]::GetEnvironmentVariable($envName)
+        if (-not [string]::IsNullOrEmpty($envValue) -and $envValue -match '^\$\([A-Za-z0-9_.]+\)$') {
+            [System.Environment]::SetEnvironmentVariable($envName, $null)
+            Write-IQLog -Level Warn -Stage Auth -Message ("Ignoring {0}: its value is the unexpanded pipeline macro {1} (the variable is not defined in the pipeline)." -f $envName, $envValue)
+        }
+    }
+
     # --- environment / endpoints ---
     $endpoints = Get-IQEnvironmentSettings -Environment $Environment
     $script:IQ.Environment = $endpoints.Name
