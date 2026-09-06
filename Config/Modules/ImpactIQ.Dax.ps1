@@ -9,11 +9,17 @@
 #   Get-IQMeasureDependencyHeader                                    -> CSV building blocks shared with ImpactIQ.Bim.ps1
 #   Get-IQUsageMetrics -WorkspaceId -WorkspaceName [-Days 30]        -> usage-metrics rows for the Extras stage
 #
+# Failure classification (Get-IQDaxFailureKind): Invoke-IQApi returns $null for HTTP 400/403/404 without the status unless
+# the Http module records $script:IQ.LastHttpError, so a rejected first query is told apart from a permission problem by
+# one probe query (Test-IQDaxQueryAccess: EVALUATE ROW("ImpactIQ", 1)) - a plain DAX query that succeeds proves Build
+# permission and the tenant setting, so the rejection was INFO-specific (HTTP 400 / 3239575574).
+#
 # Windows PowerShell 5.1 and PowerShell 7 compatible. Loaded by dot-sourcing from ImpactIQ.ps1, so $script:IQ is the
 # shared context created by Initialize-IQContext (ImpactIQ.Common.ps1). Nothing here is Windows-only.
 #
 # Cross-module functions used (brief section 2): Write-IQLog, Get-IQCleanName, Get-IQSafeKey, Invoke-IQApi,
-# ConvertTo-IQJsonFile, ConvertFrom-IQJsonFile. Private helpers are prefixed *-IQDax* / *-IQCsv* and are not part of
+# ConvertTo-IQJsonFile, ConvertFrom-IQJsonFile, Test-IQTimeBudget (Common; checked between executeQueries calls so one
+# hung capacity cannot push a headless job past its agent timeout). Private helpers are prefixed *-IQDax* / *-IQCsv* and are not part of
 # the contract.
 #
 # executeQueries facts that shape Get-IQModelDetailViaDax (audit research-dax.md): the JSON endpoint officially supports
@@ -245,6 +251,16 @@ function ConvertFrom-IQDaxRows {
     return $out.ToArray()
 }
 
+function Get-IQDaxRowCap {
+    <#
+    .SYNOPSIS
+    The executeQueries per-query row cap (100 000 rows; the 1 000 000-value cap is handled by the callers) (private).
+    #>
+    [CmdletBinding()]
+    param()
+    return 100000
+}
+
 function Invoke-IQDaxQuery {
     <#
     .SYNOPSIS
@@ -254,8 +270,10 @@ function Invoke-IQDaxQuery {
     { queries:[{query}], serializerSettings:{ includeNulls:true } } (+ impersonatedUserName when -Impersonate is given).
     Rows come back with the [Table].[Column] wrapper stripped (ConvertFrom-IQDaxRows). Throws a System.Exception with
     the engine error text when the service reports an error (HTTP 400 body or results[].error); a 403/404/400
-    handled by Invoke-IQApi (which returns $null) is surfaced as an exception too, using $script:IQ.LastHttpError
-    when the Http module records it. Logs a Warn when the 100 000-row cap of the API is hit.
+    handled by Invoke-IQApi (which returns $null) is surfaced as an exception too: with $script:IQ.LastHttpError (when
+    the Http module records it) the message names the status and the engine error, otherwise it starts with
+    "executeQueries returned no response" (Test-IQDaxNoResponseMessage) so callers know the status is unknown.
+    Logs a Warn when the 100 000-row cap of the API is hit.
     #>
     [CmdletBinding()]
     param(
@@ -284,21 +302,32 @@ function Invoke-IQDaxQuery {
     $stopwatch.Stop()
 
     if ($null -eq $response) {
-        # Invoke-IQApi returns $null for 400/403/404 (logged with the body at Warn). Surface a useful message.
-        $status = $null
+        # Invoke-IQApi returns $null for 400/403/404 (logged with the body at Warn). The status is only known when the
+        # Http module records $script:IQ.LastHttpError; otherwise the message says so (callers may probe, see
+        # Test-IQDaxQueryAccess) instead of guessing "INFO not supported" for what may be a 403 without Build permission.
+        $status = 0
         $detail = ''
         try {
             if ($script:IQ -and $script:IQ.ContainsKey('LastHttpError') -and $null -ne $script:IQ.LastHttpError) {
-                $status = Get-IQDaxMember -Object $script:IQ.LastHttpError -Name 'StatusCode'
+                $status = [int](Get-IQDaxMember -Object $script:IQ.LastHttpError -Name 'StatusCode')
                 $detail = Get-IQDaxErrorText -ErrorObject (Get-IQDaxMember -Object $script:IQ.LastHttpError -Name 'Body')
             }
         }
-        catch { $detail = '' }
-        $message = 'executeQueries returned no response for ' + $path
-        if ($null -ne $status) { $message = ('executeQueries returned HTTP {0} for {1}' -f $status, $path) }
-        else { $message += ' (HTTP 400/403/404 - see the Warn line above for the response body)' }
+        catch { $status = 0; $detail = '' }
+        $permissionHint = 'check Build permission on the dataset and the "Semantic Model Execute Queries REST API" tenant setting'
+        if ($status -le 0) {
+            $message = ('executeQueries returned no response for {0} (HTTP 400, 403 or 404 - see the Warn line above for the response body); {1}' -f $path, $permissionHint)
+        }
+        elseif ($status -eq 401 -or $status -eq 403) {
+            $message = ('executeQueries returned HTTP {0} for {1} (no Build permission on the dataset or the tenant setting is off; {2})' -f $status, $path, $permissionHint)
+        }
+        elseif ($status -eq 404) {
+            $message = ('executeQueries returned HTTP 404 for {0} (dataset not found or not accessible)' -f $path)
+        }
+        else {
+            $message = ('executeQueries returned HTTP {0} for {1}' -f $status, $path)
+        }
         if ($detail) { $message += ': ' + $detail }
-        else { $message += '. Check Build permission on the dataset and the "Semantic Model Execute Queries REST API" tenant setting.' }
         throw (New-Object System.Exception($message))
     }
 
@@ -319,7 +348,7 @@ function Invoke-IQDaxQuery {
         $rows = @(Get-IQDaxMember -Object $tables[0] -Name 'rows')
     }
     $rows = @($rows | Where-Object { $null -ne $_ })
-    if ($rows.Count -ge 100000) {
+    if ($rows.Count -ge (Get-IQDaxRowCap)) {
         Write-IQLog -Level Warn -Stage $Stage -Item $Item -Message ("DAX result hit the executeQueries 100 000-row cap ({0}); the result may be truncated." -f $queryLabel)
     }
     Write-IQLog -Level Debug -Stage $Stage -Item $Item -Message ("DAX rows: {0} ({1} ms)" -f $rows.Count, $stopwatch.ElapsedMilliseconds)
@@ -484,6 +513,10 @@ function Get-IQDaxInfoRowSet {
     .DESCRIPTION
     When the JSON already exists (and -Refresh is not set) it is loaded instead of re-querying, so a re-run can rebuild
     the CSVs without touching the service. Throws on query failure (the caller decides whether that is fatal).
+    A result that hit the executeQueries row cap (Get-IQDaxRowCap) is returned but NOT cached (a stale cache file is
+    removed) so the next run re-queries instead of silently reusing a truncated extract; its -Name is appended to
+    -Truncated when a list is given. Metadata queries use a 180 s timeout: a hung capacity is retried by the Http
+    module up to MaxRetries times, so the default 600 s would let one query burn most of a time budget.
     #>
     [CmdletBinding()]
     param(
@@ -494,7 +527,9 @@ function Get-IQDaxInfoRowSet {
         [Parameter(Mandatory = $true)][string]$Dax,
         [Parameter(Mandatory = $false)][switch]$Refresh,
         [Parameter(Mandatory = $false)][string]$Stage = 'ModelDetail',
-        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Item
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Item,
+        [Parameter(Mandatory = $false)][int]$TimeoutSec = 180,
+        [Parameter(Mandatory = $false)][AllowNull()][System.Collections.Generic.List[string]]$Truncated
     )
     $file = Join-Path $ExtractFolder ($Name + '.json')
     if (-not $Refresh -and (Test-Path -LiteralPath $file)) {
@@ -507,7 +542,13 @@ function Get-IQDaxInfoRowSet {
             Write-IQLog -Level Debug -Stage $Stage -Item $Item -Message ("Cached extract {0} unreadable, re-querying: {1}" -f $Name, $_.Exception.Message)
         }
     }
-    $rows = @(Invoke-IQDaxQuery -WorkspaceId $WorkspaceId -DatasetId $DatasetId -Dax $Dax -Stage $Stage -Item $Item)
+    $rows = @(Invoke-IQDaxQuery -WorkspaceId $WorkspaceId -DatasetId $DatasetId -Dax $Dax -TimeoutSec $TimeoutSec -Stage $Stage -Item $Item)
+    if ($rows.Count -ge (Get-IQDaxRowCap)) {
+        if ($null -ne $Truncated -and -not $Truncated.Contains($Name)) { $Truncated.Add($Name) }
+        if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+        Write-IQLog -Level Warn -Stage $Stage -Item $Item -Message ("DAX extract {0} hit the {1}-row cap and is not cached; the next run re-queries it" -f $Name, (Get-IQDaxRowCap))
+        return $rows
+    }
     try { ConvertTo-IQJsonFile -Object $rows -Path $file }
     catch { Write-IQLog -Level Warn -Stage $Stage -Item $Item -Message ("Could not cache DAX extract {0}: {1}" -f $Name, $_.Exception.Message) }
     return $rows
@@ -844,11 +885,95 @@ function Test-IQDaxInfoUnsupportedMessage {
     <#
     .SYNOPSIS
     True when an executeQueries error text looks like "INFO functions are not supported here" (HTTP 400 / engine 3239575574) (private).
+    .DESCRIPTION
+    Only engine / body markers count. A bare "HTTP 400" or Invoke-IQDaxQuery's "no response" text is NOT enough: the
+    same $null answer comes back for a 403 (no Build permission) or 404, which Get-IQDaxFailureKind tells apart.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory = $false, Position = 0)][AllowNull()][AllowEmptyString()][string]$Message)
     if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
-    return ($Message -match '(?i)\bINFO\b|not supported|unsupported|3239575574|Failed to execute the DAX query|HTTP 400|no response')
+    if (Test-IQDaxNoResponseMessage -Message $Message) { return $false }
+    return ($Message -match '(?i)\bINFO\b|not supported|unsupported|3239575574|Failed to execute the DAX query')
+}
+
+function Test-IQDaxNoResponseMessage {
+    <#
+    .SYNOPSIS
+    True for Invoke-IQDaxQuery's "no response" message: Invoke-IQApi returned $null (HTTP 400/403/404) and the status is unknown (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false, Position = 0)][AllowNull()][AllowEmptyString()][string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
+    return ($Message -match '(?i)^executeQueries returned no response')
+}
+
+function Test-IQDaxAccessMessage {
+    <#
+    .SYNOPSIS
+    True when an executeQueries failure is an access problem (401/403 Build permission or tenant setting, 404 dataset not visible), not a query problem (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false, Position = 0)][AllowNull()][AllowEmptyString()][string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return $false }
+    if (Test-IQDaxNoResponseMessage -Message $Message) { return $false }
+    return ($Message -match '(?i)\bHTTP 40[134]\b|Unauthorized|Forbidden|not authorized|PowerBINotAuthorized|no Build permission|DatasetNotFound|dataset not found')
+}
+
+function Get-IQDaxFailureKind {
+    <#
+    .SYNOPSIS
+    Classifies an executeQueries failure message: NoResponse (status unknown), Access (401/403/404), InfoUnsupported or Other (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false, Position = 0)][AllowNull()][AllowEmptyString()][string]$Message)
+    if ([string]::IsNullOrWhiteSpace($Message)) { return 'Other' }
+    if (Test-IQDaxNoResponseMessage -Message $Message) { return 'NoResponse' }
+    if (Test-IQDaxAccessMessage -Message $Message) { return 'Access' }
+    if (Test-IQDaxInfoUnsupportedMessage -Message $Message) { return 'InfoUnsupported' }
+    return 'Other'
+}
+
+function Test-IQDaxQueryAccess {
+    <#
+    .SYNOPSIS
+    Probe: $true when a plain DAX query (EVALUATE ROW("ImpactIQ", 1)) succeeds against the dataset (private).
+    .DESCRIPTION
+    Used only after a first INFO query came back as "no response" (status unknown): a plain query that works proves
+    Build permission and the "Semantic Model Execute Queries REST API" tenant setting, so the rejection was INFO-specific
+    (HTTP 400 / 3239575574); a plain query that is rejected too means no access. Never throws.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$WorkspaceId,
+        [Parameter(Mandatory = $true)][string]$DatasetId,
+        [Parameter(Mandatory = $false)][string]$Stage = 'Dax',
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Item
+    )
+    try {
+        $rows = @(Invoke-IQDaxQuery -WorkspaceId $WorkspaceId -DatasetId $DatasetId -Dax 'EVALUATE ROW("ImpactIQ", 1)' -TimeoutSec 60 -Stage $Stage -Item $Item)
+        return ($rows.Count -gt 0)
+    }
+    catch {
+        Write-IQLog -Level Debug -Stage $Stage -Item $Item -Message ("executeQueries probe (plain DAX) failed: {0}" -f $_.Exception.Message)
+        return $false
+    }
+}
+
+function Test-IQDaxBudgetStop {
+    <#
+    .SYNOPSIS
+    True when the run's time budget is used up (Test-IQTimeBudget, Common); $false when that function is not loaded (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Stage,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Item
+    )
+    try {
+        if ($null -eq (Get-Command -Name 'Test-IQTimeBudget' -ErrorAction SilentlyContinue)) { return $false }
+        return [bool](Test-IQTimeBudget -Stage $Stage -Item $Item)
+    }
+    catch { return $false }
 }
 
 function Get-IQDaxShapeBool {
@@ -1076,8 +1201,14 @@ function Get-IQModelDetailViaDax {
     Dependency rows: INFO.CALCDEPENDENCY() when it returned rows, else Get-IQDaxReferences over the measure / calculated
     column / calculation item expressions that were returned. INFO.VIEW.MEASURES()[Expression] is blank unless the caller
     has write permission on the model (Contributor+); then no dependency rows can be produced and Message says so.
+    Failure classification (Get-IQDaxFailureKind): a 401/403/404 is reported as an access problem (InfoUnsupported
+    stays $false); an engine "INFO not supported" answer sets InfoUnsupported; when the status is unknown (the Http
+    module returned $null without recording it) one plain DAX probe (Test-IQDaxQueryAccess) decides between the two.
+    Test-IQTimeBudget is checked before every executeQueries call: when the budget is used up the function returns
+    Success=$false / BudgetStop=$true (Models records Failed; the next start resumes from the cached extracts).
+    A result that hit the 100 000-row cap is listed in Truncated (and in Message) and is not cached.
     Never throws; returns @{ Success; Csv; MdCsv; Outputs; Message; InfoUnsupported; RowCount; DependencyRowCount;
-    Method='Dax'; BaseName; Unavailable; DependencySource; ExpressionsMasked }.
+    Method='Dax'; BaseName; Unavailable; DependencySource; ExpressionsMasked; Truncated; BudgetStop }.
     ModelName = "<CleanWs> ~ <CleanModel>"; ModelID = DatasetId for dedicated-capacity workspaces, else the same
     "<CleanWs> ~ <CleanModel>" string (what the PBIT joins on for Pro models); ModelAsOfDate = RunId when it is a date.
     #>
@@ -1095,7 +1226,7 @@ function Get-IQModelDetailViaDax {
     $workspaceId = [string](Get-IQDaxMember -Object $Dataset -Name 'WorkspaceId')
     if ([string]::IsNullOrWhiteSpace($BaseName)) { $BaseName = Get-IQModelBackupFileName -Dataset $Dataset }
     $item = $BaseName
-    $result = @{ Success = $false; Csv = $null; MdCsv = $null; Outputs = @(); Message = ''; InfoUnsupported = $false; RowCount = 0; DependencyRowCount = 0; Method = 'Dax'; BaseName = $BaseName; Unavailable = @(); DependencySource = 'none'; ExpressionsMasked = $false }
+    $result = @{ Success = $false; Csv = $null; MdCsv = $null; Outputs = @(); Message = ''; InfoUnsupported = $false; RowCount = 0; DependencyRowCount = 0; Method = 'Dax'; BaseName = $BaseName; Unavailable = @(); DependencySource = 'none'; ExpressionsMasked = $false; Truncated = @(); BudgetStop = $false }
     if ([string]::IsNullOrWhiteSpace($datasetId)) { $result.Message = 'Dataset has no DatasetId'; return $result }
 
     # Dedicated capacity decides the ModelID convention (brief section 13 / audit x1 section 4.1).
@@ -1114,12 +1245,23 @@ function Get-IQModelDetailViaDax {
     $csvPath = Join-Path $OutputFolder ($BaseName + '.csv')
     $mdPath = Join-Path $OutputFolder ($BaseName + '_MD.csv')
     $extractFolder = Get-IQDaxExtractFolder -Key $datasetId
-    $queryParams = @{ ExtractFolder = $extractFolder; WorkspaceId = $workspaceId; DatasetId = $datasetId; Refresh = $Refresh; Stage = $Stage; Item = $item }
+    $truncated = New-Object System.Collections.Generic.List[string]
+    $queryParams = @{ ExtractFolder = $extractFolder; WorkspaceId = $workspaceId; DatasetId = $datasetId; Refresh = $Refresh; Stage = $Stage; Item = $item; Truncated = $truncated }
     $data = @{}
     $warnings = @()
     $unavailable = New-Object System.Collections.Generic.List[string]
+    # Time budget: one executeQueries call can cost TimeoutSec x MaxRetries on a hung capacity, so check before each one.
+    $budgetStop = {
+        param($what)
+        if (-not (Test-IQDaxBudgetStop -Stage $Stage -Item $item)) { return $false }
+        $result.BudgetStop = $true
+        $result.Message = ('time budget reached before {0}; the cached DAX extracts are reused on the next start' -f $what)
+        Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ('DAX model detail stopped: ' + $result.Message)
+        return $true
+    }
 
     # 1. Tables: INFO.VIEW.TABLES() first (works with Build permission on Pro and capacity), raw INFO.TABLES() as the fallback.
+    if (& $budgetStop 'INFO.VIEW.TABLES()') { return $result }
     $viewMode = $true
     try {
         $data['tables'] = @(Get-IQDaxInfoRowSet @queryParams -Name 'view-tables' -Dax 'EVALUATE INFO.VIEW.TABLES()')
@@ -1134,7 +1276,23 @@ function Get-IQModelDetailViaDax {
         catch {
             $rawError = $_.Exception.Message
             $result.Message = 'INFO.VIEW.TABLES() failed: ' + $viewError + ' | INFO.TABLES() failed: ' + $rawError
-            if ((Test-IQDaxInfoUnsupportedMessage -Message $viewError) -or (Test-IQDaxInfoUnsupportedMessage -Message $rawError)) { $result.InfoUnsupported = $true }
+            $kinds = @((Get-IQDaxFailureKind -Message $viewError), (Get-IQDaxFailureKind -Message $rawError))
+            if ($kinds -contains 'Access') {
+                $result.Message = 'executeQueries access denied (Build permission on the dataset / "Semantic Model Execute Queries REST API" tenant setting): ' + $result.Message
+            }
+            elseif ($kinds -contains 'InfoUnsupported') {
+                $result.InfoUnsupported = $true
+            }
+            elseif ($kinds -contains 'NoResponse') {
+                # Status unknown (HTTP 400, 403 or 404 all come back as $null): a plain DAX query tells them apart.
+                if (Test-IQDaxQueryAccess -WorkspaceId $workspaceId -DatasetId $datasetId -Stage $Stage -Item $item) {
+                    $result.InfoUnsupported = $true
+                    $result.Message += ' (a plain DAX query succeeds, so INFO functions are not available through executeQueries for this model)'
+                }
+                else {
+                    $result.Message = 'executeQueries rejects even a plain DAX query (check Build permission on the dataset and the "Semantic Model Execute Queries REST API" tenant setting): ' + $result.Message
+                }
+            }
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("DAX model detail unavailable: {0}" -f $result.Message)
             return $result
         }
@@ -1154,6 +1312,7 @@ function Get-IQModelDetailViaDax {
     }
     foreach ($key in $coreQueries.Keys) {
         $q = $coreQueries[$key]
+        if (& $budgetStop $q.Dax) { return $result }
         try { $data[$key] = @(Get-IQDaxInfoRowSet @queryParams -Name $q.Name -Dax $q.Dax) }
         catch {
             $data[$key] = @()
@@ -1178,11 +1337,15 @@ function Get-IQModelDetailViaDax {
     $blockReason = ''
     foreach ($name in $rawQueries.Keys) {
         if ($rawBlocked) { $data[$name] = @(); if ($name -ne 'model') { $unavailable.Add($name) }; continue }
+        if (& $budgetStop $rawQueries[$name]) { return $result }
         try { $data[$name] = @(Get-IQDaxInfoRowSet @queryParams -Name $name -Dax $rawQueries[$name]) }
         catch {
             $data[$name] = @()
             if ($name -ne 'model') { $unavailable.Add($name) }
-            if (Test-IQDaxInfoUnsupportedMessage -Message $_.Exception.Message) {
+            # Build permission was just proven by the INFO.VIEW.* / INFO.* calls, so an unclassified $null answer here
+            # (status not recorded by the Http module) is the HTTP 400 the JSON endpoint returns for raw INFO.*.
+            $kind = Get-IQDaxFailureKind -Message $_.Exception.Message
+            if ($kind -eq 'InfoUnsupported' -or $kind -eq 'NoResponse') {
                 $rawBlocked = $true
                 $blockReason = $_.Exception.Message
             }
@@ -1196,6 +1359,7 @@ function Get-IQModelDetailViaDax {
         Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("Raw INFO.* functions are not available through executeQueries for this model; skipped: {0}. Partitions, roles/RLS filters, calculation items, hierarchies and INFO.CALCDEPENDENCY rows will be missing (engine: {1})" -f ($unavailable -join ', '), $blockReason)
     }
     $result.Unavailable = @($unavailable.ToArray())
+    $result.Truncated = @($truncated.ToArray())
 
     # Shapes and indexes.
     $shape = ConvertTo-IQDaxModelShape -Data $data -ViewMode $viewMode
@@ -1234,11 +1398,11 @@ function Get-IQModelDetailViaDax {
 
     $rows = New-Object System.Collections.Generic.List[object]
 
-    # Tables (all, including calculation-group tables).
+    # Tables (all, including calculation-group tables). No Description: the csx leaves it "" for Table rows (brief section 13).
     foreach ($t in $shape.Tables) {
         $mode = [string]$t.StorageMode
         if ($mode -eq '' -and $firstPartitionMode.ContainsKey($t.Name)) { $mode = $firstPartitionMode[$t.Name] }
-        $rows.Add((New-IQModelDetailRow -Type 'Table' -Common $common -Fields @{ Table = $t.Name; Name = $t.Name; IsHidden = $t.IsHidden; TableStorageMode = $mode; Description = $t.Description }))
+        $rows.Add((New-IQModelDetailRow -Type 'Table' -Common $common -Fields @{ Table = $t.Name; Name = $t.Name; IsHidden = $t.IsHidden; TableStorageMode = $mode }))
     }
 
     # Calculation groups (Table = Name = the calc-group table name) and their items.
@@ -1375,6 +1539,7 @@ function Get-IQModelDetailViaDax {
     $result.Message = ('{0} object rows, {1} dependency rows via DAX {2} (dependencies: {3})' -f $result.RowCount, $result.DependencyRowCount, $source, $result.DependencySource)
     if ($result.ExpressionsMasked) { $result.Message += '; measure expressions masked (write permission on the model required)' }
     if ($unavailable.Count -gt 0) { $result.Message += ' (unavailable via REST: ' + ($unavailable -join ', ') + ')' }
+    if ($truncated.Count -gt 0) { $result.Message += ' (truncated at the executeQueries 100 000-row cap, not cached: ' + ($truncated -join ', ') + ')' }
     if ($warnings.Count -gt 0) { $result.Message += ' (partial: ' + ($warnings -join '; ') + ')' }
     Write-IQLog -Level Success -Stage $Stage -Item $item -Message $result.Message
     return $result
@@ -1409,11 +1574,16 @@ function Get-IQUsageMetrics {
     Reads the usage-metrics semantic model of a workspace via DAX (Report views / Report page views for the last N days).
     .DESCRIPTION
     Finds a dataset named "Report Usage Metrics Model" (new usage metrics) or "Usage Metrics Report" (classic) in the
-    workspace, discovers its tables with INFO.TABLES()/INFO.COLUMNS(), then reads 'Report views', 'Report page views',
-    'Reports' and 'Users' (each guarded) filtered on the table's date column over the last -Days days. Report and
-    user names are joined in when the lookup tables expose ReportId/UserId keys. Never throws; returns
-    @{ Found; DatasetId; DatasetName; ReportViews; ReportPageViews; Reports; Users; Message } with WorkspaceId /
-    WorkspaceName stamped on every row.
+    workspace, discovers its tables and columns with INFO.VIEW.TABLES()/INFO.VIEW.COLUMNS() (works with Build
+    permission), falling back to raw INFO.TABLES()/INFO.COLUMNS() (rejected with HTTP 400 on most tenants) and, when
+    both are rejected, to the four known table names. Then reads 'Report views', 'Report page views', 'Reports' and
+    'Users' (each guarded) - the two fact tables filtered on their date column over the last -Days days, newest first.
+    TOPN is sized from the column count so the executeQueries limit (100 000 rows OR 1 000 000 values, whichever is
+    hit first; an over-limit result is an error, not a truncated table) is respected; a failed read is retried once
+    with a quarter of the rows and a Warn is logged when a table hits its cap. Report and user names are joined in
+    when the lookup tables expose ReportId/UserId keys. Never throws; returns @{ Found; DatasetId; DatasetName;
+    ReportViews; ReportPageViews; Reports; Users; Message } with WorkspaceId / WorkspaceName stamped on every row.
+    Message starts with "Usage metrics failed" when the run's time budget stopped the reads (Extras records Failed).
     #>
     [CmdletBinding()]
     param(
@@ -1426,6 +1596,9 @@ function Get-IQUsageMetrics {
     $item = $WorkspaceName
     if ([string]::IsNullOrWhiteSpace($item)) { $item = $WorkspaceId }
     if ($Days -lt 1) { $Days = 1 }
+    $rowCap = Get-IQDaxRowCap
+    $valueBudget = 950000   # 1 000 000-value cap with headroom
+    $factDefaultRows = 60000   # 'Report views' (~15 columns) / 'Report page views' (~16) when the column count is unknown
     try {
         $listPath = 'datasets'
         if (Test-IQDaxGuid -Value $WorkspaceId) { $listPath = 'groups/' + $WorkspaceId + '/datasets' }
@@ -1444,45 +1617,125 @@ function Get-IQUsageMetrics {
         $result.Found = $true
         $result.DatasetId = [string]$usageDataset.id
         $result.DatasetName = [string]$usageDataset.name
+        $daxParams = @{ WorkspaceId = $WorkspaceId; DatasetId = $result.DatasetId; Stage = $Stage; Item = $item }
 
-        $tables = @(Invoke-IQDaxQuery -WorkspaceId $WorkspaceId -DatasetId $result.DatasetId -Dax 'EVALUATE INFO.TABLES()' -Stage $Stage -Item $item)
-        $columns = @()
-        try { $columns = @(Invoke-IQDaxQuery -WorkspaceId $WorkspaceId -DatasetId $result.DatasetId -Dax 'EVALUATE INFO.COLUMNS()' -Stage $Stage -Item $item) }
-        catch { Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("INFO.COLUMNS() failed on the usage model: " + $_.Exception.Message) }
-        $tableNames = @{}
-        foreach ($t in $tables) { $n = [string](Get-IQDaxMember -Object $t -Name 'Name'); if ($n) { $tableNames[$n] = [string](Get-IQDaxMember -Object $t -Name 'ID') } }
+        # Table / column discovery: INFO.VIEW.* first, raw INFO.* second, the known table names last (each read below
+        # is guarded anyway, so discovery failing must not fail the workspace).
+        $tableNames = @{}       # table name -> table ID ('' when unknown)
+        $columnsByTable = @{}   # table name -> List of @{ Name; DataType }
+        $addColumn = {
+            param($tableName, $columnName, $dataType)
+            if ([string]::IsNullOrEmpty($tableName) -or [string]::IsNullOrEmpty($columnName)) { return }
+            if (-not $columnsByTable.ContainsKey($tableName)) { $columnsByTable[$tableName] = New-Object System.Collections.Generic.List[object] }
+            $columnsByTable[$tableName].Add(@{ Name = [string]$columnName; DataType = [string]$dataType })
+        }
+        $discovered = $false
+        try {
+            $tables = @(Invoke-IQDaxQuery @daxParams -Dax 'EVALUATE INFO.VIEW.TABLES()' -TimeoutSec 180)
+            foreach ($t in $tables) { $n = [string](Get-IQDaxMember -Object $t -Name 'Name'); if ($n) { $tableNames[$n] = [string](Get-IQDaxMember -Object $t -Name 'ID') } }
+            $discovered = ($tableNames.Count -gt 0)
+            if ($discovered) {
+                try {
+                    foreach ($c in @(Invoke-IQDaxQuery @daxParams -Dax 'EVALUATE INFO.VIEW.COLUMNS()' -TimeoutSec 180)) {
+                        if ([string](Get-IQDaxMember -Object $c -Name 'DataCategory') -eq 'RowNumber' -or [string](Get-IQDaxMember -Object $c -Name 'Type') -eq 'RowNumber') { continue }
+                        & $addColumn ([string](Get-IQDaxMember -Object $c -Name 'Table')) ([string](Get-IQDaxMember -Object $c -Name 'Name')) (Get-IQDaxMember -Object $c -Name 'DataType')
+                    }
+                }
+                catch { Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("INFO.VIEW.COLUMNS() failed on the usage model: " + $_.Exception.Message) }
+            }
+        }
+        catch { Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("INFO.VIEW.TABLES() failed on the usage model ({0}); trying INFO.TABLES()" -f $_.Exception.Message) }
+        if (-not $discovered) {
+            try {
+                $tables = @(Invoke-IQDaxQuery @daxParams -Dax 'EVALUATE INFO.TABLES()' -TimeoutSec 180)
+                foreach ($t in $tables) { $n = [string](Get-IQDaxMember -Object $t -Name 'Name'); if ($n) { $tableNames[$n] = [string](Get-IQDaxMember -Object $t -Name 'ID') } }
+                $discovered = ($tableNames.Count -gt 0)
+                if ($discovered) {
+                    try {
+                        $nameById = @{}
+                        foreach ($k in @($tableNames.Keys)) { $nameById[[string]$tableNames[$k]] = [string]$k }
+                        foreach ($c in @(Invoke-IQDaxQuery @daxParams -Dax 'EVALUATE INFO.COLUMNS()' -TimeoutSec 180)) {
+                            $tid = [string](Get-IQDaxMember -Object $c -Name 'TableID')
+                            if (-not $nameById.ContainsKey($tid)) { continue }
+                            if ([string](Get-IQDaxMember -Object $c -Name 'Type') -eq '3') { continue }   # RowNumber column
+                            $dt = Get-IQDaxMember -Object $c -Name 'ExplicitDataType'
+                            if ($null -eq $dt) { $dt = Get-IQDaxMember -Object $c -Name 'InferredDataType' }
+                            & $addColumn $nameById[$tid] (Get-IQDaxColumnName -Column $c) $dt
+                        }
+                    }
+                    catch { Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("INFO.COLUMNS() failed on the usage model: " + $_.Exception.Message) }
+                }
+            }
+            catch { Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("INFO.TABLES() failed on the usage model too ({0}); reading the standard table names without discovery" -f $_.Exception.Message) }
+        }
+        if (-not $discovered) {
+            foreach ($n in @('Report views', 'Report page views', 'Reports', 'Users')) { $tableNames[$n] = '' }
+        }
 
         $findDateColumn = {
             param($tableName)
-            $tid = $tableNames[$tableName]
-            $candidates = @($columns | Where-Object { [string](Get-IQDaxMember -Object $_ -Name 'TableID') -eq $tid })
-            foreach ($c in $candidates) { if ((Get-IQDaxColumnName -Column $c) -ieq 'Date') { return 'Date' } }
+            if (-not $columnsByTable.ContainsKey($tableName)) { return $null }
+            $candidates = $columnsByTable[$tableName].ToArray()
+            foreach ($c in $candidates) { if ([string]$c.Name -ieq 'Date') { return 'Date' } }
             foreach ($c in $candidates) {
-                $dt = Get-IQDaxMember -Object $c -Name 'ExplicitDataType'
-                if ($null -eq $dt) { $dt = Get-IQDaxMember -Object $c -Name 'InferredDataType' }
-                if ([string]$dt -eq '9') { return (Get-IQDaxColumnName -Column $c) }
+                $dt = [string]$c.DataType
+                if ($dt -eq '9' -or $dt -ieq 'DateTime') { return [string]$c.Name }   # 9 = raw INFO.COLUMNS DateTime code
             }
             return $null
         }
+        $topRows = {
+            param($tableName, [int]$defaultRows)
+            # 100 000 rows OR 1 000 000 values per query, whichever is hit first: size by the column count when known.
+            if ($columnsByTable.ContainsKey($tableName)) {
+                $columnCount = $columnsByTable[$tableName].Count
+                if ($columnCount -gt 0) { return [int][math]::Max(1000.0, [math]::Min([double]$rowCap, [math]::Floor([double]$valueBudget / $columnCount))) }
+            }
+            return $defaultRows
+        }
         $readTable = {
-            param($tableName, [bool]$filterByDate)
+            param($tableName, [bool]$filterByDate, [int]$defaultRows)
             if (-not $tableNames.ContainsKey($tableName)) { return @() }
+            if (Test-IQDaxBudgetStop -Stage $Stage -Item $item) { throw (New-Object System.Exception(("time budget reached before reading '{0}'" -f $tableName))) }
             $tref = ConvertTo-IQDaxTableRef -Table $tableName
-            $dax = ('EVALUATE TOPN(100000, {0})' -f $tref)
+            $n = [int](& $topRows $tableName $defaultRows)
+            $source = $tref
+            $orderBy = ''
             if ($filterByDate) {
                 $dateCol = & $findDateColumn $tableName
-                if ($dateCol) { $dax = ('EVALUATE TOPN(100000, FILTER({0}, {0}{1} >= TODAY() - {2}))' -f $tref, (ConvertTo-IQDaxBracketRef -Name $dateCol), $Days) }
+                if ($dateCol) {
+                    $colRef = $tref + (ConvertTo-IQDaxBracketRef -Name $dateCol)
+                    $source = ('FILTER({0}, {1} >= TODAY() - {2})' -f $tref, $colRef, $Days)
+                    $orderBy = (', {0}, DESC' -f $colRef)   # the newest rows survive the cap
+                }
             }
-            try { return @(Invoke-IQDaxQuery -WorkspaceId $WorkspaceId -DatasetId $result.DatasetId -Dax $dax -Stage $Stage -Item $item) }
-            catch {
-                Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("Usage table '{0}' could not be read: {1}" -f $tableName, $_.Exception.Message)
-                return @()
+            $attempt = 0
+            while ($attempt -lt 2) {
+                $attempt++
+                $dax = ('EVALUATE TOPN({0}, {1}{2})' -f $n, $source, $orderBy)
+                try {
+                    $rows = @(Invoke-IQDaxQuery @daxParams -Dax $dax -TimeoutSec 300)
+                    if ($rows.Count -ge $n) {
+                        Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("Usage table '{0}' hit its TOPN cap ({1} rows); older rows of the last {2} days are not included" -f $tableName, $n, $Days)
+                    }
+                    return $rows
+                }
+                catch {
+                    if ($attempt -lt 2 -and $n -gt 1000) {
+                        $smaller = [int][math]::Max(1000.0, [math]::Floor([double]$n / 4))
+                        Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("Usage table '{0}' read failed with TOPN({1}); retrying once with TOPN({2}): {3}" -f $tableName, $n, $smaller, $_.Exception.Message)
+                        $n = $smaller
+                        continue
+                    }
+                    Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("Usage table '{0}' could not be read: {1}" -f $tableName, $_.Exception.Message)
+                    return @()
+                }
             }
+            return @()
         }
-        $reports = @(& $readTable 'Reports' $false)
-        $users = @(& $readTable 'Users' $false)
-        $reportViews = @(& $readTable 'Report views' $true)
-        $pageViews = @(& $readTable 'Report page views' $true)
+        $reports = @(& $readTable 'Reports' $false $rowCap)
+        $users = @(& $readTable 'Users' $false $rowCap)
+        $reportViews = @(& $readTable 'Report views' $true $factDefaultRows)
+        $pageViews = @(& $readTable 'Report page views' $true $factDefaultRows)
 
         $reportNameById = @{}
         foreach ($r in $reports) {
@@ -1501,7 +1754,7 @@ function Get-IQUsageMetrics {
         }
         $stamp = {
             param($rowsIn)
-            $out = @()
+            $out = New-Object System.Collections.Generic.List[object]
             foreach ($r in @($rowsIn)) {
                 if ($null -eq $r) { continue }
                 $o = [ordered]@{ WorkspaceId = $WorkspaceId; WorkspaceName = $WorkspaceName; UsageDatasetId = $result.DatasetId }
@@ -1510,9 +1763,9 @@ function Get-IQUsageMetrics {
                 if ($null -ne $rid -and -not $o.Contains('ReportName') -and $reportNameById.ContainsKey([string]$rid)) { $o['ReportName'] = $reportNameById[[string]$rid] }
                 $uid = Get-IQDaxMember -Object $r -Name 'UserId'
                 if ($null -ne $uid -and -not $o.Contains('UserPrincipalName') -and $userNameById.ContainsKey([string]$uid)) { $o['UserPrincipalName'] = $userNameById[[string]$uid] }
-                $out += [PSCustomObject]$o
+                $out.Add([PSCustomObject]$o)
             }
-            return $out
+            return $out.ToArray()
         }
         $result.ReportViews = @(& $stamp $reportViews)
         $result.ReportPageViews = @(& $stamp $pageViews)

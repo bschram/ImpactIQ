@@ -15,7 +15,11 @@
                                             against Config\Blank Model.bim, plus the leftover VOL folder cleanup)
 
     Every report is checkpointed the moment it is done (Set-IQItemDone -Stage ReportBackup -ItemKey <ReportId>, outputs =
-    exported file + .bim when produced) and skipped on re-run. Nothing here uses Read-Host, WinForms, globals or
+    exported file + .bim when produced) and skipped on re-run. Reports shared without workspace access are recorded as
+    Skipped (they cannot be exported) so ReportExports.txt and the manifest account for them. The first new export of a
+    pass invalidates the ReportDetail checkpoint (and its Completed manifest status) so a resumed run whose retried exports
+    succeed re-runs the csx scripts; ReportDetail also compares the PBIX set it processed with the folder before it skips.
+    An unreadable inventory throws (the stage is marked Failed) instead of completing with 0 reports. Nothing here uses Read-Host, WinForms, globals or
     Write-Host; all shared state lives in $script:IQ. Windows PowerShell 5.1 and PowerShell 7 compatible; pbi-tools,
     Tabular Editor and subst are Windows-only and guarded by $script:IQ.IsWindows / $script:IQ.Tools.*Works.
 
@@ -28,16 +32,20 @@
     Audit items honoured: C7-01 (paginated detection via ReportType / ReportWebUrl, RDL branch reachable), C7-02 (group-less
     routes for pseudo workspaces, no Fabric fallback there), C7-03 (all output through Write-IQLog, per-item checkpoints),
     C7-04/C7-13 (definition export verified, staging cleaned in finally), C7-05 (pbi-tools needs Power BI Desktop: extraction
-    is attempted once and disabled for the rest of the run when pbi-tools reports a Desktop/msmdsrv problem; the report backup
-    itself always stays a success), C7-06 (subst only as long-path fallback),
+    is disabled for the rest of the run only when pbi-tools itself names Power BI Desktop / msmdsrv, or when Desktop was not
+    detected and three consecutive extractions failed as processes; a PBIX without an embedded model is a per-file outcome;
+    the report backup itself always stays a success), C7-06 (subst only as long-path fallback),
     C7-07 (retry/backoff and bounded LRO polling come from the Http module), C7-08/C7-09 (no folder wipe, .partial downloads,
-    resume via checkpoints, .bim moved immediately per report, existing .bim reused), C7-10 (name collisions get an id suffix,
-    empty names get a fallback), C7-11 (pbi-tools only on real IncludeModel PBIX files), C7-12 (exit codes and tool output
+    resume via checkpoints, .bim moved immediately per report, an existing .bim reused only when a ModelBackup/ReportBackup
+    checkpoint proves it belongs to the same dataset), C7-10 (name collisions get an id suffix for report AND model file
+    names, empty names get a fallback), C7-11 (pbi-tools only on real IncludeModel PBIX files), C7-12 (exit codes and tool output
     captured), C7-14 (ReportExports.txt with per-report export facts), C7-15 (optional Options.ReportDefinitionFormat),
-    C7-17 (no $args, C# escaping), C8-01/C8-02 (TE2 exit codes, timeouts, captured output), C8-08 (stale TXT files and
-    unzip folders removed before the PBIR script runs; classic script only after the PBIR script succeeded),
-    X2-H1/X3-H2/X4-04 (IMPACTIQ_BASE / IMPACTIQ_DATE_FOLDER environment for the csx, run folder made the newest dated
-    folder via a junction when needed), X3-D1/X3-DG1/X4-20 (<name>.meta.json sidecar per report with ids and method).
+    C7-17 (no $args, C# escaping), C8-01/C8-02 (TE2 exit codes, timeouts, captured output), C8-08 (stale TXT files incl.
+    ExtractErrors.txt / ReportObjects_UnusedObjects.txt and unzip folders removed before the PBIR script runs; classic script
+    only after the PBIR script succeeded),
+    X2-H1/X3-H2/X4-04 (IMPACTIQ_BASE / IMPACTIQ_DATE_FOLDER environment for the csx - the authoritative folder selection;
+    the junction that also makes the run folder the newest dated folder is best-effort), X3-D1/X3-DG1/X4-20 (<name>.meta.json
+    sidecar per report with ids and method).
 #>
 
 # =====================================================================================================================
@@ -304,13 +312,14 @@ function Test-IQReportPbiToolsAvailable {
     $disabled = ''
     try { if ($script:IQ.Tools.ContainsKey('PbiToolsExtractDisabled')) { $disabled = [string]$script:IQ.Tools.PbiToolsExtractDisabled } } catch { $disabled = '' }
     if (-not [string]::IsNullOrWhiteSpace($disabled)) { return @{ Available = $false; Reason = ('model extraction disabled for the rest of this run: ' + $disabled) } }
-    # Power BI Desktop detection (Initialize-IQTools) is a heuristic: when it is negative we still try the first PBIX and
-    # disable extraction for the rest of the run only when pbi-tools itself reports a Desktop/msmdsrv problem (C7-05).
+    # Power BI Desktop detection (Initialize-IQTools) is a heuristic: when it is negative every PBIX is still tried and
+    # extraction is disabled for the rest of the run only when pbi-tools itself reports a Desktop/msmdsrv problem or
+    # several extractions in a row fail as processes (C7-05, Disable-IQReportModelExtract).
     $desktopWarning = ''
     try {
         if ($script:IQ.Tools.ContainsKey('PbiDesktopFound')) {
             $desktop = ConvertTo-IQReportBool -Value $script:IQ.Tools.PbiDesktopFound
-            if ($desktop -eq $false) { $desktopWarning = 'Power BI Desktop was not detected on this host; pbi-tools needs it to read the embedded model of a PBIX. Extraction is attempted once and disabled for the run if pbi-tools reports that problem (ModelDetail then falls back to DAX)' }
+            if ($desktop -eq $false) { $desktopWarning = 'Power BI Desktop was not detected on this host; pbi-tools needs it to read the embedded model of a PBIX. Extraction is still attempted per PBIX and disabled for the run only if pbi-tools reports that problem or several extractions in a row fail (ModelDetail then falls back to DAX)' }
         }
     }
     catch { $desktopWarning = '' }
@@ -322,31 +331,105 @@ function Disable-IQReportModelExtract {
     .SYNOPSIS
     Disables pbi-tools model extraction for the rest of the run when a failure points at a missing Power BI Desktop / AS engine (private).
     .DESCRIPTION
-    Returns $true when extraction was disabled. Triggers: the tool output mentions Power BI Desktop / msmdsrv / PBIDesktop,
-    or Power BI Desktop was not detected by Initialize-IQTools and the very first extraction failed. Later reports then
-    skip the pbi-tools round-trip in seconds instead of minutes (audit C7-05); their report backup still succeeds.
+    Returns $true when extraction was disabled. Triggers: the tool output mentions Power BI Desktop / msmdsrv / PBIDesktop
+    (always), or - with -CountFailure, i.e. the extract process itself failed (non-zero exit, timeout, start failure) -
+    Power BI Desktop was not detected by Initialize-IQTools and MaxConsecutiveFailures extractions in a row failed. A PBIX
+    that simply has no embedded model (exit code 0, no .bim) is a per-file outcome and must be reported WITHOUT
+    -CountFailure: it never disables extraction for the other reports. The counter lives in
+    $script:IQ.Tools.PbiToolsExtractConsecutiveFailures and is reset by every successful pbi-tools round-trip. Later
+    reports then skip the pbi-tools round-trip in seconds instead of minutes (audit C7-05); their report backup still succeeds.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Output,
         [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Reason,
         [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup',
-        [Parameter(Mandatory = $false)][string]$Item
+        [Parameter(Mandatory = $false)][string]$Item,
+        [Parameter(Mandatory = $false)][switch]$CountFailure,
+        [Parameter(Mandatory = $false)][int]$MaxConsecutiveFailures = 3
     )
     if (-not $script:IQ.Tools) { return $false }
     $mentionsDesktop = (-not [string]::IsNullOrWhiteSpace($Output)) -and ($Output -match '(?i)Power ?BI ?Desktop|msmdsrv|PBIDesktop|Analysis Services instance|no .*desktop .*install')
     $desktopMissing = $false
     try { if ($script:IQ.Tools.ContainsKey('PbiDesktopFound')) { $desktopMissing = ((ConvertTo-IQReportBool -Value $script:IQ.Tools.PbiDesktopFound) -eq $false) } } catch { $desktopMissing = $false }
-    $firstAttempt = $true
-    try { if ($script:IQ.Tools.ContainsKey('PbiToolsExtractAttempts')) { $firstAttempt = ([int]$script:IQ.Tools.PbiToolsExtractAttempts -le 1) } } catch { $firstAttempt = $true }
-    if (-not ($mentionsDesktop -or ($desktopMissing -and $firstAttempt))) { return $false }
-    $why = 'pbi-tools cannot read embedded models on this host'
-    if ($mentionsDesktop) { $why += ' (its output mentions Power BI Desktop / msmdsrv)' }
-    elseif ($desktopMissing) { $why += ' (Power BI Desktop not detected and the first extraction failed)' }
+    $consecutive = 0
+    if ($CountFailure) {
+        try { if ($script:IQ.Tools.ContainsKey('PbiToolsExtractConsecutiveFailures')) { $consecutive = [int]$script:IQ.Tools.PbiToolsExtractConsecutiveFailures } } catch { $consecutive = 0 }
+        $consecutive++
+        $script:IQ.Tools.PbiToolsExtractConsecutiveFailures = $consecutive
+    }
+    if ($MaxConsecutiveFailures -lt 1) { $MaxConsecutiveFailures = 1 }
+    $why = $null
+    if ($mentionsDesktop) { $why = 'pbi-tools cannot read embedded models on this host (its output mentions Power BI Desktop / msmdsrv)' }
+    elseif ($CountFailure -and $desktopMissing -and $consecutive -ge $MaxConsecutiveFailures) {
+        $why = ('pbi-tools cannot read embedded models on this host (Power BI Desktop not detected and {0} consecutive extractions failed as processes, the last one for ''{1}'')' -f $consecutive, $Item)
+    }
+    if ([string]::IsNullOrWhiteSpace($why)) { return $false }
     if (-not [string]::IsNullOrWhiteSpace($Reason)) { $why += ': ' + $Reason }
     $script:IQ.Tools.PbiToolsExtractDisabled = $why
     Write-IQLog -Level Warn -Stage $Stage -Item $Item -Message ('Model extraction from PBIX files disabled for the rest of this run - ' + $why + '. Report backups continue; ModelDetail falls back to DAX for Pro models.')
     return $true
+}
+
+function Reset-IQReportModelExtractFailureCount {
+    <#
+    .SYNOPSIS
+    Resets the consecutive pbi-tools process-failure counter after a successful pbi-tools round-trip (private).
+    #>
+    [CmdletBinding()]
+    param()
+    try { if ($script:IQ.Tools -is [System.Collections.IDictionary]) { $script:IQ.Tools.PbiToolsExtractConsecutiveFailures = 0 } } catch { $null = $null }
+}
+
+function ConvertTo-IQReportPathKey {
+    <#
+    .SYNOPSIS
+    Normalised, lower-cased full path used as a hashtable key for file identity comparisons (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $full = $Path
+    try { $full = [System.IO.Path]::GetFullPath($Path) } catch { $full = $Path }
+    return $full.TrimEnd('\', '/').ToLowerInvariant()
+}
+
+function Get-IQReportBimOwnerMap {
+    <#
+    .SYNOPSIS
+    Maps every .bim path recorded by a ModelBackup or ReportBackup checkpoint of this run to the DatasetId that produced it (private).
+    .DESCRIPTION
+    Keys are ConvertTo-IQReportPathKey values, entries @{ DatasetId (lower case); Path (as recorded) }. ModelBackup
+    checkpoints own their *.bim outputs (itemKey = DatasetId); ReportBackup checkpoints own their *.bim outputs and
+    data.BimPath (data.DatasetId). Invoke-IQReportModelExtract only reuses an existing .bim when this map proves it belongs
+    to the same dataset, so two datasets whose names sanitise to the same file name never share one model file.
+    #>
+    [CmdletBinding()]
+    param()
+    $map = @{}
+    foreach ($cp in @(Get-IQReportCheckpointList -Stage 'ModelBackup')) {
+        $dsId = [string](Get-IQReportMember -Object $cp -Name 'itemKey')
+        if ([string]::IsNullOrWhiteSpace($dsId)) { continue }
+        foreach ($o in @(Get-IQReportMember -Object $cp -Name 'outputs')) {
+            if ([string]$o -notlike '*.bim') { continue }
+            $k = ConvertTo-IQReportPathKey -Path ([string]$o)
+            if ($k -ne '' -and -not $map.ContainsKey($k)) { $map[$k] = @{ DatasetId = $dsId.ToLowerInvariant(); Path = [string]$o } }
+        }
+    }
+    foreach ($cp in @(Get-IQReportCheckpointList -Stage 'ReportBackup')) {
+        $data = Get-IQReportMember -Object $cp -Name 'data'
+        $dsId = [string](Get-IQReportMember -Object $data -Name 'DatasetId')
+        if ([string]::IsNullOrWhiteSpace($dsId)) { continue }
+        $candidates = @()
+        foreach ($o in @(Get-IQReportMember -Object $cp -Name 'outputs')) { if ([string]$o -like '*.bim') { $candidates += [string]$o } }
+        $bp = [string](Get-IQReportMember -Object $data -Name 'BimPath')
+        if (-not [string]::IsNullOrWhiteSpace($bp)) { $candidates += $bp }
+        foreach ($c in $candidates) {
+            $k = ConvertTo-IQReportPathKey -Path $c
+            if ($k -ne '' -and -not $map.ContainsKey($k)) { $map[$k] = @{ DatasetId = $dsId.ToLowerInvariant(); Path = $c } }
+        }
+    }
+    return $map
 }
 
 # =====================================================================================================================
@@ -364,7 +447,10 @@ function Get-IQReportWorkList {
     BimPath; ShortKey }. Names use Get-IQCleanName (the exact monolith sanitiser). Two reports that sanitise to the same file
     name get a " (<8-char id>)" suffix on the later one (audit C7-10); an empty report name becomes "Report <8-char id>".
     The .bim of a Pro report is named after its DATASET ("<CleanDatasetWs> ~ <CleanDataset>.bim", audit C8-03/X1-08) so
-    ModelDetail finds one model per dataset regardless of report names.
+    ModelDetail finds one model per dataset regardless of report names; two DIFFERENT datasets whose names sanitise to the
+    same string get the " (<8-char DatasetId>)" suffix on the later one, exactly like the ModelBackup stage. Reports shared
+    without workspace access are included (NoAccess = $true) so the stage records them as Skipped. An unreadable inventory
+    throws so the stage is marked Failed instead of completing with 0 reports.
     #>
     [CmdletBinding()]
     param(
@@ -372,10 +458,10 @@ function Get-IQReportWorkList {
         [Parameter(Mandatory = $true)][string]$ModelFolder
     )
     $reports = @()
-    try { $reports = @(Get-IQSelectedReports | Where-Object { $null -ne $_ }) }
+    try { $reports = @(Get-IQSelectedReports -IncludeSharedReports | Where-Object { $null -ne $_ }) }
     catch {
         Write-IQLog -Level Error -Message ("Could not read the selected reports from the inventory: " + $_.Exception.Message) -Exception $_.Exception
-        return @()
+        throw ("Could not read the selected reports from the inventory: " + $_.Exception.Message)
     }
     $wsById = @{}
     try {
@@ -403,6 +489,7 @@ function Get-IQReportWorkList {
 
     $work = New-Object System.Collections.Generic.List[object]
     $usedNames = @{}
+    $usedModelNames = @{}   # lower-cased model base name -> owner id (DatasetId, or ReportId for report-named models)
     $seenIds = @{}
     foreach ($report in $reports) {
         $reportId = [string](Get-IQReportMember -Object $report -Name 'ReportId')
@@ -479,6 +566,21 @@ function Get-IQReportWorkList {
             if ([string]::IsNullOrWhiteSpace($cleanDs)) { $cleanDs = 'Model ' + $datasetId.Substring(0, [Math]::Min(8, $datasetId.Length)) }
             $modelBaseName = $cleanDsWs + ' ~ ' + $cleanDs
         }
+        # Model file collisions (audit C7-10 for the .bim): reports of the SAME dataset share one .bim; a different dataset
+        # that sanitises to the same name gets the " (<8-char DatasetId>)" suffix, mirroring the ModelBackup stage.
+        $modelOwner = $datasetId.ToLowerInvariant()
+        if ($modelOwner -eq '') { $modelOwner = 'report:' + $reportId.ToLowerInvariant() }
+        $modelKey = $modelBaseName.ToLowerInvariant()
+        if ($usedModelNames.ContainsKey($modelKey) -and $usedModelNames[$modelKey] -ne $modelOwner) {
+            $suffix = $datasetId
+            if ([string]::IsNullOrWhiteSpace($suffix)) { $suffix = $reportId }
+            if ($suffix.Length -gt 8) { $suffix = $suffix.Substring(0, 8) }
+            $uniqueModel = $modelBaseName + ' (' + $suffix + ')'
+            Write-IQLog -Level Warn -Item $baseName -Message "Another dataset in scope sanitises to the same model file name; using '$uniqueModel' for dataset '$datasetId'"
+            $modelBaseName = $uniqueModel
+            $modelKey = $modelBaseName.ToLowerInvariant()
+        }
+        if (-not $usedModelNames.ContainsKey($modelKey)) { $usedModelNames[$modelKey] = $modelOwner }
 
         $hasLabel = $false
         try { if ($labels -is [System.Collections.IDictionary] -and $labels.Contains($reportId)) { $hasLabel = $true } } catch { $hasLabel = $false }
@@ -880,22 +982,60 @@ function Invoke-IQReportModelExtract {
     file base name (-S rename script -B destination), then the .bim lands in Model Backups\<RunId>. Differences: the extract
     folder is the short path <BaseFolder>\Config\Temp\x-<8-char hash> and subst is used only when that path is still longer
     than 200 characters AND the mapping succeeds (audit C7-06); exit codes and output are captured (C7-12); an existing .bim
-    for the dataset is reused so one model per dataset is extracted regardless of how many reports share it (C7-09/C8-03);
-    every failure is logged and returned instead of thrown - the report backup itself stays a success and ModelDetail
-    falls back to DAX for that model. Returns @{ Success; BimPath; Message; Reused; Renamed }.
+    is reused only when a ModelBackup or ReportBackup checkpoint of this run proves it was produced for the SAME DatasetId
+    (-BimOwners, see Get-IQReportBimOwnerMap), so one model per dataset is extracted regardless of how many reports share
+    it (C7-09/C8-03) while a different dataset whose name sanitises to the same file name gets its own " (<8-char id>)"
+    file; every failure is logged and returned instead of thrown - the report backup itself stays a success and
+    ModelDetail falls back to DAX for that model. Returns @{ Success; BimPath; Message; Reused; Renamed }.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][hashtable]$Work,
-        [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup'
+        [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup',
+        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$BimOwners
     )
     $out = @{ Success = $false; BimPath = $null; Message = ''; Reused = $false; Renamed = $false }
     $item = [string]$Work.Item
     $destination = [string]$Work.BimPath
-    if (Test-IQReportFileHasContent -Path $destination) {
+    $datasetKey = ([string]$Work.DatasetId).ToLowerInvariant()
+    if ($null -eq $BimOwners) { $BimOwners = Get-IQReportBimOwnerMap }
+    if ($datasetKey -ne '') {
+        # 1. A .bim this run already produced for the same dataset (ModelBackup via XMLA/Fabric, or an earlier report of
+        #    this dataset) is reused whatever its path - the checkpoint, not the file name, proves the provenance.
+        $owned = $null
+        $destinationKey = ConvertTo-IQReportPathKey -Path $destination
+        if ($destinationKey -ne '' -and $BimOwners.ContainsKey($destinationKey) -and [string]$BimOwners[$destinationKey].DatasetId -eq $datasetKey -and (Test-IQReportFileHasContent -Path $destination)) { $owned = $destination }
+        if ($null -eq $owned) {
+            foreach ($k in @($BimOwners.Keys)) {
+                $entry = $BimOwners[$k]
+                if ([string]$entry.DatasetId -ne $datasetKey) { continue }
+                $candidate = [string]$entry.Path
+                if (Test-IQReportFileHasContent -Path $candidate) { $owned = $candidate; break }
+            }
+        }
+        if ($null -ne $owned) {
+            $out.Success = $true; $out.BimPath = $owned; $out.Reused = $true
+            $out.Message = 'existing .bim for this dataset reused'
+            Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("Model already extracted for dataset {0}: {1}" -f $Work.DatasetId, $owned)
+            return $out
+        }
+        # 2. The planned file name belongs to ANOTHER dataset (recorded by a checkpoint): never reuse or overwrite it.
+        if ($destinationKey -ne '' -and $BimOwners.ContainsKey($destinationKey) -and [string]$BimOwners[$destinationKey].DatasetId -ne $datasetKey) {
+            $suffix = [string]$Work.DatasetId
+            if ($suffix.Length -gt 8) { $suffix = $suffix.Substring(0, 8) }
+            $unique = Join-Path (Split-Path -Path $destination -Parent) ([System.IO.Path]::GetFileNameWithoutExtension($destination) + ' (' + $suffix + ').bim')
+            Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ("'{0}' already holds the model of dataset {1}; extracting dataset {2} to '{3}' instead" -f $destination, [string]$BimOwners[$destinationKey].DatasetId, $Work.DatasetId, $unique)
+            $destination = $unique
+        }
+        elseif (Test-IQReportFileHasContent -Path $destination) {
+            Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("'{0}' exists but no checkpoint records which dataset produced it; it is replaced by a fresh extraction" -f $destination)
+        }
+    }
+    elseif (Test-IQReportFileHasContent -Path $destination) {
+        # No DatasetId to verify against: the report-named .bim of this report is reused as before.
         $out.Success = $true; $out.BimPath = $destination; $out.Reused = $true
-        $out.Message = 'existing .bim for this dataset reused'
-        Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("Model already extracted for dataset {0}: {1}" -f $Work.DatasetId, $destination)
+        $out.Message = 'existing .bim for this report reused'
+        Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("Model already extracted for report {0}: {1}" -f $Work.ReportId, $destination)
         return $out
     }
     $availability = Test-IQReportPbiToolsAvailable
@@ -938,9 +1078,12 @@ function Invoke-IQReportModelExtract {
         if ($r1.TimedOut -or $r1.StartError -or [int]$r1.ExitCode -ne 0) {
             $out.Message = 'pbi-tools extract failed: ' + (Get-IQReportProcessSummary -Result $r1)
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message $out.Message
-            Disable-IQReportModelExtract -Output ([string]$r1.StdOut + "`n" + [string]$r1.StdErr) -Reason $out.Message -Stage $Stage -Item $item | Out-Null
+            # A process failure counts towards the consecutive-failure kill switch (C7-05); one report's timeout or corrupt
+            # file alone never disables extraction for the others.
+            Disable-IQReportModelExtract -Output ([string]$r1.StdOut + "`n" + [string]$r1.StdErr) -Reason $out.Message -Stage $Stage -Item $item -CountFailure | Out-Null
             return $out
         }
+        Reset-IQReportModelExtractFailureCount
         $bimArgs = ('generate-bim "{0}" -transforms RemovePBIDataSourceVersion' -f $target)
         $r2 = Invoke-IQProcess -FilePath $pbiTools -ArgumentList $bimArgs -WorkingDirectory $tempRoot -TimeoutMinutes $timeout -LogName ('pbitools-generate-bim-' + $safeKey) -Stage $Stage -Item $item
         if ($r2.TimedOut -or $r2.StartError -or [int]$r2.ExitCode -ne 0) {
@@ -950,6 +1093,7 @@ function Invoke-IQReportModelExtract {
         if ($bimFiles.Count -eq 0) {
             $out.Message = 'pbi-tools produced no .bim (the PBIX has no embedded model, or generate-bim failed: ' + (Get-IQReportProcessSummary -Result $r2) + ')'
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message $out.Message
+            # Per-file outcome (extract exited 0): only an explicit Desktop/msmdsrv message in the tool output disables extraction.
             Disable-IQReportModelExtract -Output ([string]$r1.StdOut + "`n" + [string]$r1.StdErr + "`n" + [string]$r2.StdOut + "`n" + [string]$r2.StdErr) -Reason $out.Message -Stage $Stage -Item $item | Out-Null
             return $out
         }
@@ -987,6 +1131,10 @@ function Invoke-IQReportModelExtract {
             $out.BimPath = $destination
             $out.Message = 'model extracted with pbi-tools'
             if (-not $out.Renamed) { $out.Message += ' (not renamed by Tabular Editor)' }
+            if ($datasetKey -ne '') {
+                $ownerKey = ConvertTo-IQReportPathKey -Path $destination
+                if ($ownerKey -ne '') { $BimOwners[$ownerKey] = @{ DatasetId = $datasetKey; Path = $destination } }
+            }
             Write-IQLog -Level Success -Stage $Stage -Item $item -Message ("Model saved to {0} ({1:N0} bytes)" -f $destination, (Get-IQReportFileSize -Path $destination))
         }
         else {
@@ -1014,10 +1162,10 @@ function Invoke-IQReportModelExtract {
 function Get-IQReportCheckpointList {
     <#
     .SYNOPSIS
-    Reads every ReportBackup checkpoint of the current run (done\ReportBackup\*.json) (private).
+    Reads every checkpoint of a stage of the current run (done\<Stage>\*.json; default ReportBackup) (private).
     #>
     [CmdletBinding()]
-    param()
+    param([Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup')
     $list = @()
     $doneRoot = $null
     try {
@@ -1026,7 +1174,7 @@ function Get-IQReportCheckpointList {
     }
     catch { $doneRoot = $null }
     if (-not $doneRoot) { return @() }
-    $folder = Join-Path $doneRoot 'ReportBackup'
+    $folder = Join-Path $doneRoot $Stage
     if (-not (Test-Path -LiteralPath $folder)) { return @() }
     foreach ($file in @(Get-ChildItem -LiteralPath $folder -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
         $cp = $null
@@ -1169,6 +1317,61 @@ function Remove-IQReportLocalhostFolder {
     catch { $null = $null }
 }
 
+function Reset-IQReportDetailCheckpoint {
+    <#
+    .SYNOPSIS
+    Invalidates a finished ReportDetail checkpoint (and its Completed manifest status) after new report exports (private).
+    .DESCRIPTION
+    ReportDetail runs once over every PBIX of the run folder and is checkpointed as the single item "all". When
+    ReportBackup exports a report AFTER that checkpoint was written - the realistic case is a resumed run whose retried
+    exports now succeed - the csx output no longer covers the folder, yet the stage would be skipped both by Invoke-IQStage
+    (status Completed) and by its own checkpoint. This removes done\ReportDetail\all.json when it is Succeeded/Skipped and
+    sets the manifest stage back to Pending (Save-IQManifest), so the extraction runs again in this or the next start.
+    Returns $true when something was invalidated. Never throws.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Reason)
+    $stage = 'ReportDetail'
+    $key = 'all'
+    $changed = $false
+    try {
+        $cp = $null
+        try { $cp = Get-IQItemCheckpoint -Stage $stage -ItemKey $key } catch { $cp = $null }
+        if ($null -ne $cp -and ([string](Get-IQReportMember -Object $cp -Name 'status')) -in @('Succeeded', 'Skipped')) {
+            $doneRoot = $null
+            if ($script:IQ.ContainsKey('RunPaths') -and $script:IQ.RunPaths -and $script:IQ.RunPaths.Done) { $doneRoot = [string]$script:IQ.RunPaths.Done }
+            elseif ($script:IQ.RunPath) { $doneRoot = Join-Path ([string]$script:IQ.RunPath) 'done' }
+            if ($doneRoot) {
+                $path = Join-Path (Join-Path $doneRoot $stage) ((Get-IQSafeKey -Value $key) + '.json')
+                if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop; $changed = $true }
+            }
+        }
+        $manifest = $script:IQ.Manifest
+        if ($manifest -is [System.Collections.IDictionary] -and $manifest.Contains('stages')) {
+            $stages = $manifest['stages']
+            if ($stages -is [System.Collections.IDictionary] -and $stages.Contains($stage)) {
+                $entry = $stages[$stage]
+                if ($entry -is [System.Collections.IDictionary] -and ([string]$entry['status']) -in @('Completed', 'CompletedWithErrors', 'Skipped')) {
+                    $entry['status'] = 'Pending'
+                    $entry['endedUtc'] = $null
+                    $entry['error'] = $null
+                    $changed = $true
+                }
+            }
+        }
+        if ($changed) {
+            Save-IQManifest
+            $why = ''
+            if (-not [string]::IsNullOrWhiteSpace($Reason)) { $why = ' (' + $Reason + ')' }
+            Write-IQLog -Level Info -Stage $stage -Message ('Report Detail checkpoint invalidated' + $why + '; the csx scripts run again over the updated run folder.')
+        }
+    }
+    catch {
+        Write-IQLog -Level Warn -Stage $stage -Message ('Could not invalidate the Report Detail checkpoint: ' + $_.Exception.Message + '. Re-run with -Stages ReportDetail -Resume Always or -Force so the new exports reach Report Detail.xlsx.')
+    }
+    return $changed
+}
+
 # =====================================================================================================================
 # ReportBackup stage (brief 8.1)
 # =====================================================================================================================
@@ -1184,7 +1387,9 @@ function Invoke-IQReportBackupStage {
     report carries a sensitivity label (Get-IQReportsWithSensitivityLabel). Pseudo workspaces ("My Workspace") use the
     group-less export route and never the Fabric fallback. Each report is checkpointed the moment it is done
     (Set-IQItemDone -Stage ReportBackup: outputs = exported file + .bim when produced; -Data carries DatasetId/BimPath for
-    ModelDetail) and skipped on re-run. Returns @{ Total; Done; Skipped; Failed; AlreadyDone; ModelsExtracted }.
+    ModelDetail) and skipped on re-run. Reports shared without workspace access are checkpointed Skipped. The first new
+    export of a pass invalidates a finished ReportDetail checkpoint (Reset-IQReportDetailCheckpoint) so the csx scripts
+    cover the retried files. Returns @{ Total; Done; Skipped; Failed; AlreadyDone; ModelsExtracted }.
     #>
     [CmdletBinding()]
     param()
@@ -1208,6 +1413,7 @@ function Invoke-IQReportBackupStage {
         Write-IQLog -Level Warn -Stage $stage -Message ("{0} Pro-workspace report(s) in scope. {1}" -f $proCount, $pbiToolsState.Warning)
     }
 
+    $bimOwners = Get-IQReportBimOwnerMap   # .bim path -> DatasetId from this run's checkpoints (updated as models are extracted)
     $index = 0
     foreach ($w in $work) {
         $index++
@@ -1326,7 +1532,7 @@ function Invoke-IQReportBackupStage {
             $modelExtract = ''
             $bimPath = $null
             if (-not $w.IsDedicated -and $method -eq 'IncludeModel' -and -not $w.IsPaginated) {
-                $mx = Invoke-IQReportModelExtract -Work $w -Stage $stage
+                $mx = Invoke-IQReportModelExtract -Work $w -Stage $stage -BimOwners $bimOwners
                 $modelExtract = [string]$mx.Message
                 if ($mx.Success) {
                     $bimPath = [string]$mx.BimPath
@@ -1351,6 +1557,9 @@ function Invoke-IQReportBackupStage {
             if ($notes.Count -gt 0) { $message = $notes -join '; ' }
             Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $item -Outputs $outputs -Method $method -Message $message -Data $baseData | Out-Null
             $summary.Done++
+            # A file that a finished ReportDetail never saw (retried export on resume): invalidate that checkpoint once,
+            # as soon as the first new export lands, so a crash later in this loop cannot leave it stale.
+            if ($summary.Done -eq 1) { Reset-IQReportDetailCheckpoint -Reason ('new export ' + $w.FileName) | Out-Null }
             Write-IQLog -Level Success -Stage $stage -Item $item -Message ("Exported {0} via {1} ({2:N0} bytes)" -f $w.FileName, $method, $baseData.SizeBytes)
         }
         catch {

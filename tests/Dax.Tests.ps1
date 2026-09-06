@@ -64,7 +64,68 @@ Describe 'Invoke-IQDaxQuery' {
     }
     It 'throws a permission / tenant-setting hint when Invoke-IQApi returns $null (HTTP 400/403/404)' {
         Mock Invoke-IQApi { return $null }
-        { Invoke-IQDaxQuery -WorkspaceId $script:Ids.ws1 -DatasetId $script:Ids.d1 -Dax 'EVALUATE INFO.TABLES()' } | Should -Throw
+        { Invoke-IQDaxQuery -WorkspaceId $script:Ids.ws1 -DatasetId $script:Ids.d1 -Dax 'EVALUATE INFO.TABLES()' } | Should -Throw -ExpectedMessage 'executeQueries returned no response*Build permission*'
+    }
+    It 'names the HTTP status and the engine error when the Http module records $script:IQ.LastHttpError' {
+        $body400 = '{"error":{"code":"DaxQueryFailure","message":"Failed to execute the DAX query","pbi.error":{"code":"DaxQueryFailure","details":[{"code":"ErrorCode","detail":{"type":1,"value":"3239575574"}}]}}}'
+        try {
+            Mock Invoke-IQApi { $script:IQ.LastHttpError = @{ StatusCode = 400; Body = $body400 }; return $null }
+            { Invoke-IQDaxQuery -WorkspaceId $script:Ids.ws1 -DatasetId $script:Ids.d1 -Dax 'EVALUATE INFO.TABLES()' } | Should -Throw -ExpectedMessage 'executeQueries returned HTTP 400*3239575574*'
+            Mock Invoke-IQApi { $script:IQ.LastHttpError = @{ StatusCode = 403; Body = '' }; return $null }
+            { Invoke-IQDaxQuery -WorkspaceId $script:Ids.ws1 -DatasetId $script:Ids.d1 -Dax 'EVALUATE INFO.TABLES()' } | Should -Throw -ExpectedMessage 'executeQueries returned HTTP 403*Build permission*'
+        }
+        finally { $script:IQ.Remove('LastHttpError') }
+    }
+}
+
+Describe 'executeQueries failure classification (Get-IQDaxFailureKind)' {
+    It 'does not read a bare "no response" / "HTTP 400" as "INFO not supported" (it may be a 403 without Build permission)' {
+        $noResponse = 'executeQueries returned no response for groups/x/datasets/y/executeQueries (HTTP 400, 403 or 404 - see the Warn line above for the response body); check Build permission on the dataset'
+        Test-IQDaxInfoUnsupportedMessage -Message $noResponse | Should -BeFalse
+        Test-IQDaxInfoUnsupportedMessage -Message 'executeQueries returned HTTP 400 for groups/x/datasets/y/executeQueries' | Should -BeFalse
+        Get-IQDaxFailureKind -Message $noResponse | Should -Be 'NoResponse'
+        Get-IQDaxFailureKind -Message 'executeQueries returned HTTP 400 for groups/x/datasets/y/executeQueries' | Should -Be 'Other'
+    }
+    It 'recognises the engine "INFO not supported" answer (HTTP 400 / 3239575574)' {
+        Test-IQDaxInfoUnsupportedMessage -Message "DAX query error: DaxQueryFailure | Query (1, 10) The syntax for 'INFO' is incorrect. | ErrorCode: 3239575574" | Should -BeTrue
+        Get-IQDaxFailureKind -Message 'executeQueries returned HTTP 400 for groups/x: Failed to execute the DAX query | ErrorCode: 3239575574' | Should -Be 'InfoUnsupported'
+    }
+    It 'classifies 401 / 403 / 404 as an access problem, distinct from an unsupported INFO query' {
+        Get-IQDaxFailureKind -Message 'executeQueries returned HTTP 403 for groups/x (no Build permission on the dataset or the tenant setting is off)' | Should -Be 'Access'
+        Get-IQDaxFailureKind -Message 'HTTP 401 for POST groups/x/datasets/y/executeQueries after a token refresh.' | Should -Be 'Access'
+        Get-IQDaxFailureKind -Message 'executeQueries returned HTTP 404 for groups/x (dataset not found or not accessible)' | Should -Be 'Access'
+    }
+    It 'Test-IQDaxQueryAccess probes with a plain DAX query (EVALUATE ROW) and never throws' {
+        Mock Invoke-IQApi { return ([pscustomobject]@{ results = @([pscustomobject]@{ tables = @([pscustomobject]@{ rows = @([pscustomobject]@{ '[ImpactIQ]' = 1 }) }) }) }) }
+        Test-IQDaxQueryAccess -WorkspaceId $script:Ids.ws1 -DatasetId $script:Ids.d1 | Should -BeTrue
+        Mock Invoke-IQApi { return $null }
+        Test-IQDaxQueryAccess -WorkspaceId $script:Ids.ws1 -DatasetId $script:Ids.d1 | Should -BeFalse
+    }
+}
+
+Describe 'Get-IQDaxInfoRowSet (extract cache and the 100 000-row cap)' {
+    BeforeAll {
+        $script:CapFolder = Join-Path $script:Base 'dax-cap'
+        New-Item -ItemType Directory -Path $script:CapFolder -Force | Out-Null
+    }
+    It 'caches a normal result as <name>.json' {
+        $list = New-Object System.Collections.Generic.List[string]
+        $rows = @(Get-IQDaxInfoRowSet -ExtractFolder $script:CapFolder -Name 'view-tables' -WorkspaceId $script:Ids.ws1 -DatasetId $script:Ids.d1 -Dax 'EVALUATE INFO.VIEW.TABLES()' -Truncated $list)
+        $rows.Count | Should -Be 3
+        (Join-Path $script:CapFolder 'view-tables.json') | Should -Exist
+        $list.Count | Should -Be 0
+    }
+    It 'returns but does not cache a result that hit the row cap (stale cache removed) and reports its name in -Truncated' {
+        $row = [pscustomobject]@{ '[ID]' = 1 }
+        $big = New-Object System.Collections.Generic.List[object]
+        for ($i = 0; $i -lt 100000; $i++) { $big.Add($row) }
+        $script:BigResponse = [pscustomobject]@{ results = @([pscustomobject]@{ tables = @([pscustomobject]@{ rows = $big.ToArray() }) }) }
+        Mock Invoke-IQApi { return $script:BigResponse }
+        $list = New-Object System.Collections.Generic.List[string]
+        $rows = @(Get-IQDaxInfoRowSet -ExtractFolder $script:CapFolder -Name 'view-tables' -WorkspaceId $script:Ids.ws1 -DatasetId $script:Ids.d1 -Dax 'EVALUATE INFO.VIEW.TABLES()' -Refresh -Truncated $list)
+        $rows.Count | Should -Be 100000
+        (Join-Path $script:CapFolder 'view-tables.json') | Should -Not -Exist
+        $list | Should -Contain 'view-tables'
     }
 }
 
@@ -118,6 +179,10 @@ Describe 'Get-IQModelDetailViaDax (INFO fixtures -> csx-shaped CSVs)' {
         $amount.FormatString | Should -Be '#,0.00'
         $amount.DisplayFolder | Should -Be 'Money'
         $amount.Expression | Should -Be ''
+    }
+    It 'Table rows leave Description "" like the csx (brief section 13) even though INFO.VIEW.TABLES() returns one' {
+        $sales = @($script:Rows | Where-Object { $_.Type -eq 'Table' -and $_.Name -eq 'Sales' })[0]
+        $sales.Description | Should -Be ''
     }
     It 'Measure rows have Expression/FormatString/DisplayFolder/Description/IsHidden' {
         $m = @($script:Rows | Where-Object { $_.Type -eq 'Measure' -and $_.Name -eq 'Total Sales' })[0]
@@ -244,14 +309,158 @@ Describe 'Get-IQModelDetailViaDax when raw INFO.* is rejected (HTTP 400, execute
         $md.Count | Should -BeGreaterOrEqual 1
         @($md | Where-Object { $_.ObjectName -eq 'Margin %' -and $_.DependsOn -eq '[Total Sales]' -and $_.DependsOnType -eq 'Measure' }).Count | Should -Be 1
     }
-    It 'fails cleanly (Success=$false, InfoUnsupported) when even INFO.VIEW.TABLES() and INFO.TABLES() are rejected' {
+    It 'fails cleanly (Success=$false, InfoUnsupported) when even INFO.VIEW.TABLES() and INFO.TABLES() are rejected but a plain DAX query works' {
         $script:IQTestDaxOverrides['info-view-tables'] = $null
         $script:IQTestDaxOverrides['info-tables'] = $null
+        $script:IQTestDaxOverrides['row-impactiq-1'] = [pscustomobject]@{ results = @([pscustomobject]@{ tables = @([pscustomobject]@{ rows = @([pscustomobject]@{ '[ImpactIQ]' = 1 }) }) }) }
         $ds = [pscustomobject]@{ DatasetId = $script:Ids.d4; DatasetName = 'HR Model'; WorkspaceId = $script:Ids.ws3; WorkspaceName = 'HR Analytics'; WorkspaceIsOnDedicatedCapacity = $false }
+        $script:IQTestApiCalls.Clear()
         $r = Get-IQModelDetailViaDax -Dataset $ds -OutputFolder (Join-Path $script:Base 'dax-none')
         $r.Success | Should -BeFalse
         $r.Message | Should -Not -BeNullOrEmpty
         $r.InfoUnsupported | Should -BeTrue
+        $r.Message | Should -Match 'INFO functions are not available'
+        @($script:IQTestApiCalls | Where-Object { $_ -like '*executeQueries' }).Count | Should -Be 3 -Because 'INFO.VIEW.TABLES, INFO.TABLES and one probe'
+    }
+    It 'reports an access problem (InfoUnsupported=$false, Build permission hint) when even a plain DAX query is rejected' {
+        $script:IQTestDaxOverrides['info-view-tables'] = $null
+        $script:IQTestDaxOverrides['info-tables'] = $null
+        $script:IQTestDaxOverrides['row-impactiq-1'] = $null
+        $ds = [pscustomobject]@{ DatasetId = $script:Ids.d4; DatasetName = 'HR Model'; WorkspaceId = $script:Ids.ws3; WorkspaceName = 'HR Analytics'; WorkspaceIsOnDedicatedCapacity = $false }
+        $r = Get-IQModelDetailViaDax -Dataset $ds -OutputFolder (Join-Path $script:Base 'dax-denied')
+        $r.Success | Should -BeFalse
+        $r.InfoUnsupported | Should -BeFalse
+        $r.Message | Should -Match 'Build permission'
+    }
+}
+
+Describe 'Get-IQModelDetailViaDax honours the run time budget between executeQueries calls' {
+    It 'returns Success=$false / BudgetStop=$true without sending a query when the budget is used up' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 1
+        $script:IQ['StartedUtc'] = [datetime]::UtcNow.AddMinutes(-5)
+        $script:IQ['BudgetExceeded'] = $false
+        try {
+            $script:IQTestApiCalls.Clear()
+            $ds = [pscustomobject]@{ DatasetId = $script:Ids.d9; DatasetName = 'Budget Model'; WorkspaceId = $script:Ids.ws1; WorkspaceName = 'Finance [Prod]'; WorkspaceIsOnDedicatedCapacity = $true }
+            $r = Get-IQModelDetailViaDax -Dataset $ds -OutputFolder (Join-Path $script:Base 'dax-budget')
+            $r.Success | Should -BeFalse
+            $r.BudgetStop | Should -BeTrue
+            $r.Message | Should -Match 'time budget'
+            @($script:IQTestApiCalls | Where-Object { $_ -like '*executeQueries' }).Count | Should -Be 0
+        }
+        finally {
+            $script:IQ.Options['TimeBudgetMinutes'] = 0
+            $script:IQ['BudgetExceeded'] = $false
+            $script:IQ['StartedUtc'] = [datetime]::UtcNow
+        }
+    }
+}
+
+Describe 'Get-IQUsageMetrics (usage model discovery, TOPN sizing, joins)' {
+    BeforeAll {
+        $script:NewDaxResponse = { param($Rows) return ([pscustomobject]@{ results = @([pscustomobject]@{ tables = @([pscustomobject]@{ rows = @($Rows) }) }) }) }
+        $script:UsageQueries = New-Object System.Collections.Generic.List[string]
+        $script:UsageMode = 'view'   # view = INFO.VIEW.* answers; none = every INFO query rejected; retry = first 'Report views' read rejected
+        $viewTables = New-Object System.Collections.Generic.List[object]
+        $id = 0
+        foreach ($n in @('Report views', 'Report page views', 'Reports', 'Users', 'Dates')) { $id++; $viewTables.Add([pscustomobject]@{ '[ID]' = $id; '[Name]' = $n; '[DataCategory]' = $null }) }
+        $viewColumns = New-Object System.Collections.Generic.List[object]
+        # 16 columns on 'Report views' (research-usage.md 2.5): 950 000 / 16 = 59 375 rows fit under the 1 000 000-value cap.
+        foreach ($c in @('Date', 'ReportId', 'UserId', 'UserKey', 'ConsumptionMethod', 'DistributionMethod', 'ReportType', 'AppName', 'CapacityId', 'CapacityName', 'DatasetName', 'UserAgent', 'CreationTime', 'OriginalConsumptionMethod', 'ReportName', 'Views')) {
+            $dt = 'String'
+            if ($c -eq 'Date' -or $c -eq 'CreationTime') { $dt = 'DateTime' }
+            $viewColumns.Add([pscustomobject]@{ '[Table]' = 'Report views'; '[Name]' = $c; '[DataType]' = $dt; '[DataCategory]' = $null; '[Type]' = 'Data' })
+        }
+        $viewColumns.Add([pscustomobject]@{ '[Table]' = 'Report views'; '[Name]' = 'RowNumber-1'; '[DataType]' = 'Int64'; '[DataCategory]' = 'RowNumber'; '[Type]' = 'RowNumber' })
+        foreach ($c in @('Timestamp', 'ReportId', 'UserId')) { $viewColumns.Add([pscustomobject]@{ '[Table]' = 'Report page views'; '[Name]' = $c; '[DataType]' = $(if ($c -eq 'Timestamp') { 'DateTime' } else { 'String' }); '[DataCategory]' = $null; '[Type]' = 'Data' }) }
+        foreach ($c in @('ReportId', 'ReportName')) { $viewColumns.Add([pscustomobject]@{ '[Table]' = 'Reports'; '[Name]' = $c; '[DataType]' = 'String'; '[DataCategory]' = $null; '[Type]' = 'Data' }) }
+        foreach ($c in @('UserId', 'UserPrincipalName')) { $viewColumns.Add([pscustomobject]@{ '[Table]' = 'Users'; '[Name]' = $c; '[DataType]' = 'String'; '[DataCategory]' = $null; '[Type]' = 'Data' }) }
+        $script:UsageViewTables = $viewTables.ToArray()
+        $script:UsageViewColumns = $viewColumns.ToArray()
+        Mock Invoke-IQApi {
+            if ($Path -notlike '*/executeQueries') {
+                return ([pscustomobject]@{ value = @([pscustomobject]@{ id = $script:Ids.d9; name = 'Other Model' }, [pscustomobject]@{ id = $script:Ids.d2; name = 'Report Usage Metrics Model' }) })
+            }
+            $dax = [string](@($Body['queries'])[0]['query'])
+            $script:UsageQueries.Add($dax)
+            if ($dax -match 'INFO\.') {
+                if ($script:UsageMode -eq 'none') { return $null }
+                if ($dax -match 'INFO\.VIEW\.TABLES') { return (& $script:NewDaxResponse $script:UsageViewTables) }
+                if ($dax -match 'INFO\.VIEW\.COLUMNS') { return (& $script:NewDaxResponse $script:UsageViewColumns) }
+                return $null
+            }
+            if ($dax -match "'Report views'") {
+                if ($script:UsageMode -eq 'retry' -and @($script:UsageQueries | Where-Object { $_ -match "'Report views'" }).Count -eq 1) { return $null }
+                return (Get-IQTestFixtureJson -Relative 'dax/evaluate-report-views.json')
+            }
+            if ($dax -match "'Reports'") { return (& $script:NewDaxResponse @([pscustomobject]@{ '[ReportId]' = $script:Ids.r1; '[ReportName]' = 'Finance Dashboard' })) }
+            if ($dax -match "'Users'") { return (& $script:NewDaxResponse @([pscustomobject]@{ '[UserId]' = 'analyst@contoso.gov'; '[UserPrincipalName]' = 'analyst@contoso.gov' })) }
+            return $null
+        }
+    }
+    BeforeEach { $script:UsageQueries.Clear(); $script:UsageMode = 'view' }
+    It 'picks "Report Usage Metrics Model", discovers tables with INFO.VIEW.TABLES()/COLUMNS() and never sends raw INFO.TABLES() when they work' {
+        $u = Get-IQUsageMetrics -WorkspaceId $script:Ids.ws1 -WorkspaceName 'Finance [Prod]' -Days 30
+        $u.Found | Should -BeTrue
+        $u.DatasetId | Should -Be $script:Ids.d2
+        $script:UsageQueries | Should -Contain 'EVALUATE INFO.VIEW.TABLES()'
+        $script:UsageQueries | Should -Contain 'EVALUATE INFO.VIEW.COLUMNS()'
+        @($script:UsageQueries | Where-Object { $_ -match 'INFO\.TABLES\(\)|INFO\.COLUMNS\(\)' }).Count | Should -Be 0
+        $u.Message | Should -Not -BeLike 'Usage metrics failed*'
+    }
+    It 'sizes TOPN from the column count (1 000 000-value cap), filters the fact tables on their date column and keeps the newest rows' {
+        Get-IQUsageMetrics -WorkspaceId $script:Ids.ws1 -WorkspaceName 'Finance [Prod]' -Days 30 | Out-Null
+        $rv = @($script:UsageQueries | Where-Object { $_ -match "'Report views'" })
+        $rv.Count | Should -Be 1
+        $rv[0] | Should -BeExactly "EVALUATE TOPN(59375, FILTER('Report views', 'Report views'[Date] >= TODAY() - 30), 'Report views'[Date], DESC)"
+        $pv = @($script:UsageQueries | Where-Object { $_ -match "'Report page views'" })
+        $pv[0] | Should -BeExactly "EVALUATE TOPN(100000, FILTER('Report page views', 'Report page views'[Timestamp] >= TODAY() - 30), 'Report page views'[Timestamp], DESC)"
+        @($script:UsageQueries | Where-Object { $_ -match "'Reports'" })[0] | Should -BeExactly "EVALUATE TOPN(100000, 'Reports')"
+    }
+    It 'stamps WorkspaceId / WorkspaceName / UsageDatasetId on every row and joins ReportName and UserPrincipalName' {
+        $u = Get-IQUsageMetrics -WorkspaceId $script:Ids.ws1 -WorkspaceName 'Finance [Prod]' -Days 30
+        @($u.ReportViews).Count | Should -BeGreaterThan 0
+        $first = @($u.ReportViews)[0]
+        $first.WorkspaceId | Should -Be $script:Ids.ws1
+        $first.WorkspaceName | Should -Be 'Finance [Prod]'
+        $first.UsageDatasetId | Should -Be $script:Ids.d2
+        $first.ReportName | Should -Be 'Finance Dashboard'
+        $first.UserPrincipalName | Should -Be 'analyst@contoso.gov'
+        @($u.ReportPageViews).Count | Should -Be 0 -Because 'a table read that fails is guarded and yields no rows'
+        $u.Message | Should -Match '^\d+ report views, 0 page views'
+    }
+    It 'still reads the four standard tables when INFO.VIEW.* and raw INFO.* are all rejected (no discovery)' {
+        $script:UsageMode = 'none'
+        $u = Get-IQUsageMetrics -WorkspaceId $script:Ids.ws1 -WorkspaceName 'Finance [Prod]' -Days 30
+        $u.Found | Should -BeTrue
+        $u.Message | Should -Not -BeLike 'Usage metrics failed*'
+        @($u.ReportViews).Count | Should -BeGreaterThan 0
+        $script:UsageQueries | Should -Contain 'EVALUATE INFO.TABLES()'
+        @($script:UsageQueries | Where-Object { $_ -match "'Report views'" })[0] | Should -BeExactly "EVALUATE TOPN(60000, 'Report views')"
+    }
+    It 'retries a failed table read once with a quarter of the rows' {
+        $script:UsageMode = 'retry'
+        $u = Get-IQUsageMetrics -WorkspaceId $script:Ids.ws1 -WorkspaceName 'Finance [Prod]' -Days 30
+        $rv = @($script:UsageQueries | Where-Object { $_ -match "'Report views'" })
+        $rv.Count | Should -Be 2
+        $rv[0] | Should -Match '^EVALUATE TOPN\(59375,'
+        $rv[1] | Should -Match '^EVALUATE TOPN\(14843,'
+        @($u.ReportViews).Count | Should -BeGreaterThan 0
+    }
+    It 'reports a time-budget stop as "Usage metrics failed" so Extras records the workspace as Failed and re-reads it next time' {
+        $script:IQ.Options['TimeBudgetMinutes'] = 1
+        $script:IQ['StartedUtc'] = [datetime]::UtcNow.AddMinutes(-5)
+        $script:IQ['BudgetExceeded'] = $false
+        try {
+            $u = Get-IQUsageMetrics -WorkspaceId $script:Ids.ws1 -WorkspaceName 'Finance [Prod]' -Days 30
+            $u.Found | Should -BeTrue
+            $u.Message | Should -BeLike 'Usage metrics failed: time budget reached*'
+        }
+        finally {
+            $script:IQ.Options['TimeBudgetMinutes'] = 0
+            $script:IQ['BudgetExceeded'] = $false
+            $script:IQ['StartedUtc'] = [datetime]::UtcNow
+        }
     }
 }
 

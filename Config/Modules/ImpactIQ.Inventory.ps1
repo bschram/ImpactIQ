@@ -12,7 +12,11 @@
       - My Workspace (2356-2513) with the same shape (WorkspaceId 'My Workspace', WorkspaceIsSynthetic = $true)
       - NEW non-admin collectors (brief 6.1/6.2): Dashboards, DashboardTiles, WorkspaceUsers, DatasetUsers,
         DatasetParameters, DatasetDirectQueryRefreshSchedule, Capacities - each wrapped so a failure only yields an
-        empty list plus one Debug log line.
+        empty list plus one Debug log line. Options.SkipDatasetUsers / Options.SkipDatasetParameters switch the two
+        per-dataset collectors off; a first HTTP 401 switches them off for the rest of that workspace.
+      - Error bookkeeping per workspace: workspace-level list failures (incl. handled 4xx answers) fail the workspace
+        checkpoint (re-collected on resume); per-item sub-collector failures are Severity 'Warning' entries in the ws
+        file and checkpoint that leave the workspace Succeeded.
 
     Every HTTP call goes through Invoke-IQApi (ImpactIQ.Http.ps1). Nothing here uses Read-Host, WinForms or globals;
     all shared state lives in $script:IQ (created by Initialize-IQContext in ImpactIQ.Common.ps1).
@@ -275,14 +279,23 @@ function Get-IQInventoryOption {
 function ConvertTo-IQIdList {
     <#
     .SYNOPSIS
-        Normalises an id/name parameter (array, comma/semicolon separated string, or $null) to a trimmed string array.
+        Normalises an id parameter (array, comma/semicolon separated string, or $null) to a trimmed string array.
+    .DESCRIPTION
+        GUID lists may arrive as one 'a,b;c' string (env var, -File binding); every element is split on ',' and ';'.
+        Workspace NAME patterns must never be split (a name such as 'Finance, EMEA' or 'Ops; North' is one -like
+        pattern): callers pass -NoSplit for them and the elements are taken verbatim (trimmed, blanks dropped).
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $false)][AllowNull()]$Value)
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()]$Value,
+        [Parameter(Mandatory = $false)][switch]$NoSplit
+    )
     $out = @()
     foreach ($v in @($Value)) {
         if ($null -eq $v) { continue }
-        foreach ($part in ([string]$v -split '[,;]')) {
+        $parts = @([string]$v)
+        if (-not $NoSplit) { $parts = @([string]$v -split '[,;]') }
+        foreach ($part in $parts) {
             $t = $part.Trim()
             if ($t.Length -gt 0) { $out += $t }
         }
@@ -303,10 +316,30 @@ function Get-IQInventoryCache {
     return $script:IQ.InventoryCache
 }
 
+function Get-IQInventoryStatusCode {
+    <#
+    .SYNOPSIS
+        Extracts the HTTP status code from an Invoke-IQApi exception message ('HTTP 401 for GET ...'); $null when there is none (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Message)
+    if ([string]::IsNullOrEmpty($Message)) { return $null }
+    $m = [regex]::Match($Message, '\bHTTP (\d{3})\b')
+    if ($m.Success) { return [int]$m.Groups[1].Value }
+    return $null
+}
+
 function Invoke-IQInventoryGet {
     <#
     .SYNOPSIS
         GET through Invoke-IQApi that never throws: returns the parsed response or $null (Warn, or one Debug line with -Optional).
+    .DESCRIPTION
+        Error bookkeeping (only when -ErrorList is given and the call is not -Optional): a thrown error (retry budget
+        exhausted, 401 after refresh, ...) AND a handled 4xx (Invoke-IQApi returns $null for 400/403/404 without
+        throwing) are both recorded as {Collector; Path; Message; StatusCode; Severity}, so a core collector that got
+        "nothing" is never mistaken for an empty list (INV-02). -Severity Warning marks per-item sub-collectors whose
+        failure must not fail the whole workspace (INV-03). -Result (a hashtable) receives Failed/Threw/StatusCode/
+        Message so callers can react to a specific status (INV-06) without the function throwing.
     #>
     [CmdletBinding()]
     param(
@@ -316,25 +349,58 @@ function Invoke-IQInventoryGet {
         [Parameter(Mandatory = $false)][switch]$Optional,
         [Parameter(Mandatory = $false)][string]$Description,
         [Parameter(Mandatory = $false)][string]$Item,
-        [Parameter(Mandatory = $false)][AllowNull()][System.Collections.Generic.List[object]]$ErrorList
+        [Parameter(Mandatory = $false)][AllowNull()][System.Collections.Generic.List[object]]$ErrorList,
+        [Parameter(Mandatory = $false)][ValidateSet('Error', 'Warning')][string]$Severity = 'Error',
+        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$Result
     )
     $desc = $Description
     if ([string]::IsNullOrEmpty($desc)) { $desc = "GET $Path" }
     $params = @{ Method = 'GET'; Path = $Path; Api = $Api; Stage = 'Inventory' }
     if ($Query) { $params.Query = $Query }
     if ($Optional) { $params.AllowNotFound = $true }
+    if ($null -ne $Result) { $Result['Failed'] = $false; $Result['Threw'] = $false; $Result['StatusCode'] = $null; $Result['Message'] = $null }
+    $response = $null
     try {
-        return (Invoke-IQApi @params)
+        $response = Invoke-IQApi @params
     }
     catch {
         $level = 'Warn'
         if ($Optional) { $level = 'Debug' }
+        $status = Get-IQInventoryStatusCode -Message $_.Exception.Message
         Write-IQLog -Level $level -Stage Inventory -Item $Item -Message ("{0} failed: {1}" -f $desc, $_.Exception.Message)
+        if ($null -ne $Result) { $Result['Failed'] = $true; $Result['Threw'] = $true; $Result['StatusCode'] = $status; $Result['Message'] = $_.Exception.Message }
         if ($null -ne $ErrorList -and -not $Optional) {
-            $ErrorList.Add([pscustomobject]@{ Collector = $desc; Path = $Path; Message = $_.Exception.Message })
+            $ErrorList.Add([pscustomobject]@{ Collector = $desc; Path = $Path; Message = $_.Exception.Message; StatusCode = $status; Severity = $Severity })
         }
         return $null
     }
+    if ($null -eq $response) {
+        # Invoke-IQApi answered $null without throwing: a handled 400/403/404 (or no Fabric token). For a core collector
+        # that is a failed collection, not an empty list - record it so the workspace is not checkpointed as complete.
+        $message = 'HTTP 400/403/404 (see the preceding HTTP warning in the log) - nothing was collected.'
+        if ($null -ne $Result) { $Result['Failed'] = $true; $Result['Message'] = $message }
+        if ($null -ne $ErrorList -and -not $Optional) {
+            Write-IQLog -Level Warn -Stage Inventory -Item $Item -Message ("{0} failed: {1}" -f $desc, $message)
+            $ErrorList.Add([pscustomobject]@{ Collector = $desc; Path = $Path; Message = $message; StatusCode = $null; Severity = $Severity })
+        }
+    }
+    return $response
+}
+
+function ConvertTo-IQInventoryValueList {
+    <#
+    .SYNOPSIS
+        The 'value' array of a parsed list response (or the array itself); empty array for $null / non-list responses (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()]$Response)
+    if ($null -eq $Response) { return @() }
+    if ($Response -is [System.Management.Automation.PSCustomObject] -and $Response.PSObject.Properties['value']) {
+        if ($null -eq $Response.value) { return @() }
+        return @($Response.value | Where-Object { $null -ne $_ })
+    }
+    if ($Response -is [array]) { return @($Response) }
+    return @()
 }
 
 function Get-IQInventoryList {
@@ -350,16 +416,33 @@ function Get-IQInventoryList {
         [Parameter(Mandatory = $false)][switch]$Optional,
         [Parameter(Mandatory = $false)][string]$Description,
         [Parameter(Mandatory = $false)][string]$Item,
-        [Parameter(Mandatory = $false)][AllowNull()][System.Collections.Generic.List[object]]$ErrorList
+        [Parameter(Mandatory = $false)][AllowNull()][System.Collections.Generic.List[object]]$ErrorList,
+        [Parameter(Mandatory = $false)][ValidateSet('Error', 'Warning')][string]$Severity = 'Error',
+        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$Result
     )
     $response = Invoke-IQInventoryGet @PSBoundParameters
-    if ($null -eq $response) { return @() }
-    if ($response -is [System.Management.Automation.PSCustomObject] -and $response.PSObject.Properties['value']) {
-        if ($null -eq $response.value) { return @() }
-        return @($response.value | Where-Object { $null -ne $_ })
+    return @(ConvertTo-IQInventoryValueList -Response $response)
+}
+
+function Get-IQInventoryErrorSplit {
+    <#
+    .SYNOPSIS
+        Splits a collector error list into fatal errors and per-item warnings (Severity = 'Warning') and builds the checkpoint messages (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()]$Errors)
+    $fatal = New-Object System.Collections.Generic.List[object]
+    $warnings = New-Object System.Collections.Generic.List[object]
+    foreach ($e in @($Errors)) {
+        if ($null -eq $e) { continue }
+        if ([string](Get-IQMemberValue -Object $e -Name 'Severity') -eq 'Warning') { $warnings.Add($e) } else { $fatal.Add($e) }
     }
-    if ($response -is [array]) { return @($response) }
-    return @()
+    $format = { param($e) [string](Get-IQMemberValue -Object $e -Name 'Collector') + ': ' + [string](Get-IQMemberValue -Object $e -Name 'Message') }
+    $fatalMessage = $null
+    if ($fatal.Count -gt 0) { $fatalMessage = (@($fatal | ForEach-Object { & $format $_ }) -join ' | ') }
+    $warningMessage = $null
+    if ($warnings.Count -gt 0) { $warningMessage = (@($warnings | ForEach-Object { & $format $_ }) -join ' | ') }
+    return @{ Fatal = $fatal.ToArray(); Warnings = $warnings.ToArray(); FatalMessage = $fatalMessage; WarningMessage = $warningMessage }
 }
 
 function New-IQPseudoWorkspace {
@@ -421,6 +504,11 @@ function Get-IQWorkspaceList {
     $raw = New-Object System.Collections.Generic.List[object]
     do {
         $page = Invoke-IQApi -Method GET -Path 'groups' -Query @{ '$top' = $top; '$skip' = $skip } -Stage Inventory
+        if ($skip -eq 0 -and $null -eq $page) {
+            # Invoke-IQApi returns $null for a handled 400/403/404 (or a token problem): the listing itself failed, so no
+            # scope can be resolved - fail with the true cause instead of a misleading 'workspace not found' later.
+            throw 'GET groups failed (see the preceding HTTP warning in the log: sign-in, permissions or a 4xx from the service) - the workspace list is required to resolve any scope.'
+        }
         $rows = @()
         if ($null -ne $page -and $page.PSObject.Properties['value'] -and $null -ne $page.value) { $rows = @($page.value) }
         if ($rows.Count -gt 0) { $raw.AddRange([object[]]$rows) }
@@ -460,7 +548,7 @@ function Select-IQScopeWorkspace {
         [Parameter(Mandatory = $false)][switch]$All
     )
     $Ids = @(ConvertTo-IQIdList -Value $Ids)
-    $Names = @(ConvertTo-IQIdList -Value $Names)
+    $Names = @(ConvertTo-IQIdList -Value $Names -NoSplit)   # name patterns may contain ',' / ';' (INV-04)
     $selected = New-Object System.Collections.Generic.List[object]
     $seen = @{}
     $missingIds = @()
@@ -513,11 +601,16 @@ function Get-IQScopeReportScan {
         $n++
         $wsId = [string]$ws.WorkspaceId
         Write-IQLog -Level Debug -Stage Inventory -Message ("Scanning reports {0}/{1}: {2}" -f $n, $total, $ws.WorkspaceName)
-        $reports = $null
-        if ($cache.Reports.ContainsKey($wsId)) { $reports = $cache.Reports[$wsId] }
+        $reports = @()
+        if ($cache.Reports.ContainsKey($wsId)) { $reports = @($cache.Reports[$wsId]) }
         else {
-            $reports = @(Get-IQInventoryList -Path "groups/$wsId/reports" -Description "reports of workspace '$($ws.WorkspaceName)'" -Item $ws.WorkspaceName)
-            $cache.Reports[$wsId] = $reports
+            # INV-01: only a real response is cached. A failed call leaves the key absent so Get-IQWorkspaceInventory
+            # re-fetches with error bookkeeping instead of checkpointing an empty list as Succeeded.
+            $response = Invoke-IQInventoryGet -Path "groups/$wsId/reports" -Description "reports of workspace '$($ws.WorkspaceName)'" -Item $ws.WorkspaceName
+            if ($null -ne $response) {
+                $reports = @(ConvertTo-IQInventoryValueList -Response $response)
+                $cache.Reports[$wsId] = $reports
+            }
         }
         foreach ($rpt in $reports) {
             $out.Add([pscustomobject]@{
@@ -535,10 +628,14 @@ function Get-IQScopeReportScan {
         # Audit C4-07: reports that live in My Workspace can be targeted too (skip app copies and shared reports).
         $mine = $cache.MyWorkspaceReports
         if ($null -eq $mine) {
-            $mine = @(Get-IQInventoryList -Path 'reports' -Description 'My Workspace reports' -Item 'My Workspace')
-            $cache.MyWorkspaceReports = $mine
+            $mine = @()
+            $response = Invoke-IQInventoryGet -Path 'reports' -Description 'My Workspace reports' -Item 'My Workspace'
+            if ($null -ne $response) {
+                $mine = @(ConvertTo-IQInventoryValueList -Response $response)
+                $cache.MyWorkspaceReports = $mine   # INV-01: cache successful responses only
+            }
         }
-        foreach ($rpt in $mine) {
+        foreach ($rpt in @($mine)) {
             if ($rpt.PSObject.Properties['appId'] -and $rpt.appId) { continue }
             if ($rpt.PSObject.Properties['isOwnedByMe'] -and $rpt.isOwnedByMe -eq $false) { continue }
             $out.Add([pscustomobject]@{
@@ -573,11 +670,15 @@ function Get-IQScopeDatasetScan {
         $n++
         $wsId = [string]$ws.WorkspaceId
         Write-IQLog -Level Debug -Stage Inventory -Message ("Scanning datasets {0}/{1}: {2}" -f $n, $total, $ws.WorkspaceName)
-        $datasets = $null
-        if ($cache.Datasets.ContainsKey($wsId)) { $datasets = $cache.Datasets[$wsId] }
+        $datasets = @()
+        if ($cache.Datasets.ContainsKey($wsId)) { $datasets = @($cache.Datasets[$wsId]) }
         else {
-            $datasets = @(Get-IQInventoryList -Path "groups/$wsId/datasets" -Description "datasets of workspace '$($ws.WorkspaceName)'" -Item $ws.WorkspaceName)
-            $cache.Datasets[$wsId] = $datasets
+            # INV-01: only a real response is cached (see Get-IQScopeReportScan).
+            $response = Invoke-IQInventoryGet -Path "groups/$wsId/datasets" -Description "datasets of workspace '$($ws.WorkspaceName)'" -Item $ws.WorkspaceName
+            if ($null -ne $response) {
+                $datasets = @(ConvertTo-IQInventoryValueList -Response $response)
+                $cache.Datasets[$wsId] = $datasets
+            }
         }
         foreach ($ds in $datasets) {
             $out.Add([pscustomobject]@{ DatasetId = $ds.id; DatasetName = $ds.name; WorkspaceId = $wsId; WorkspaceName = $ws.WorkspaceName; IsMyWorkspace = $false })
@@ -586,10 +687,14 @@ function Get-IQScopeDatasetScan {
     if ($IncludeMyWorkspace) {
         $mine = $cache.MyWorkspaceDatasets
         if ($null -eq $mine) {
-            $mine = @(Get-IQInventoryList -Path 'datasets' -Description 'My Workspace datasets' -Item 'My Workspace')
-            $cache.MyWorkspaceDatasets = $mine
+            $mine = @()
+            $response = Invoke-IQInventoryGet -Path 'datasets' -Description 'My Workspace datasets' -Item 'My Workspace'
+            if ($null -ne $response) {
+                $mine = @(ConvertTo-IQInventoryValueList -Response $response)
+                $cache.MyWorkspaceDatasets = $mine   # INV-01: cache successful responses only
+            }
         }
-        foreach ($ds in $mine) {
+        foreach ($ds in @($mine)) {
             $out.Add([pscustomobject]@{ DatasetId = $ds.id; DatasetName = $ds.name; WorkspaceId = 'My Workspace'; WorkspaceName = 'My Workspace'; IsMyWorkspace = $true })
         }
     }
@@ -653,7 +758,7 @@ function Get-IQScopeFromManifest {
     $inaccessible = @(ConvertTo-IQIdList -Value (Get-IQMemberValue -Object $s -Name 'inaccessibleWorkspaceIds'))
     $scope = New-IQScopeObject -RunMode $runMode -IncludeMyWorkspace $includeMy -ReportIds $reportIds -DatasetIds $datasetIds -InaccessibleWorkspaceIds $inaccessible -Source 'Manifest'
     $scope.WorkspaceIds = $wsIds
-    $scope.WorkspaceNames = @(ConvertTo-IQIdList -Value (Get-IQMemberValue -Object $s -Name 'workspaceNames'))
+    $scope.WorkspaceNames = @(ConvertTo-IQIdList -Value (Get-IQMemberValue -Object $s -Name 'workspaceNames') -NoSplit)
     return $scope
 }
 
@@ -733,13 +838,13 @@ function Resolve-IQScope {
         if ([string]::IsNullOrEmpty($RunMode)) { $RunMode = 'Workspaces' }
     }
     if (-not $PSBoundParameters.ContainsKey('WorkspaceId')) { $WorkspaceId = @(ConvertTo-IQIdList -Value (Get-IQInventoryOption -Name 'WorkspaceId')) }
-    if (-not $PSBoundParameters.ContainsKey('WorkspaceName')) { $WorkspaceName = @(ConvertTo-IQIdList -Value (Get-IQInventoryOption -Name 'WorkspaceName')) }
+    if (-not $PSBoundParameters.ContainsKey('WorkspaceName')) { $WorkspaceName = @(ConvertTo-IQIdList -Value (Get-IQInventoryOption -Name 'WorkspaceName') -NoSplit) }
     if (-not $PSBoundParameters.ContainsKey('ReportId')) { $ReportId = @(ConvertTo-IQIdList -Value (Get-IQInventoryOption -Name 'ReportId')) }
     if (-not $PSBoundParameters.ContainsKey('DatasetId')) { $DatasetId = @(ConvertTo-IQIdList -Value (Get-IQInventoryOption -Name 'DatasetId')) }
     if (-not $PSBoundParameters.ContainsKey('AllWorkspaces')) { $AllWorkspaces = [bool](Get-IQInventoryOption -Name 'AllWorkspaces') }
     if (-not $PSBoundParameters.ContainsKey('IncludeMyWorkspace')) { $IncludeMyWorkspace = [bool](Get-IQInventoryOption -Name 'IncludeMyWorkspace') }
     $WorkspaceId = @(ConvertTo-IQIdList -Value $WorkspaceId)
-    $WorkspaceName = @(ConvertTo-IQIdList -Value $WorkspaceName)
+    $WorkspaceName = @(ConvertTo-IQIdList -Value $WorkspaceName -NoSplit)   # INV-04: a name pattern may contain ',' / ';'
     $ReportId = @(ConvertTo-IQIdList -Value $ReportId)
     $DatasetId = @(ConvertTo-IQIdList -Value $DatasetId)
     $haveScopeParameters = ($WorkspaceId.Count -gt 0 -or $WorkspaceName.Count -gt 0 -or [bool]$AllWorkspaces -or $ReportId.Count -gt 0 -or $DatasetId.Count -gt 0 -or [bool]$IncludeMyWorkspace)
@@ -804,10 +909,17 @@ function Resolve-IQScope {
         $ReportId = @(ConvertTo-IQIdList -Value (Get-IQMemberValue -Object $selection -Name 'ReportIds'))
         $DatasetId = @(ConvertTo-IQIdList -Value (Get-IQMemberValue -Object $selection -Name 'DatasetIds'))
         $IncludeMyWorkspace = [bool](Get-IQMemberValue -Object $selection -Name 'IncludeMyWorkspace')
-        if ([bool](Get-IQMemberValue -Object $selection -Name 'TimedOut')) {
+        $timedOut = [bool](Get-IQMemberValue -Object $selection -Name 'TimedOut')
+        if ($timedOut) {
             Write-IQLog -Level Warn -Stage Inventory -Message 'Interactive selection timed out - using the defaulted selection (legacy behaviour: all workspaces + My Workspace).'
         }
-        $AllWorkspaces = ($RunMode -eq 'Workspaces' -and $WorkspaceId.Count -eq 0 -and -not $IncludeMyWorkspace)
+        # INV-08 / audit C4-08: an empty selection never silently widens to every workspace. Only a timed-out picker
+        # keeps the legacy "all workspaces" default; an explicit empty selection is an error the user must correct.
+        $AllWorkspaces = $false
+        if ($RunMode -eq 'Workspaces' -and $WorkspaceId.Count -eq 0 -and -not $IncludeMyWorkspace) {
+            if ($timedOut) { $AllWorkspaces = $true }
+            else { throw 'No workspaces selected. Select at least one workspace (or tick "Include My Workspace") and start again.' }
+        }
     }
 
     $scope = $null
@@ -999,10 +1111,24 @@ function Add-IQDatasetRefreshScheduleRow {
                 $ScheduleList.Add((ConvertTo-IQFlatRow -Row $scheduleRow))
             }
         }
-        return
+    }
+    else {
+        # No import schedule: emit an explicit row (monolith parity) instead of the monolith's silent all-null row,
+        # regardless of whether a DirectQuery schedule exists (INV-05).
+        $row = Rename-Properties -object (New-Object PSObject) -renameMap $map
+        Add-IQNote -Row $row -Name 'WorkspaceId' -Value $WorkspaceId
+        Add-IQNote -Row $row -Name 'WorkspaceName' -Value $WorkspaceName
+        Add-IQNote -Row $row -Name 'DatasetId' -Value $datasetId
+        Add-IQNote -Row $row -Name 'DatasetName' -Value $datasetName
+        Add-IQNote -Row $row -Name 'DatasetRefreshScheduleDay' -Value $null
+        Add-IQNote -Row $row -Name 'DatasetRefreshScheduleTime' -Value $null
+        Add-IQNote -Row $row -Name 'DatasetRefreshScheduleKind' -Value 'Unavailable'
+        $ScheduleList.Add($row)
     }
 
-    # NEW: DirectQuery refresh schedule (only tried when the import schedule is unavailable)
+    # NEW: DirectQuery refresh schedule (brief 6.1). Requested independently of the import schedule: composite / Dual
+    # models expose BOTH schedules, and targetStorageMode (Abf / PremiumFiles) does not reveal DirectQuery partitions,
+    # so the endpoint is always tried; a pure-import model answers 404/400 which -Optional turns into one Debug line.
     $dq = Invoke-IQInventoryGet -Path "$BasePath/directQueryRefreshSchedule" -Optional -Description "DirectQuery refresh schedule of dataset '$datasetName'" -Item $WorkspaceName
     if ($null -ne $dq) {
         $days = if ($dq.PSObject.Properties['days'] -and $dq.days) { @($dq.days) } else { @($null) }
@@ -1025,19 +1151,7 @@ function Add-IQDatasetRefreshScheduleRow {
                     })
             }
         }
-        return
     }
-
-    # Neither schedule is available: emit an explicit row instead of the monolith's silent all-null row.
-    $row = Rename-Properties -object (New-Object PSObject) -renameMap $map
-    Add-IQNote -Row $row -Name 'WorkspaceId' -Value $WorkspaceId
-    Add-IQNote -Row $row -Name 'WorkspaceName' -Value $WorkspaceName
-    Add-IQNote -Row $row -Name 'DatasetId' -Value $datasetId
-    Add-IQNote -Row $row -Name 'DatasetName' -Value $datasetName
-    Add-IQNote -Row $row -Name 'DatasetRefreshScheduleDay' -Value $null
-    Add-IQNote -Row $row -Name 'DatasetRefreshScheduleTime' -Value $null
-    Add-IQNote -Row $row -Name 'DatasetRefreshScheduleKind' -Value 'Unavailable'
-    $ScheduleList.Add($row)
 }
 
 function Add-IQDatasetRefreshHistoryRow {
@@ -1058,7 +1172,8 @@ function Add-IQDatasetRefreshHistoryRow {
     $query = $null
     $top = Get-IQInventoryOption -Name 'RefreshHistoryTop'
     if ($null -ne $top -and [int]$top -gt 0) { $query = @{ '$top' = [int]$top } }
-    $params = @{ Path = "$BasePath/refreshes"; Description = "refresh history of dataset '$($DatasetRow.DatasetName)'"; Item = $WorkspaceName; ErrorList = $ErrorList }
+    # Per-dataset sub-collector: a failure is a Warning (kept in the ws file / checkpoint) and does not fail the workspace (INV-03).
+    $params = @{ Path = "$BasePath/refreshes"; Description = "refresh history of dataset '$($DatasetRow.DatasetName)'"; Item = $WorkspaceName; ErrorList = $ErrorList; Severity = 'Warning' }
     if ($query) { $params.Query = $query }
     if ($DatasetRow.DatasetIsRefreshable -eq $false) { $params.Optional = $true }   # audit C5-10: expected to fail for DQ/live models
     foreach ($refresh in @(Get-IQInventoryList @params)) {
@@ -1071,10 +1186,29 @@ function Add-IQDatasetRefreshHistoryRow {
     }
 }
 
+function New-IQDatasetExtraSkipState {
+    <#
+    .SYNOPSIS
+        Per-workspace state for the optional per-dataset collectors (INV-06): Options.SkipDatasetUsers / SkipDatasetParameters gates and the 401 short-circuit flags.
+    #>
+    [CmdletBinding()]
+    param()
+    return @{
+        SkipUsers        = [bool](Get-IQInventoryOption -Name 'SkipDatasetUsers')
+        SkipParameters   = [bool](Get-IQInventoryOption -Name 'SkipDatasetParameters')
+        UsersDenied      = $false
+        ParametersDenied = $false
+    }
+}
+
 function Add-IQDatasetExtraRow {
     <#
     .SYNOPSIS
         NEW per-dataset collectors: parameters and dataset users (each optional: a 403/404 yields nothing plus one Debug line).
+    .DESCRIPTION
+        INV-06: both collectors can be switched off with Options.SkipDatasetUsers / Options.SkipDatasetParameters, and
+        the first HTTP 401 (the answer for datasets the caller does not own; it costs a forced token refresh in the Http
+        layer) switches the collector off for the remaining datasets of the same workspace (-SkipState, one Info line).
     #>
     [CmdletBinding()]
     param(
@@ -1083,11 +1217,23 @@ function Add-IQDatasetExtraRow {
         [Parameter(Mandatory = $true)][string]$WorkspaceId,
         [Parameter(Mandatory = $true)][string]$WorkspaceName,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$ParameterList,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$UserList
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$UserList,
+        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$SkipState
     )
+    if ($null -eq $SkipState) { $SkipState = New-IQDatasetExtraSkipState }
     $datasetId = [string]$DatasetRow.DatasetId
     $datasetName = [string]$DatasetRow.DatasetName
-    foreach ($p in @(Get-IQInventoryList -Path "$BasePath/parameters" -Optional -Description "parameters of dataset '$datasetName'" -Item $WorkspaceName)) {
+
+    $parameters = @()
+    if (-not $SkipState.SkipParameters -and -not $SkipState.ParametersDenied) {
+        $result = @{}
+        $parameters = @(Get-IQInventoryList -Path "$BasePath/parameters" -Optional -Description "parameters of dataset '$datasetName'" -Item $WorkspaceName -Result $result)
+        if ($result.Threw -and $result.StatusCode -eq 401) {
+            $SkipState.ParametersDenied = $true
+            Write-IQLog -Level Info -Stage Inventory -Item $WorkspaceName -Message "Dataset parameters are not readable with this account (HTTP 401 on dataset '$datasetName') - skipping the parameters collector for the remaining datasets of this workspace (Options.SkipDatasetParameters disables it entirely)."
+        }
+    }
+    foreach ($p in $parameters) {
         $suggested = $null
         if ($p.PSObject.Properties['suggestedValues'] -and $null -ne $p.suggestedValues) {
             try { $suggested = ConvertTo-Json -InputObject $p.suggestedValues -Depth 20 -Compress } catch { $suggested = [string]$p.suggestedValues }
@@ -1104,7 +1250,16 @@ function Add-IQDatasetExtraRow {
                 WorkspaceName            = $WorkspaceName
             })
     }
-    foreach ($u in @(Get-IQInventoryList -Path "$BasePath/users" -Optional -Description "users of dataset '$datasetName'" -Item $WorkspaceName)) {
+    $users = @()
+    if (-not $SkipState.SkipUsers -and -not $SkipState.UsersDenied) {
+        $result = @{}
+        $users = @(Get-IQInventoryList -Path "$BasePath/users" -Optional -Description "users of dataset '$datasetName'" -Item $WorkspaceName -Result $result)
+        if ($result.Threw -and $result.StatusCode -eq 401) {
+            $SkipState.UsersDenied = $true
+            Write-IQLog -Level Info -Stage Inventory -Item $WorkspaceName -Message "Dataset users are not readable with this account (HTTP 401 on dataset '$datasetName') - skipping the users collector for the remaining datasets of this workspace (Options.SkipDatasetUsers disables it entirely)."
+        }
+    }
+    foreach ($u in $users) {
         $UserList.Add([PSCustomObject]@{
                 UserIdentifier             = $u.identifier
                 UserPrincipalType          = $u.principalType
@@ -1257,6 +1412,7 @@ function Get-IQWorkspaceInventory {
     $workspaceUsers = New-Object System.Collections.Generic.List[object]
 
     Write-IQLog -Level Info -Stage Inventory -Item $wsName -Message 'Report & Model metadata extraction started.'
+    $extraSkip = New-IQDatasetExtraSkipState   # INV-06: per-workspace gate for the optional per-dataset collectors
 
     # ---- Fabric items + item connections (monolith 2282-2356), first so the sensitivity-label lookup is available ----
     $labelById = @{}
@@ -1321,7 +1477,8 @@ function Get-IQWorkspaceInventory {
 
         $base = "groups/$wsId/datasets/$($dataset.id)"
         # Fetch dataset sources
-        foreach ($datasource in @(Get-IQInventoryList -Path "$base/datasources" -Description "datasources of dataset '$($dataset.name)'" -Item $wsName -ErrorList $errors)) {
+        # Per-dataset sub-collectors record Warnings (INV-03): one unreadable dataset must not fail / re-collect the workspace.
+        foreach ($datasource in @(Get-IQInventoryList -Path "$base/datasources" -Description "datasources of dataset '$($dataset.name)'" -Item $wsName -ErrorList $errors -Severity Warning)) {
             $renamedDatasource = Rename-Properties -object $datasource -renameMap $datasetDatasourceMap
             Add-IQNote -Row $renamedDatasource -Name 'WorkspaceId' -Value $wsId
             Add-IQNote -Row $renamedDatasource -Name 'WorkspaceName' -Value $wsName
@@ -1334,7 +1491,7 @@ function Get-IQWorkspaceInventory {
         }
         Add-IQDatasetRefreshHistoryRow -BasePath $base -DatasetRow $datasetRow -WorkspaceId $wsId -WorkspaceName $wsName -HistoryList $refreshHistory -ErrorList $errors
         Add-IQDatasetRefreshScheduleRow -BasePath $base -DatasetRow $datasetRow -WorkspaceId $wsId -WorkspaceName $wsName -ScheduleList $refreshSchedule -DirectQueryList $dqSchedule
-        Add-IQDatasetExtraRow -BasePath $base -DatasetRow $datasetRow -WorkspaceId $wsId -WorkspaceName $wsName -ParameterList $datasetParameters -UserList $datasetUsers
+        Add-IQDatasetExtraRow -BasePath $base -DatasetRow $datasetRow -WorkspaceId $wsId -WorkspaceName $wsName -ParameterList $datasetParameters -UserList $datasetUsers -SkipState $extraSkip
     }
 
     # ---- Reports + pages (monolith 1976-2013) ----
@@ -1402,7 +1559,7 @@ function Get-IQWorkspaceInventory {
 
         # Fetch Dataflow Datasources (guarded against a null objectId - audit C5-07)
         if (-not $dataflow.objectId) { continue }
-        foreach ($datasource in @(Get-IQInventoryList -Path "groups/$wsId/dataflows/$($dataflow.objectId)/datasources" -Description "datasources of dataflow '$($dataflow.name)'" -Item $wsName -ErrorList $errors)) {
+        foreach ($datasource in @(Get-IQInventoryList -Path "groups/$wsId/dataflows/$($dataflow.objectId)/datasources" -Description "datasources of dataflow '$($dataflow.name)'" -Item $wsName -ErrorList $errors -Severity Warning)) {
             $renamedDataflowDatasource = Rename-Properties -object $datasource -renameMap $dataflowDatasourceMap
             Add-IQNote -Row $renamedDataflowDatasource -Name 'WorkspaceId' -Value $wsId
             Add-IQNote -Row $renamedDataflowDatasource -Name 'WorkspaceName' -Value $wsName
@@ -1557,6 +1714,7 @@ function Get-IQMyWorkspaceInventory {
     $tiles = New-Object System.Collections.Generic.List[object]
 
     Write-IQLog -Level Info -Stage Inventory -Item $myWorkspaceName -Message 'My Workspace metadata extract started.'
+    $extraSkip = New-IQDatasetExtraSkipState   # INV-06
 
     # Fetch datasets from "My Workspace"
     $datasetMap = Get-IQRenameMap -Name Dataset
@@ -1576,7 +1734,7 @@ function Get-IQMyWorkspaceInventory {
         $datasets.Add($datasetRow)
 
         $base = "datasets/$($dataset.id)"
-        foreach ($datasource in @(Get-IQInventoryList -Path "$base/datasources" -Description "datasources of dataset '$($dataset.name)'" -Item $myWorkspaceName -ErrorList $errors)) {
+        foreach ($datasource in @(Get-IQInventoryList -Path "$base/datasources" -Description "datasources of dataset '$($dataset.name)'" -Item $myWorkspaceName -ErrorList $errors -Severity Warning)) {
             $renamedDatasource = Rename-Properties -object $datasource -renameMap $datasetDatasourceMap
             Add-IQNote -Row $renamedDatasource -Name 'WorkspaceId' -Value $myWorkspaceId
             Add-IQNote -Row $renamedDatasource -Name 'WorkspaceName' -Value $myWorkspaceName
@@ -1589,7 +1747,7 @@ function Get-IQMyWorkspaceInventory {
         }
         Add-IQDatasetRefreshHistoryRow -BasePath $base -DatasetRow $datasetRow -WorkspaceId $myWorkspaceId -WorkspaceName $myWorkspaceName -HistoryList $refreshHistory -ErrorList $errors
         Add-IQDatasetRefreshScheduleRow -BasePath $base -DatasetRow $datasetRow -WorkspaceId $myWorkspaceId -WorkspaceName $myWorkspaceName -ScheduleList $refreshSchedule -DirectQueryList $dqSchedule
-        Add-IQDatasetExtraRow -BasePath $base -DatasetRow $datasetRow -WorkspaceId $myWorkspaceId -WorkspaceName $myWorkspaceName -ParameterList $datasetParameters -UserList $datasetUsers
+        Add-IQDatasetExtraRow -BasePath $base -DatasetRow $datasetRow -WorkspaceId $myWorkspaceId -WorkspaceName $myWorkspaceName -ParameterList $datasetParameters -UserList $datasetUsers -SkipState $extraSkip
     }
 
     # Fetch reports from "My Workspace"
@@ -1981,18 +2139,25 @@ function Invoke-IQInventoryStage {
             $inv = Get-IQWorkspaceInventory -Workspace $ws -Scope $scope -DatasetNameLookup $datasetNameLookup -DataflowNameLookup $dataflowNameLookup
             $path = Save-IQInventory -Name ('ws-' + $wsId) -Object $inv
             foreach ($r in @($inv.Reports)) { if ($r.ReportId) { $knownReportIds[([string]$r.ReportId).ToLowerInvariant()] = $true } }
+            # INV-03: only workspace-level list failures (datasets/reports/dataflows/lineage) fail the workspace; per-item
+            # sub-collector failures (datasources/refreshes of one dataset) are Warnings kept in the file + checkpoint.
+            $split = Get-IQInventoryErrorSplit -Errors $inv.Errors
             $counts = @{
                 Datasets = @($inv.Datasets).Count; Reports = @($inv.Reports).Count; ReportPages = @($inv.ReportPages).Count
                 Dataflows = @($inv.Dataflows).Count; FabricItems = @($inv.FabricItems).Count; Dashboards = @($inv.Dashboards).Count
-                WorkspaceUsers = @($inv.WorkspaceUsers).Count; Errors = @($inv.Errors).Count
+                WorkspaceUsers = @($inv.WorkspaceUsers).Count; Errors = @($split.Fatal).Count; Warnings = @($split.Warnings).Count
             }
-            if (@($inv.Errors).Count -gt 0) {
-                $message = (@($inv.Errors) | ForEach-Object { $_.Collector + ': ' + $_.Message }) -join ' | '
-                Set-IQItemDone -Stage $stage -ItemKey $wsId -Item $wsName -Outputs @($path) -Status Failed -Message ("Partial inventory - " + $message) -Data $counts | Out-Null
+            if (@($split.Fatal).Count -gt 0) {
+                Set-IQItemDone -Stage $stage -ItemKey $wsId -Item $wsName -Outputs @($path) -Status Failed -Message ("Partial inventory - " + $split.FatalMessage) -Data $counts | Out-Null
                 $failed++
             }
             else {
-                Set-IQItemDone -Stage $stage -ItemKey $wsId -Item $wsName -Outputs @($path) -Status Succeeded -Data $counts | Out-Null
+                $message = $null
+                if (@($split.Warnings).Count -gt 0) {
+                    $message = ("Partial: {0} per-item warning(s) - {1}" -f @($split.Warnings).Count, $split.WarningMessage)
+                    Write-IQLog -Level Warn -Stage $stage -Item $wsName -Message ("Inventory collected with {0} per-item warning(s) (see the ws file / checkpoint); the workspace is not re-collected on resume." -f @($split.Warnings).Count)
+                }
+                Set-IQItemDone -Stage $stage -ItemKey $wsId -Item $wsName -Outputs @($path) -Status Succeeded -Message $message -Data $counts | Out-Null
                 $collected++
             }
         }
@@ -2021,14 +2186,19 @@ function Invoke-IQInventoryStage {
                 $inv = Get-IQMyWorkspaceInventory -Scope $scope -KnownReportIds $knownReportIds -DatasetNameLookup $datasetNameLookup
                 $path = Save-IQInventory -Name ('ws-' + $myKey) -Object $inv
                 $sharedFound = [bool]$inv.SharedReportsFound
-                $counts = @{ Datasets = @($inv.Datasets).Count; Reports = @($inv.Reports).Count; ReportPages = @($inv.ReportPages).Count; Dashboards = @($inv.Dashboards).Count; Errors = @($inv.Errors).Count }
-                if (@($inv.Errors).Count -gt 0) {
-                    $message = (@($inv.Errors) | ForEach-Object { $_.Collector + ': ' + $_.Message }) -join ' | '
-                    Set-IQItemDone -Stage $stage -ItemKey $myKey -Item $myKey -Outputs @($path) -Status Failed -Message ("Partial inventory - " + $message) -Data $counts | Out-Null
+                $split = Get-IQInventoryErrorSplit -Errors $inv.Errors   # INV-03
+                $counts = @{ Datasets = @($inv.Datasets).Count; Reports = @($inv.Reports).Count; ReportPages = @($inv.ReportPages).Count; Dashboards = @($inv.Dashboards).Count; Errors = @($split.Fatal).Count; Warnings = @($split.Warnings).Count }
+                if (@($split.Fatal).Count -gt 0) {
+                    Set-IQItemDone -Stage $stage -ItemKey $myKey -Item $myKey -Outputs @($path) -Status Failed -Message ("Partial inventory - " + $split.FatalMessage) -Data $counts | Out-Null
                     $failed++
                 }
                 else {
-                    Set-IQItemDone -Stage $stage -ItemKey $myKey -Item $myKey -Outputs @($path) -Status Succeeded -Data $counts | Out-Null
+                    $message = $null
+                    if (@($split.Warnings).Count -gt 0) {
+                        $message = ("Partial: {0} per-item warning(s) - {1}" -f @($split.Warnings).Count, $split.WarningMessage)
+                        Write-IQLog -Level Warn -Stage $stage -Item $myKey -Message ("Inventory collected with {0} per-item warning(s) (see the ws file / checkpoint); My Workspace is not re-collected on resume." -f @($split.Warnings).Count)
+                    }
+                    Set-IQItemDone -Stage $stage -ItemKey $myKey -Item $myKey -Outputs @($path) -Status Succeeded -Message $message -Data $counts | Out-Null
                     $collected++
                 }
             }
@@ -2053,7 +2223,16 @@ function Invoke-IQInventoryStage {
     $workspacesPath = Save-IQInventory -Name 'workspaces' -Object $wsRows.ToArray()
 
     $summary = @{ WorkspaceCount = $wsRows.Count; Collected = $collected; Skipped = $skipped; Failed = $failed; WorkspacesFile = $workspacesPath; BudgetStop = $budgetStop }
-    Write-IQLog -Level Success -Stage $stage -Message ("Inventory complete: {0} workspace(s) in scope, {1} collected, {2} skipped (resume), {3} failed." -f $wsRows.Count, $collected, $skipped, $failed)
+    if ($budgetStop) {
+        # INV-09: a time-budget stop is not a completed inventory - no green 'complete' line before the Paused summary.
+        $remaining = $wsRows.Count - $collected - $skipped - $failed
+        if ($remaining -lt 0) { $remaining = 0 }
+        $summary.Remaining = $remaining
+        Write-IQLog -Level Warn -Stage $stage -Message ("Inventory paused (time budget): {0} of {1} workspace(s) collected, {2} skipped (resume), {3} failed, {4} remaining for the next start." -f $collected, $wsRows.Count, $skipped, $failed, $remaining)
+    }
+    else {
+        Write-IQLog -Level Success -Stage $stage -Message ("Inventory complete: {0} workspace(s) in scope, {1} collected, {2} skipped (resume), {3} failed." -f $wsRows.Count, $collected, $skipped, $failed)
+    }
     return $summary
 }
 

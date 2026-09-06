@@ -10,8 +10,12 @@
         runs\<RunId>\done\<Stage>\<safeItemKey>.json     per-item checkpoint
         runs\<RunId>\extracts\...                        intermediate JSON
         runs\<RunId>\tool-logs\<Stage>\<safeItemKey>.out.txt / .err.txt
-    Run status values: Running | Completed | CompletedWithErrors | Paused (time budget, brief -TimeBudgetMinutes) |
-    Failed | Cancelled. Paused/Running/Failed/CompletedWithErrors runs are resumed by -Resume Auto.
+    Run status values: Running | Completed | CompletedWithErrors | Paused (time budget, brief -TimeBudgetMinutes, or a
+    stage left Interrupted/unfinished by a stage-filtered resume) | Failed | Cancelled. -Resume Auto resumes the
+    manifest for <RunId> whenever it is not Completed; without -RunId it also adopts the newest Running/Paused/Failed
+    run (never a run that finished on its own as CompletedWithErrors - that is retried only by naming its RunId).
+    Timestamps loaded from disk are always ISO-8601 strings (PowerShell 7's ConvertFrom-Json turns them into
+    [datetime]; Read-IQManifestFile converts them back so sheets/logs are culture-independent on both hosts).
     The in-memory manifest ($script:IQ.Manifest) is a nested [ordered] hashtable (a manifest loaded from disk is
     converted with ConvertTo-IQHashtable) so modules can read/write it uniformly: $IQ.Manifest.stages['Inventory'].status.
     Requires ImpactIQ.Common.ps1 to be dot-sourced first. Windows PowerShell 5.1 compatible.
@@ -87,6 +91,12 @@ function ConvertTo-IQManifestOptionSet {
         if ($null -eq $v) { $out[$k] = $null; continue }
         if ($v -is [System.Management.Automation.PSCredential]) { continue }
         if ($v -is [System.Security.SecureString]) { continue }
+        if ($k -match '(?i)webhook') {
+            # An incoming-webhook URL (Teams/Slack) is the credential: keep only the host so the manifest (published as a
+            # pipeline artifact) shows where the device-code message went without the secret path.
+            $out[$k] = ConvertTo-IQRedactedUrl -Url ([string]$v)
+            continue
+        }
         if ($v -is [System.Management.Automation.SwitchParameter]) { $out[$k] = [bool]$v; continue }
         if ($v -is [string] -or $v -is [bool] -or $v.GetType().IsPrimitive -or $v -is [decimal]) { $out[$k] = $v; continue }
         if ($v -is [datetime]) { $out[$k] = $v.ToString('o'); continue }
@@ -95,6 +105,65 @@ function ConvertTo-IQManifestOptionSet {
         $out[$k] = [string]$v
     }
     return $out
+}
+
+function ConvertTo-IQRedactedUrl {
+    <#
+    .SYNOPSIS
+        "https://host/***" for a URL whose path carries a secret (webhooks); "***" for any other non-empty text; '' stays ''.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return '' }
+    if ($Url -match '^(?<prefix>[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+)') { return ($Matches['prefix'] + '/***') }
+    return '***'
+}
+
+function ConvertTo-IQTimestampText {
+    <#
+    .SYNOPSIS
+        A manifest timestamp as the ISO-8601 round-trip string ('o', UTC) whether it is stored as text or as [datetime]; '' for $null.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()]$Value)
+    if ($null -eq $Value) { return '' }
+    if ($Value -is [datetime]) {
+        $d = [datetime]$Value
+        if ($d.Kind -eq [System.DateTimeKind]::Unspecified) { $d = [datetime]::SpecifyKind($d, [System.DateTimeKind]::Utc) }
+        return $d.ToUniversalTime().ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    return [string]$Value
+}
+
+function ConvertTo-IQManifestTimestampText {
+    <#
+    .SYNOPSIS
+        Walks a manifest loaded from disk and replaces every [datetime] leaf (PowerShell 7 ConvertFrom-Json) with its ISO-8601 UTC string.
+    .DESCRIPTION
+        Dictionaries and PSCustomObjects are updated in place; arrays are rebuilt. Returns the (possibly replaced) value
+        so scalar leaves can be assigned back: $h[$k] = ConvertTo-IQManifestTimestampText -InputObject $h[$k].
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()]$InputObject)
+    if ($null -eq $InputObject) { return $null }
+    if ($InputObject -is [datetime]) { return (ConvertTo-IQTimestampText -Value $InputObject) }
+    if ($InputObject -is [string] -or $InputObject.GetType().IsPrimitive -or $InputObject -is [decimal]) { return $InputObject }
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        foreach ($k in @($InputObject.Keys)) { $InputObject[$k] = ConvertTo-IQManifestTimestampText -InputObject $InputObject[$k] }
+        return $InputObject
+    }
+    if ($InputObject -is [System.Collections.IEnumerable]) {
+        $list = @()
+        foreach ($i in $InputObject) { $list += , (ConvertTo-IQManifestTimestampText -InputObject $i) }
+        return , $list
+    }
+    if ($InputObject -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($p in @($InputObject.PSObject.Properties)) {
+            if ($p.IsSettable) { $p.Value = ConvertTo-IQManifestTimestampText -InputObject $p.Value }
+        }
+        return $InputObject
+    }
+    return $InputObject
 }
 
 function New-IQManifest {
@@ -155,6 +224,8 @@ function Read-IQManifestFile {
         if ($null -eq $obj) { return $null }
         $h = ConvertTo-IQHashtable -InputObject $obj
         if (-not ($h -is [System.Collections.IDictionary])) { return $null }
+        # PowerShell 7 parses the 'o'-format strings into [datetime]; keep the manifest text-only on both hosts.
+        ConvertTo-IQManifestTimestampText -InputObject $h | Out-Null
         if (-not $h.Contains('stages') -or $null -eq $h['stages']) { $h['stages'] = [ordered]@{} }
         if (-not $h.Contains('failures') -or $null -eq $h['failures']) { $h['failures'] = @() }
         $h['failures'] = @($h['failures'])
@@ -194,7 +265,13 @@ function ConvertTo-IQDateTimeUtc {
 function Find-IQResumableRun {
     <#
     .SYNOPSIS
-        Newest run (by startedUtc) with status Running/Paused/Failed/CompletedWithErrors started within MaxAgeDays; returns @{RunId; Manifest} or $null.
+        Newest unfinished run (status Running/Paused/Failed, started within MaxAgeDays) that a start without -RunId may adopt; returns @{RunId; Manifest} or $null.
+    .DESCRIPTION
+        Only auto-generated (yyyy-MM-dd) RunIds are considered, so an ad-hoc "-RunId smoke" run is never picked up by a
+        scheduled start, and only runs recorded for the current environment (a USGov pipeline never resumes a Public
+        test run with its foreign scope). A run that finished on its own as CompletedWithErrors is not adopted: the next
+        scheduled start produces a fresh dated snapshot, and the failed items are retried by naming that RunId
+        (-RunId <old>, rule 1 of Initialize-IQRun).
     #>
     [CmdletBinding()]
     param(
@@ -205,13 +282,24 @@ function Find-IQResumableRun {
     $now = Get-IQNowUtc
     $best = $null
     $bestStart = [datetime]::MinValue
+    $currentEnv = ''
+    if ($script:IQ.Environment) { $currentEnv = [string]$script:IQ.Environment }
     foreach ($dir in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
         if ($ExcludeRunId -and $dir.Name -eq $ExcludeRunId) { continue }
+        if ($dir.Name -notmatch '^\d{4}-\d{2}-\d{2}$') {
+            Write-IQLog -Level Debug -Message "Resume candidate '$($dir.Name)' skipped: not an auto-generated (yyyy-MM-dd) RunId - resume it explicitly with -RunId."
+            continue
+        }
         $mPath = Join-Path $dir.FullName 'manifest.json'
         if (-not (Test-Path -LiteralPath $mPath)) { continue }
         $m = Read-IQManifestFile -Path $mPath
         if ($null -eq $m) { continue }
-        if ([string]$m['status'] -notin @('Running', 'Paused', 'Failed', 'CompletedWithErrors')) { continue }
+        if ([string]$m['status'] -notin @('Running', 'Paused', 'Failed')) { continue }
+        $runEnv = [string]$m['environment']
+        if ($currentEnv -and $runEnv -and $runEnv -ne $currentEnv) {
+            Write-IQLog -Level Info -Message "Resume candidate '$($dir.Name)' (status $($m['status'])) skipped: it was recorded for environment '$runEnv', this run targets '$currentEnv'."
+            continue
+        }
         $started = ConvertTo-IQDateTimeUtc -Value $m['startedUtc']
         if ($null -eq $started) { continue }
         $age = $now - $started
@@ -260,12 +348,15 @@ function Initialize-IQRun {
     .DESCRIPTION
         Effective RunId: -RunId if given, else today's yyyy-MM-dd (Options.NowUtc overrides the clock for tests).
         -Force / -ResumePolicy Never => fresh run (run state and the three backup folders for <RunId> are cleared).
-        Always => resume <RunId> when its manifest exists (any status), else fresh.
+        Always => resume <RunId> when its manifest exists (any status), else a new manifest is started for <RunId>
+        WITHOUT clearing anything (the entry point implies Always for "-Stages Assemble" etc.; files already in the
+        backup folders for <RunId> are exactly what those stages need).
         Auto => (1) manifest for <RunId> exists and status <> Completed (Running, Paused, Failed, ...) => resume it;
-        (2) else, when -RunId was not given, the newest Running/Paused/Failed/CompletedWithErrors run started within
-        -ResumeMaxAgeDays is resumed
-        (yesterday's pipeline run died); (3) else fresh (a Completed manifest for <RunId> is archived as
-        manifest.<timestamp>.json and the backup folders for <RunId> are cleared - legacy re-run semantics).
+        (2) else, when -RunId was not given, the newest Running/Paused/Failed run (dated RunId, same environment)
+        started within -ResumeMaxAgeDays is resumed (yesterday's pipeline run died or paused - see
+        Find-IQResumableRun); (3) else fresh: a Completed (or unreadable) manifest for <RunId> is archived as
+        manifest.<timestamp>.json, the run's done/inventory/extracts/tool-logs folders and the backup folders for
+        <RunId> are cleared - legacy re-run semantics.
         Sets $script:IQ.RunId, RunPath, IsResume, Manifest, RunPaths.
     #>
     [CmdletBinding()]
@@ -308,8 +399,11 @@ function Initialize-IQRun {
             $reason = "-Resume Always: resuming run '$effectiveRunId' (status $($existing['status']))"
         }
         else {
-            $reason = "-Resume Always: no manifest for '$effectiveRunId', fresh run"
-            Clear-IQRunFolders -RunId $effectiveRunId
+            # No clearing here: "-Resume Always -Stages Assemble" (implied by the entry point whenever Inventory is not
+            # in the stage list) must never delete the backups it is about to assemble, even when the State folder was
+            # not restored or the manifest is unreadable.
+            $reason = "-Resume Always: no readable manifest for '$effectiveRunId', starting a new manifest (existing files in the run folders are kept)"
+            Write-IQLog -Level Warn -Message "-Resume Always: no readable manifest for '$effectiveRunId'; starting a new manifest but keeping any existing backup and state folders for it."
         }
     }
     else {
@@ -332,14 +426,18 @@ function Initialize-IQRun {
             }
             else {
                 $reason = "-Resume Auto: fresh run '$effectiveRunId'"
-                if ($null -ne $existing) {
+                if (Test-Path -LiteralPath $manifestPath) {
                     $stamp = (Get-IQNowUtc).ToString('yyyyMMddHHmmss', [System.Globalization.CultureInfo]::InvariantCulture)
                     $archive = Join-Path $runPath ('manifest.' + $stamp + '.json')
                     $n = 1
                     while (Test-Path -LiteralPath $archive) { $archive = Join-Path $runPath ('manifest.' + $stamp + '-' + $n + '.json'); $n++ }
                     Move-Item -LiteralPath $manifestPath -Destination $archive -Force
-                    $reason = $reason + " (previous Completed manifest archived as $(Split-Path -Leaf $archive))"
-                    # Drop the previous run's checkpoints/inventory so nothing is skipped by accident.
+                    if ($null -ne $existing) { $reason = $reason + " (previous Completed manifest archived as $(Split-Path -Leaf $archive))" }
+                    else { $reason = $reason + " (unreadable manifest archived as $(Split-Path -Leaf $archive))" }
+                }
+                if (Test-Path -LiteralPath $runPath) {
+                    # Drop any previous checkpoints/inventory for this RunId - whether its manifest was Completed,
+                    # unreadable or missing - so a fresh run never honours stale checkpoints or ws-*.json files.
                     foreach ($sub in @('done', 'inventory', 'extracts', 'tool-logs')) {
                         $p = Join-Path $runPath $sub
                         if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
@@ -497,8 +595,11 @@ function Invoke-IQStage {
         recorded during the stage) / Failed (exception) / Paused (the body stopped because Test-IQTimeBudget set
         $script:IQ.BudgetExceeded). Once the budget is exhausted every later stage except Assemble is marked Paused
         without running (Assemble still runs so partial workbooks exist); Paused stages are re-run on resume. -Fatal
-        rethrows the exception; otherwise the error is logged and later stages still run. "Inventory" is re-run on
-        resume when Options.RefreshInventory is set (its item checkpoints are cleared first). Returns the stage status.
+        rethrows the exception; otherwise the error is logged and later stages still run. A Completed stage is only
+        skipped when every one of its checkpoints is still valid (Test-IQItemDone: outputs present) - when backup files
+        were deleted or were not restored on this agent the stage runs again and re-creates just the missing items.
+        "Inventory" is re-run on resume when Options.RefreshInventory is set (its checkpoints, ws-*.json / global.json
+        files and Inventory failure entries are cleared first). Returns the stage status.
     #>
     [CmdletBinding()]
     param(
@@ -511,8 +612,12 @@ function Invoke-IQStage {
     $refreshInventory = ($Name -eq 'Inventory' -and $script:IQ.Options -and [bool]$script:IQ.Options['RefreshInventory'])
 
     if ($script:IQ.IsResume -and [string]$entry['status'] -eq 'Completed' -and $Name -ne 'Assemble' -and -not $refreshInventory) {
-        Write-IQLog -Level Info -Stage $Name -Message "Stage already Completed in this run - skipping (resume)."
-        return 'Completed'
+        $stale = Get-IQStaleCheckpointCount -Stage $Name
+        if ($stale -eq 0) {
+            Write-IQLog -Level Info -Stage $Name -Message "Stage already Completed in this run - skipping (resume)."
+            return 'Completed'
+        }
+        Write-IQLog -Level Warn -Stage $Name -Message ("Stage was Completed in this run but {0} checkpoint(s) have missing outputs - re-running the stage (items whose outputs still exist are skipped)." -f $stale)
     }
     if ($Name -ne 'Assemble' -and (Test-IQTimeBudget -Stage $Name)) {
         Write-IQLog -Level Warn -Stage $Name -Message 'Time budget exhausted - stage not started (marked Paused; it runs on the next start, which resumes this run).'
@@ -522,11 +627,20 @@ function Invoke-IQStage {
         return 'Paused'
     }
     if ($refreshInventory -and $script:IQ.IsResume) {
+        Write-IQLog -Level Info -Stage $Name -Message '-RefreshInventory: clearing Inventory checkpoints, ws-*.json / global.json files and Inventory failure entries so every workspace is collected again.'
         $doneFolder = Get-IQDoneFolder -Stage $Name
-        if (Test-Path -LiteralPath $doneFolder) {
-            Write-IQLog -Level Info -Stage $Name -Message '-RefreshInventory: clearing Inventory checkpoints so every workspace is collected again.'
-            Remove-Item -LiteralPath $doneFolder -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $doneFolder) { Remove-Item -LiteralPath $doneFolder -Recurse -Force -ErrorAction SilentlyContinue }
+        # A workspace removed from the tenant/scope since the original run must not survive as a stale ws-<id>.json
+        # (later stages and Assemble read every ws-*.json); workspaces.json (the persisted scope) is kept.
+        $invFolder = Join-Path $script:IQ.RunPath 'inventory'
+        if (Test-Path -LiteralPath $invFolder) {
+            foreach ($f in @(Get-ChildItem -LiteralPath $invFolder -Filter 'ws-*.json' -File -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+            }
+            $globalFile = Join-Path $invFolder 'global.json'
+            if (Test-Path -LiteralPath $globalFile) { Remove-Item -LiteralPath $globalFile -Force -ErrorAction SilentlyContinue }
         }
+        $script:IQ.Manifest['failures'] = @(@($script:IQ.Manifest['failures']) | Where-Object { $null -ne $_ -and [string](Get-IQMemberValue -Object $_ -Name 'stage') -ne $Name })
     }
 
     $previousStage = $script:IQ.CurrentStage
@@ -602,18 +716,60 @@ function Test-IQItemDone {
     )
     $cp = Get-IQItemCheckpoint -Stage $Stage -ItemKey $ItemKey
     if ($null -eq $cp) { return $false }
-    $status = [string](Get-IQMemberValue -Object $cp -Name 'status')
+    return (Test-IQCheckpointValid -Checkpoint $cp -Stage $Stage -ItemKey $ItemKey)
+}
+
+function Test-IQCheckpointValid {
+    <#
+    .SYNOPSIS
+        $true when a parsed checkpoint has status Succeeded/Skipped and every path in its outputs still exists (logs the first missing output at Debug).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()]$Checkpoint,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Stage,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$ItemKey
+    )
+    if ($null -eq $Checkpoint) { return $false }
+    $status = [string](Get-IQMemberValue -Object $Checkpoint -Name 'status')
     if ($status -notin @('Succeeded', 'Skipped')) { return $false }
-    foreach ($o in @(Get-IQMemberValue -Object $cp -Name 'outputs')) {
+    foreach ($o in @(Get-IQMemberValue -Object $Checkpoint -Name 'outputs')) {
         if ($null -eq $o) { continue }
         $p = [string]$o
         if ([string]::IsNullOrWhiteSpace($p)) { continue }
         if (-not (Test-Path -LiteralPath $p)) {
-            Write-IQLog -Level Debug -Stage $Stage -Item $ItemKey -Message "Checkpoint invalidated: output missing '$p'."
+            $logArgs = @{ Level = 'Debug'; Message = "Checkpoint invalidated: output missing '$p'." }
+            if (-not [string]::IsNullOrWhiteSpace($Stage)) { $logArgs['Stage'] = $Stage }
+            if (-not [string]::IsNullOrWhiteSpace($ItemKey)) { $logArgs['Item'] = $ItemKey }
+            Write-IQLog @logArgs
             return $false
         }
     }
     return $true
+}
+
+function Get-IQStaleCheckpointCount {
+    <#
+    .SYNOPSIS
+        Number of checkpoint files in done\<Stage> that Test-IQItemDone would reject (status not Succeeded/Skipped, or an output missing).
+    .DESCRIPTION
+        Used before a Completed stage is skipped on resume: on an agent that restored only State\runs (never the backup
+        folders), or after an operator deleted a backup folder, the stage must run again to re-create the missing files.
+        One directory scan per stage; unreadable checkpoint files count as stale.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Stage)
+    $folder = Get-IQDoneFolder -Stage $Stage
+    $stale = 0
+    if (-not (Test-Path -LiteralPath $folder)) { return $stale }
+    foreach ($f in @(Get-ChildItem -LiteralPath $folder -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        $cp = $null
+        try { $cp = ConvertFrom-IQJsonFile -Path $f.FullName } catch { $cp = $null }
+        if ($null -eq $cp) { $stale++; continue }
+        $key = [string](Get-IQMemberValue -Object $cp -Name 'itemKey')
+        if (-not (Test-IQCheckpointValid -Checkpoint $cp -Stage $Stage -ItemKey $key)) { $stale++ }
+    }
+    return $stale
 }
 
 function Remove-IQFailureEntry {
@@ -785,23 +941,47 @@ function Get-IQAllWorkspaceInventories {
 function Get-IQRunStatus {
     <#
     .SYNOPSIS
-        Derives the run status from the manifest: Paused (time budget reached / any Paused stage), CompletedWithErrors (any failures / non-Completed stage), else Completed.
+        Derives the run status from the stage states: Paused (any stage Paused, or Interrupted/Running - i.e. unfinished), CompletedWithErrors (any failures / Failed stage), else Completed.
+    .DESCRIPTION
+        Derived from the stages only: a time budget that trips inside Assemble (which always runs last) leaves every
+        stage Completed, so the run is Completed and no extra resume is forced. A stage a crash left Interrupted that
+        a stage-filtered resume (-Stages Assemble) did not re-run keeps the run Paused (exit code 3, resumable) so the
+        missing items are never reported as success or dropped from the next start's resume.
     #>
     [CmdletBinding()]
     param()
     $m = $script:IQ.Manifest
     if ($null -eq $m) { return 'Failed' }
     $withErrors = $false
-    $paused = ($script:IQ.ContainsKey('BudgetExceeded') -and [bool]$script:IQ['BudgetExceeded'])
+    $paused = $false
     if (@($m['failures']).Count -gt 0) { $withErrors = $true }
+    if (@(Get-IQUnfinishedStageName -Manifest $m).Count -gt 0) { $paused = $true }
     foreach ($name in @($m['stages'].Keys)) {
         $st = [string]$m['stages'][$name]['status']
         if ($st -in @('Failed', 'CompletedWithErrors')) { $withErrors = $true }
-        if ($st -eq 'Paused') { $paused = $true }
     }
     if ($paused) { return 'Paused' }
     if ($withErrors) { return 'CompletedWithErrors' }
     return 'Completed'
+}
+
+function Get-IQUnfinishedStageName {
+    <#
+    .SYNOPSIS
+        Names of the stages whose status is Paused, Interrupted or Running (started but not finished); wrap in @( ).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()]$Manifest)
+    if ($null -eq $Manifest) { $Manifest = $script:IQ.Manifest }
+    $names = @()
+    if ($null -eq $Manifest) { return $names }
+    $stages = Get-IQMemberValue -Object $Manifest -Name 'stages'
+    if (-not ($stages -is [System.Collections.IDictionary])) { return $names }
+    foreach ($name in @($stages.Keys)) {
+        $st = [string](Get-IQMemberValue -Object $stages[$name] -Name 'status')
+        if ($st -in @('Paused', 'Interrupted', 'Running')) { $names += [string]$name }
+    }
+    return $names
 }
 
 function Complete-IQRun {
@@ -819,7 +999,12 @@ function Complete-IQRun {
     $level = 'Success'
     if ($Status -in @('CompletedWithErrors', 'Paused')) { $level = 'Warn' } elseif ($Status -ne 'Completed') { $level = 'Error' }
     Write-IQLog -Level $level -Message ("Run '{0}' finished with status {1} ({2} failure(s))." -f $script:IQ.RunId, $Status, @($script:IQ.Manifest['failures']).Count)
-    if ($Status -eq 'Paused') { Write-IQLog -Level Warn -Message ("Run '{0}' is PAUSED (time budget): start ImpactIQ again to resume it - completed items are skipped." -f $script:IQ.RunId) }
+    if ($Status -eq 'Paused') {
+        $unfinished = @(Get-IQUnfinishedStageName)
+        $why = 'time budget'
+        if ($unfinished.Count -gt 0) { $why = ('unfinished stage(s): ' + ($unfinished -join ', ')) }
+        Write-IQLog -Level Warn -Message ("Run '{0}' is PAUSED ({1}): start ImpactIQ again to resume it - completed items are skipped." -f $script:IQ.RunId, $why)
+    }
     return $Status
 }
 
@@ -870,8 +1055,8 @@ function Get-IQRunSummary {
             RunId           = $runId
             Stage           = $name
             Status          = [string](Get-IQMemberValue -Object $st -Name 'status')
-            StartedUtc      = [string](Get-IQMemberValue -Object $st -Name 'startedUtc')
-            EndedUtc        = [string](Get-IQMemberValue -Object $st -Name 'endedUtc')
+            StartedUtc      = ConvertTo-IQTimestampText -Value (Get-IQMemberValue -Object $st -Name 'startedUtc')
+            EndedUtc        = ConvertTo-IQTimestampText -Value (Get-IQMemberValue -Object $st -Name 'endedUtc')
             DurationSeconds = $dur
             ItemsDone       = [int]$done
             ItemsFailed     = [int]$failed
@@ -899,8 +1084,8 @@ function Get-IQRunSummary {
         RunId           = $runId
         Stage           = '(Run)'
         Status          = [string](Get-IQMemberValue -Object $Manifest -Name 'status')
-        StartedUtc      = [string](Get-IQMemberValue -Object $Manifest -Name 'startedUtc')
-        EndedUtc        = [string](Get-IQMemberValue -Object $Manifest -Name 'endedUtc')
+        StartedUtc      = ConvertTo-IQTimestampText -Value (Get-IQMemberValue -Object $Manifest -Name 'startedUtc')
+        EndedUtc        = ConvertTo-IQTimestampText -Value (Get-IQMemberValue -Object $Manifest -Name 'endedUtc')
         DurationSeconds = $runDur
         ItemsDone       = $totalDone
         ItemsFailed     = $totalFailed

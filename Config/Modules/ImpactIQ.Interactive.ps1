@@ -11,7 +11,9 @@
     Moved verbatim from "Final PS Script.txt" (bodies unchanged, only comment-based help and [CmdletBinding()] added):
       - lines 184-222  Read-HostWithTimeout            (+ audit C1-03: returns "" when console input is redirected)
       - lines 226-337  Show-EnvironmentSelectionDialog
-      - lines 654-845  Show-WorkspacePicker            (+ audit C3-03: the 10-minute timer is stopped/disposed after ShowDialog)
+      - lines 654-845  Show-WorkspacePicker            (+ audit C3-03: the 10-minute timer is stopped/disposed after ShowDialog;
+                                                        + INT-03: the result also carries NothingChecked so the wrappers can tell
+                                                        "OK with nothing ticked" from a real selection)
       - lines 850-915  Show-RunModeDialog
       - lines 920-975  Show-ReportScopeDialog
       - lines 980-1148 Show-ReportPicker               (+ audit C3-03: timer stopped/disposed after ShowDialog)
@@ -21,7 +23,9 @@
     New (brief section 2.8): Select-IQEnvironmentInteractive and Select-IQScopeInteractive reproduce the dialog flow of
     monolith lines 340-380 and 1530-1860 but RETURN DATA instead of mutating globals; Cancel at the top level returns
     $null (the entry point exits 0 with "cancelled"). Workspace/report/model listings for the pickers go through
-    Invoke-IQApi (ImpactIQ.Http.ps1). All output goes through Write-IQLog. Windows PowerShell 5.1 compatible.
+    Invoke-IQApi (ImpactIQ.Http.ps1) and are stored in the per-run inventory cache (Get-IQInventoryCache,
+    ImpactIQ.Inventory.ps1) so Resolve-IQScope and the collectors do not list the same workspaces again (INT-02).
+    All output goes through Write-IQLog. Windows PowerShell 5.1 compatible.
 #>
 
 function Assert-IQInteractiveHost {
@@ -99,10 +103,41 @@ function ConvertTo-IQPickerWorkspaceRow {
     return [pscustomobject]@{ id = [string]$id; name = [string]$name }
 }
 
+function Get-IQInteractiveCachedItemList {
+    <#
+    .SYNOPSIS
+        Reads or stores a workspace's raw /reports or /datasets list in the per-run inventory cache (INT-02); no-op when the Inventory module is not loaded.
+    .DESCRIPTION
+        Without -Value: returns the cached array for the workspace, or $null when there is no entry. With -Value: stores
+        the array. Only real responses are ever stored (INV-01: a failed call leaves the key absent so the Inventory
+        stage re-fetches with error bookkeeping instead of treating a 4xx as an empty workspace).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceId,
+        [Parameter(Mandatory = $true)][ValidateSet('Reports', 'Datasets')][string]$Kind,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][array]$Value
+    )
+    if (-not (Get-Command -Name Get-IQInventoryCache -ErrorAction SilentlyContinue)) { return $null }
+    $cache = Get-IQInventoryCache
+    if ($null -eq $cache -or -not $cache.ContainsKey($Kind) -or $null -eq $cache[$Kind]) { return $null }
+    $table = $cache[$Kind]
+    if ($PSBoundParameters.ContainsKey('Value')) {
+        if ($null -ne $Value) { $table[$WorkspaceId] = @($Value) }
+        return $null
+    }
+    if ($table.ContainsKey($WorkspaceId)) { return , @($table[$WorkspaceId]) }
+    return $null
+}
+
 function Get-IQInteractiveWorkspaceItemList {
     <#
     .SYNOPSIS
         Lists reports or datasets of the given workspaces as picker rows (monolith 1590-1614 / 1715-1737); failures per workspace are logged and skipped.
+    .DESCRIPTION
+        INT-02: each successful listing is stored in the per-run inventory cache (Get-IQInventoryCache) and an existing
+        cache entry is reused, so Resolve-IQScope / Get-IQWorkspaceInventory (and a second pass through the pickers)
+        do not list the same workspaces again.
     #>
     [CmdletBinding()]
     param(
@@ -113,40 +148,46 @@ function Get-IQInteractiveWorkspaceItemList {
     $total = @($Workspaces).Count
     $n = 0
     $label = 'reports'
-    if ($Kind -eq 'Models') { $label = 'models' }
+    $cacheKind = 'Reports'
+    $endpoint = 'reports'
+    if ($Kind -eq 'Models') { $label = 'models'; $cacheKind = 'Datasets'; $endpoint = 'datasets' }
     Write-IQLog -Level Info -Message ("Fetching {0} for selection from {1} workspace(s)..." -f $label, $total)
     foreach ($ws in $Workspaces) {
         $n++
+        $wsId = [string]$ws.id
         Write-IQLog -Level Debug -Message ("Scanning workspace {0} of {1}: {2}" -f $n, $total, $ws.name)
         try {
+            $rows = Get-IQInteractiveCachedItemList -WorkspaceId $wsId -Kind $cacheKind
+            if ($null -eq $rows) {
+                $resp = Invoke-IQApi -Method GET -Path ("groups/{0}/{1}" -f $wsId, $endpoint) -AllowNotFound
+                if ($null -ne $resp) {
+                    $rows = @()
+                    if ($null -ne (Get-IQMemberValue -Object $resp -Name 'value')) { $rows = @($resp.value | Where-Object { $null -ne $_ }) }
+                    Get-IQInteractiveCachedItemList -WorkspaceId $wsId -Kind $cacheKind -Value $rows | Out-Null
+                }
+            }
             if ($Kind -eq 'Reports') {
-                $resp = Invoke-IQApi -Method GET -Path ("groups/{0}/reports" -f $ws.id) -AllowNotFound
-                if ($null -ne $resp -and $null -ne $resp.value) {
-                    foreach ($rpt in @($resp.value)) {
-                        if ($null -eq $rpt) { continue }
-                        $items.Add([pscustomobject]@{
-                                ReportId           = [string]$rpt.id
-                                ReportName         = [string]$rpt.name
-                                WorkspaceId        = [string]$ws.id
-                                WorkspaceName      = [string]$ws.name
-                                DatasetId          = [string](Get-IQMemberValue -Object $rpt -Name 'datasetId')
-                                DatasetWorkspaceId = [string](Get-IQMemberValue -Object $rpt -Name 'datasetWorkspaceId')
-                            })
-                    }
+                foreach ($rpt in @($rows)) {
+                    if ($null -eq $rpt) { continue }
+                    $items.Add([pscustomobject]@{
+                            ReportId           = [string]$rpt.id
+                            ReportName         = [string]$rpt.name
+                            WorkspaceId        = $wsId
+                            WorkspaceName      = [string]$ws.name
+                            DatasetId          = [string](Get-IQMemberValue -Object $rpt -Name 'datasetId')
+                            DatasetWorkspaceId = [string](Get-IQMemberValue -Object $rpt -Name 'datasetWorkspaceId')
+                        })
                 }
             }
             else {
-                $resp = Invoke-IQApi -Method GET -Path ("groups/{0}/datasets" -f $ws.id) -AllowNotFound
-                if ($null -ne $resp -and $null -ne $resp.value) {
-                    foreach ($ds in @($resp.value)) {
-                        if ($null -eq $ds) { continue }
-                        $items.Add([pscustomobject]@{
-                                DatasetId     = [string]$ds.id
-                                DatasetName   = [string]$ds.name
-                                WorkspaceId   = [string]$ws.id
-                                WorkspaceName = [string]$ws.name
-                            })
-                    }
+                foreach ($ds in @($rows)) {
+                    if ($null -eq $ds) { continue }
+                    $items.Add([pscustomobject]@{
+                            DatasetId     = [string]$ds.id
+                            DatasetName   = [string]$ds.name
+                            WorkspaceId   = $wsId
+                            WorkspaceName = [string]$ws.name
+                        })
                 }
             }
         }
@@ -159,17 +200,36 @@ function Get-IQInteractiveWorkspaceItemList {
     return $items.ToArray()
 }
 
+function Test-IQInteractiveNothingChecked {
+    <#
+    .SYNOPSIS
+        True when a Show-WorkspacePicker result says nothing was ticked (INT-03); falls back to "no ids" for a result without the flag.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()]$Selection,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$SelectedIds
+    )
+    $flag = Get-IQMemberValue -Object $Selection -Name 'NothingChecked'
+    if ($null -ne $flag) { return [bool]$flag }
+    return (@($SelectedIds).Count -eq 0)
+}
+
 function Select-IQInteractiveWorkspaceScope {
     <#
     .SYNOPSIS
-        "Specific" branch of the report/model scope flow: shows the workspace picker; returns @{Cancelled; WorkspaceIds; Workspaces} (empty selection => all, as the monolith did).
+        "Specific" branch of the report/model scope flow: shows the workspace picker; returns @{Cancelled; WorkspaceIds; Workspaces; TimedOut} (nothing ticked / timeout => all, as the monolith did).
+    .DESCRIPTION
+        INT-03: when nothing was ticked the result is WorkspaceIds = @() with every workspace in Workspaces ("all"), so
+        the manifest does not carry an explicit list of every workspace id. INT-04: TimedOut reports the picker's
+        10-minute timeout so the callers can log and persist why every workspace was scanned.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$Workspaces,
         [Parameter(Mandatory = $true)][string]$ItemLabel
     )
-    $result = @{ Cancelled = $false; WorkspaceIds = @(); Workspaces = @($Workspaces) }
+    $result = @{ Cancelled = $false; WorkspaceIds = @(); Workspaces = @($Workspaces); TimedOut = $false }
     $scopeSelection = $null
     try {
         $scopeSelection = Show-WorkspacePicker -Workspaces $Workspaces
@@ -180,8 +240,15 @@ function Select-IQInteractiveWorkspaceScope {
         $result.Cancelled = $true
         return $result
     }
+    $result.TimedOut = [bool](Get-IQMemberValue -Object $scopeSelection -Name 'TimedOut')
     $scopeWorkspaceIds = @($scopeSelection.SelectedWorkspaceIds | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
-    if ($scopeWorkspaceIds.Count -eq 0) {
+    if ($result.TimedOut -and $scopeWorkspaceIds.Count -eq 0) {
+        Write-IQLog -Level Warn -Message ("Workspace picker timed out - showing {0} from ALL workspaces (legacy behaviour)." -f $ItemLabel)
+        return $result
+    }
+    if (Test-IQInteractiveNothingChecked -Selection $scopeSelection -SelectedIds $scopeWorkspaceIds) {
+        # The verbatim picker substitutes every workspace id for an empty selection; report that as "all" (empty ids)
+        # instead of persisting hundreds of explicit ids in manifest.scope (INT-03).
         Write-IQLog -Level Warn -Message ("No workspaces selected - showing {0} from ALL workspaces instead." -f $ItemLabel)
         return $result
     }
@@ -243,6 +310,7 @@ function Select-IQScopeInteractive {
 
                 $scopeWorkspaceIds = @()
                 $workspacesToScan = $pickerWorkspaces
+                $scopeTimedOut = $false
                 if ($reportScope -eq 'Specific') {
                     $ws = Select-IQInteractiveWorkspaceScope -Workspaces $pickerWorkspaces -ItemLabel 'reports'
                     if ($ws.Cancelled) {
@@ -251,6 +319,7 @@ function Select-IQScopeInteractive {
                     }
                     $scopeWorkspaceIds = @($ws.WorkspaceIds)
                     $workspacesToScan = @($ws.Workspaces)
+                    $scopeTimedOut = [bool]$ws.TimedOut   # INT-04
                 }
 
                 $allReportsForPicker = @(Get-IQInteractiveWorkspaceItemList -Workspaces $workspacesToScan -Kind Reports)
@@ -285,7 +354,7 @@ function Select-IQScopeInteractive {
                     IncludeMyWorkspace = $false
                     ReportIds          = @($reportIds | Select-Object -Unique)
                     DatasetIds         = @($datasetIds | Select-Object -Unique)
-                    TimedOut           = $false
+                    TimedOut           = $scopeTimedOut
                 }
                 Write-IQLog -Level Info -Message ("Selected {0} report(s) ({1} model(s))." -f $result.ReportIds.Count, $result.DatasetIds.Count)
                 $reportSelectionComplete = $true
@@ -305,6 +374,7 @@ function Select-IQScopeInteractive {
 
                 $scopeWorkspaceIds = @()
                 $workspacesToScan = $pickerWorkspaces
+                $scopeTimedOut = $false
                 if ($modelScope -eq 'Specific') {
                     $ws = Select-IQInteractiveWorkspaceScope -Workspaces $pickerWorkspaces -ItemLabel 'models'
                     if ($ws.Cancelled) {
@@ -313,6 +383,7 @@ function Select-IQScopeInteractive {
                     }
                     $scopeWorkspaceIds = @($ws.WorkspaceIds)
                     $workspacesToScan = @($ws.Workspaces)
+                    $scopeTimedOut = [bool]$ws.TimedOut   # INT-04
                 }
 
                 $allModelsForPicker = @(Get-IQInteractiveWorkspaceItemList -Workspaces $workspacesToScan -Kind Models)
@@ -342,7 +413,7 @@ function Select-IQScopeInteractive {
                     IncludeMyWorkspace = $false
                     ReportIds          = @()
                     DatasetIds         = @($datasetIds | Select-Object -Unique)
-                    TimedOut           = $false
+                    TimedOut           = $scopeTimedOut
                 }
                 Write-IQLog -Level Info -Message ("Selected {0} model(s); connected reports in every accessible workspace are included automatically." -f $result.DatasetIds.Count)
                 $modelSelectionComplete = $true
@@ -366,10 +437,29 @@ function Select-IQScopeInteractive {
 
                 $selectedWorkspaceIds = @($selection.SelectedWorkspaceIds | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
                 $includeMy = [bool]$selection.IncludeMyWorkspace
-                if ($selectedWorkspaceIds.Count -eq 0 -and -not $includeMy) {
-                    # Audit C3-06: "My Workspace only" (nothing checked + Include My Workspace) is a valid selection.
+                $timedOut = [bool](Get-IQMemberValue -Object $selection -Name 'TimedOut')
+                $nothingChecked = Test-IQInteractiveNothingChecked -Selection $selection -SelectedIds $selectedWorkspaceIds
+                if ($timedOut) {
+                    # INT-01: the picker forces "Include My Workspace" on timeout, so it never substitutes the workspace
+                    # ids itself; do it here so the returned data really is "every accessible workspace + My Workspace"
+                    # (what the log, the manifest and both consumers say a timeout means).
+                    if ($selectedWorkspaceIds.Count -eq 0) {
+                        $selectedWorkspaceIds = @($pickerWorkspaces | ForEach-Object { [string]$_.id })
+                        Write-IQLog -Level Warn -Message 'Workspace picker timed out - running against every accessible workspace plus My Workspace (legacy behaviour).'
+                    }
+                    else {
+                        Write-IQLog -Level Warn -Message ("Workspace picker timed out - running against the {0} ticked workspace(s) plus My Workspace (legacy behaviour)." -f $selectedWorkspaceIds.Count)
+                    }
+                }
+                elseif ($nothingChecked -and -not $includeMy) {
+                    # Audit C3-06 / INT-03: the verbatim picker turns "OK with nothing ticked" into every workspace id;
+                    # an explicit empty selection must not widen the scope silently (INV-08) - ask again instead.
+                    # "My Workspace only" (nothing checked + Include My Workspace) stays a valid selection.
                     Write-IQLog -Level Warn -Message 'No workspaces selected. Please select at least one workspace (or tick "Include My Workspace").'
                     continue
+                }
+                elseif ($nothingChecked) {
+                    $selectedWorkspaceIds = @()
                 }
 
                 $result = @{
@@ -378,10 +468,7 @@ function Select-IQScopeInteractive {
                     IncludeMyWorkspace = $includeMy
                     ReportIds          = @()
                     DatasetIds         = @()
-                    TimedOut           = [bool]$selection.TimedOut
-                }
-                if ($result.TimedOut) {
-                    Write-IQLog -Level Warn -Message 'Workspace picker timed out - running against every accessible workspace plus My Workspace (legacy behaviour).'
+                    TimedOut           = $timedOut
                 }
                 Write-IQLog -Level Info -Message ("Selected {0} workspace(s); My Workspace: {1}" -f $result.WorkspaceIds.Count, $includeMy)
                 $workspaceSelectionDone = $true
@@ -735,6 +822,8 @@ function Show-WorkspacePicker {
 
     # Gather selections from persistent store (to include items not currently visible due to search)
     $selectedIds = @($persistentCheckedIds.Keys)
+    # INT-03: remember whether the user ticked anything BEFORE the "empty => all workspaces" substitution below.
+    $nothingChecked = ($selectedIds.Count -eq 0)
 
     # Treat the Cancel button AND closing the window (the X) as a cancel so the
     # caller returns to the run-mode menu. Only an explicit OK proceeds, and the
@@ -759,6 +848,7 @@ function Show-WorkspacePicker {
         SelectedWorkspaceIds = $selectedIds
         IncludeMyWorkspace   = $includeMy
         TimedOut             = $timedOut
+        NothingChecked       = $nothingChecked
     }
 }
 

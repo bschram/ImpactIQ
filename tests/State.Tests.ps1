@@ -3,7 +3,7 @@
 param()
 BeforeAll {
     . (Join-Path $PSScriptRoot 'TestHelpers.ps1')
-    $script:Base = Initialize-IQTestContext -Options @{ Environment = 'USGov'; RunMode = 'Workspaces'; Credential = 'not-a-real-credential'; TokenCacheKey = 'cache-secret'; MaxRetries = 5; WorkspaceName = @('A*') } -NoRun -Prefix 'state'
+    $script:Base = Initialize-IQTestContext -Options @{ Environment = 'USGov'; RunMode = 'Workspaces'; Credential = 'not-a-real-credential'; TokenCacheKey = 'cache-secret'; MaxRetries = 5; WorkspaceName = @('A*'); DeviceCodeWebhookUrl = 'https://contoso.webhook.office.com/webhookb2/SECRET-GUID/IncomingWebhook/abc' } -NoRun -Prefix 'state'
     function Set-Clock { param([string]$Iso) $script:IQ.Options['NowUtc'] = $Iso }
     function Get-ManifestFromDisk { return (ConvertFrom-IQJsonFile -Path (Join-Path $script:IQ.RunPath 'manifest.json')) }
 }
@@ -37,6 +37,8 @@ Describe 'Initialize-IQRun (fresh run) and the manifest' {
         $json = Get-Content -LiteralPath (Join-Path $script:IQ.RunPath 'manifest.json') -Raw
         $json | Should -Not -Match 'cache-secret'
         $json | Should -Not -Match 'not-a-real-credential'
+        $json | Should -Not -Match 'SECRET-GUID' -Because 'an incoming-webhook URL is the credential'
+        $script:M.options.DeviceCodeWebhookUrl | Should -Be 'https://contoso.webhook.office.com/***'
         $script:M.options.MaxRetries | Should -Be 5
     }
     It 'creates the backup folders for the run id' {
@@ -150,16 +152,26 @@ Describe 'Resume decisions (brief section 5.2)' {
         Invoke-IQStage -Name 'Assemble' -Body { throw 'assemble always runs' } | Should -Be 'Failed'
         Invoke-IQStage -Name 'Dataflows' -Body { 'ran' } | Should -Be 'Completed' -Because 'a Failed stage is re-run on resume'
     }
-    It 'Auto + RefreshInventory re-runs a Completed Inventory stage and clears its checkpoints' {
+    It 'Auto + RefreshInventory re-runs a Completed Inventory stage and clears its checkpoints, ws-*.json / global.json and Inventory failures' {
+        # a workspace that disappeared since the original run, and failure entries from Inventory and another stage
+        $staleWs = Save-IQInventory -Name 'ws-GONE' -Object @{ WorkspaceId = 'GONE' }
+        Set-IQItemDone -Stage Inventory -ItemKey 'GONE' -Item 'Removed workspace' -Status Failed -Message 'HTTP 404' | Out-Null
+        Set-IQItemDone -Stage Dataflows -ItemKey 'dfx' -Item 'dfx' -Status Failed -Message 'kept' | Out-Null
         $script:IQ.Options['RefreshInventory'] = $true
         try {
             Invoke-IQStage -Name 'Inventory' -Body { 'ran again' } | Should -Be 'Completed'
             (Join-Path (Join-Path $script:IQ.RunPath 'done') 'Inventory') | Should -Not -Exist
+            $staleWs | Should -Not -Exist
+            (Join-Path (Join-Path $script:IQ.RunPath 'inventory') 'global.json') | Should -Not -Exist
+            @(Get-IQAllWorkspaceInventories).Count | Should -Be 0
+            @($script:IQ.Manifest.failures | Where-Object { $_.stage -eq 'Inventory' }).Count | Should -Be 0
+            @($script:IQ.Manifest.failures | Where-Object { $_.stage -eq 'Dataflows' }).Count | Should -Be 1 -Because 'only Inventory failures are refreshed'
         }
         finally { $script:IQ.Options['RefreshInventory'] = $false }
+        Set-IQItemDone -Stage Dataflows -ItemKey 'dfx' -Item 'dfx' -Status Succeeded | Out-Null
         Complete-IQRun -Status Completed | Out-Null
     }
-    It 'Auto without -RunId resumes the newest Running/Failed/CompletedWithErrors run within ResumeMaxAgeDays' {
+    It 'Auto without -RunId resumes the newest Running/Paused/Failed run within ResumeMaxAgeDays' {
         $script:IQ.Manifest.status = 'Failed'; Save-IQManifest
         Set-Clock '2026-09-05T08:00:00Z'
         Initialize-IQRun -ResumePolicy Auto -ResumeMaxAgeDays 3 | Out-Null
@@ -193,13 +205,17 @@ Describe 'Resume decisions (brief section 5.2)' {
         @(Get-ChildItem -LiteralPath $script:IQ.RunPath -Filter 'manifest.*.json').Count | Should -BeGreaterOrEqual 1
         $marker | Should -Not -Exist
     }
-    It 'Always resumes any existing manifest (even Completed) and starts fresh when none exists' {
+    It 'Always resumes any existing manifest (even Completed) and starts a new manifest without clearing when none exists' {
         Complete-IQRun -Status Completed | Out-Null
         Initialize-IQRun -RunId '2026-09-09' -ResumePolicy Always | Out-Null
         $script:IQ.IsResume | Should -BeTrue
+        # "-Stages Assemble" implies Always: backups already exported today (State folder lost) must survive
+        $keep = Join-Path (Join-Path $script:IQ.Paths.ModelBackups 'custom-run') 'keep.bim'
+        New-Item -ItemType File -Path $keep -Force | Out-Null
         Initialize-IQRun -RunId 'custom-run' -ResumePolicy Always | Out-Null
         $script:IQ.IsResume | Should -BeFalse
         $script:IQ.RunId | Should -Be 'custom-run'
+        $keep | Should -Exist
     }
     It 'Never and -Force start fresh and delete the run state' {
         Set-IQItemDone -Stage Extras -ItemKey 'k' -Item 'k' | Out-Null
@@ -226,7 +242,8 @@ Describe 'Time budget: Paused stages, Paused run, exit code 3, resume' {
         Set-Clock '2026-09-10T10:00:00Z'
         $script:IQ.Options['TimeBudgetMinutes'] = 0
         $script:IQ.BudgetExceeded = $false
-        Initialize-IQRun -RunId 'budget-run' -ResumePolicy Never | Out-Null
+        # a dated RunId: only auto-generated RunIds are adopted by a start without -RunId (last test of this block)
+        Initialize-IQRun -RunId '2026-09-10' -ResumePolicy Never | Out-Null
         $script:IQ.Options['TimeBudgetMinutes'] = 30
         $script:IQ.StartedUtc = [datetime]::UtcNow
     }
@@ -270,7 +287,7 @@ Describe 'Time budget: Paused stages, Paused run, exit code 3, resume' {
     It 'Auto resume treats a Paused run like Running (same RunId) and re-runs the Paused stages, skipping done items' {
         $script:IQ.BudgetExceeded = $false
         $script:IQ.StartedUtc = [datetime]::UtcNow
-        Initialize-IQRun -RunId 'budget-run' -ResumePolicy Auto | Out-Null
+        Initialize-IQRun -RunId '2026-09-10' -ResumePolicy Auto | Out-Null
         $script:IQ.IsResume | Should -BeTrue
         $script:IQ.Manifest.status | Should -Be 'Running'
         Test-IQItemDone -Stage Dataflows -ItemKey 'df1' | Should -BeTrue
@@ -287,12 +304,169 @@ Describe 'Time budget: Paused stages, Paused run, exit code 3, resume' {
         Complete-IQRun | Should -Be 'Completed'
         Get-IQExitCode -Manifest $script:IQ.Manifest | Should -Be 0
     }
+    It 'a budget that trips only inside Assemble (every stage Completed) does not pause the run' {
+        $script:IQ.BudgetExceeded = $true
+        try { Get-IQRunStatus | Should -Be 'Completed' } finally { $script:IQ.BudgetExceeded = $false }
+    }
     It 'Auto without -RunId also picks up a Paused run within ResumeMaxAgeDays' {
         $script:IQ.Manifest.status = 'Paused'; Save-IQManifest
         Set-Clock '2026-09-11T10:00:00Z'
         Initialize-IQRun -RunId '' -ResumePolicy Auto | Out-Null
-        $script:IQ.RunId | Should -Be 'budget-run'
+        $script:IQ.RunId | Should -Be '2026-09-10'
         $script:IQ.IsResume | Should -BeTrue
+        Complete-IQRun -Status Completed | Out-Null
+    }
+}
+
+Describe 'Crash recovery: an Interrupted stage keeps the run resumable (stage-filtered resume)' {
+    BeforeAll {
+        Set-Clock '2026-10-10T08:00:00Z'
+        $script:IQ.BudgetExceeded = $false
+        Initialize-IQRun -RunId '2026-10-10' -ResumePolicy Never | Out-Null
+        Invoke-IQStage -Name 'Inventory' -Body { Set-IQItemDone -Stage Inventory -ItemKey 'WS1' -Item 'WS1' | Out-Null } | Out-Null
+        # a hard kill in the middle of ModelBackup: one item done, one failed, the stage left "Running" on disk
+        $entry = Get-IQStageEntry -Name 'ModelBackup'
+        $entry.status = 'Running'
+        $entry.startedUtc = Get-IQUtcStamp
+        Set-IQItemDone -Stage ModelBackup -ItemKey 'm1' -Item 'Model 1' | Out-Null
+        Set-IQItemDone -Stage ModelBackup -ItemKey 'm2' -Item 'Model 2' -Status Failed -Message 'XMLA timeout' | Out-Null
+        Save-IQManifest
+    }
+    It 'marks the stage Interrupted on resume; a run that does not re-run it ends Paused (exit 3), never Completed' {
+        Set-Clock '2026-10-10T09:00:00Z'
+        Initialize-IQRun -RunId '2026-10-10' -ResumePolicy Always | Out-Null
+        $script:IQ.IsResume | Should -BeTrue
+        $script:IQ.Manifest.stages.ModelBackup.status | Should -Be 'Interrupted'
+        Invoke-IQStage -Name 'Assemble' -Body { 'assemble only' } | Should -Be 'Completed'
+        Complete-IQRun | Should -Be 'Paused'
+        $m = Get-ManifestFromDisk
+        $m.status | Should -Be 'Paused'
+        Get-IQExitCode -Manifest $script:IQ.Manifest | Should -Be 3
+        Get-IQExitCode -Manifest $m | Should -Be 3
+    }
+    It 'stays resumable: the next start without -RunId adopts it and re-runs the Interrupted stage' {
+        (Find-IQResumableRun -MaxAgeDays 3).RunId | Should -Be '2026-10-10'
+        Set-Clock '2026-10-11T08:00:00Z'
+        Initialize-IQRun -RunId '' -ResumePolicy Auto | Out-Null
+        $script:IQ.RunId | Should -Be '2026-10-10'
+        $script:IQ.IsResume | Should -BeTrue
+        $script:Ran = $false
+        Invoke-IQStage -Name 'ModelBackup' -Body {
+            $script:Ran = $true
+            Set-IQItemDone -Stage ModelBackup -ItemKey 'm2' -Item 'Model 2' | Out-Null
+        } | Should -Be 'Completed'
+        $script:Ran | Should -BeTrue
+        Invoke-IQStage -Name 'Assemble' -Body { 'ok' } | Should -Be 'Completed'
+        Complete-IQRun | Should -Be 'Completed'
+        Get-IQExitCode -Manifest $script:IQ.Manifest | Should -Be 0
+    }
+    It 'timestamps loaded from disk are ISO-8601 strings on both hosts (RunSummary / Failures never culture-formatted)' {
+        Set-IQItemDone -Stage ModelBackup -ItemKey 'm3' -Item 'Model 3' -Status Failed -Message 'left failed' | Out-Null
+        Initialize-IQRun -RunId '2026-10-10' -ResumePolicy Always | Out-Null
+        $iso = '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'
+        $script:IQ.Manifest['startedUtc'] | Should -BeOfType [string]
+        $script:IQ.Manifest['startedUtc'] | Should -Match $iso
+        $script:IQ.Manifest['stages']['Inventory']['endedUtc'] | Should -BeOfType [string]
+        $failure = @($script:IQ.Manifest['failures'])[0]
+        $failure['timeUtc'] | Should -BeOfType [string]
+        $failure['timeUtc'] | Should -Match $iso
+        foreach ($row in @(Get-IQRunSummary)) {
+            $row.StartedUtc | Should -BeOfType [string]
+            if ($row.StartedUtc) { $row.StartedUtc | Should -Match $iso -Because "row $($row.Stage)" }
+            if ($row.EndedUtc) { $row.EndedUtc | Should -Match $iso -Because "row $($row.Stage)" }
+        }
+        Set-IQItemDone -Stage ModelBackup -ItemKey 'm3' -Item 'Model 3' | Out-Null
+        Complete-IQRun -Status Completed | Out-Null
+    }
+}
+
+Describe 'Resume validates checkpoints: a Completed stage with missing outputs is re-run' {
+    BeforeAll {
+        Set-Clock '2026-10-12T08:00:00Z'
+        Initialize-IQRun -RunId '2026-10-12' -ResumePolicy Never | Out-Null
+        $script:Pbix = Join-Path $script:IQ.RunPaths.ReportBackups 'r1.pbix'
+        Invoke-IQStage -Name 'ReportBackup' -Body {
+            New-Item -ItemType File -Path $script:Pbix -Force | Out-Null
+            Set-IQItemDone -Stage ReportBackup -ItemKey 'r1' -Item 'Report 1' -Outputs @($script:Pbix) | Out-Null
+            Set-IQItemDone -Stage ReportBackup -ItemKey 'r2' -Item 'Report 2' -Status Skipped -Message 'no access' | Out-Null
+        } | Out-Null
+        Complete-IQRun | Out-Null
+    }
+    It 'skips a Completed stage while every checkpoint output still exists' {
+        Initialize-IQRun -RunId '2026-10-12' -ResumePolicy Always | Out-Null
+        Invoke-IQStage -Name 'ReportBackup' -Body { throw 'must be skipped' } | Should -Be 'Completed'
+    }
+    It 're-runs the stage when a checkpoint output is missing (backups not restored on this agent), intact items still skipped' {
+        Remove-Item -LiteralPath $script:Pbix -Force
+        Initialize-IQRun -RunId '2026-10-12' -ResumePolicy Always | Out-Null
+        $script:Seen = @()
+        Invoke-IQStage -Name 'ReportBackup' -Body {
+            foreach ($k in @('r1', 'r2')) {
+                if (Test-IQItemDone -Stage ReportBackup -ItemKey $k) { continue }
+                $script:Seen += $k
+                New-Item -ItemType File -Path $script:Pbix -Force | Out-Null
+                Set-IQItemDone -Stage ReportBackup -ItemKey $k -Item $k -Outputs @($script:Pbix) | Out-Null
+            }
+        } | Should -Be 'Completed'
+        $script:Seen | Should -Be @('r1')
+        Complete-IQRun | Should -Be 'Completed'
+    }
+}
+
+Describe 'Cross-RunId adoption rules (Find-IQResumableRun, Auto without -RunId)' {
+    It 'does not adopt a run that finished as CompletedWithErrors; naming that RunId still resumes it' {
+        Set-Clock '2026-10-20T08:00:00Z'
+        Initialize-IQRun -RunId '2026-10-20' -ResumePolicy Never | Out-Null
+        Complete-IQRun -Status CompletedWithErrors | Out-Null
+        Set-Clock '2026-10-21T08:00:00Z'
+        Find-IQResumableRun -MaxAgeDays 3 | Should -BeNullOrEmpty
+        Initialize-IQRun -RunId '' -ResumePolicy Auto | Out-Null
+        $script:IQ.RunId | Should -Be '2026-10-21' -Because 'the daily pipeline must produce a fresh dated snapshot'
+        $script:IQ.IsResume | Should -BeFalse
+        Complete-IQRun -Status Completed | Out-Null
+        Initialize-IQRun -RunId '2026-10-20' -ResumePolicy Auto | Out-Null
+        $script:IQ.IsResume | Should -BeTrue
+        Complete-IQRun -Status Completed | Out-Null
+    }
+    It 'does not adopt an ad-hoc (non-dated) RunId; it is resumed only when named' {
+        Set-Clock '2026-10-22T08:00:00Z'
+        Initialize-IQRun -RunId 'smoke' -ResumePolicy Never | Out-Null
+        $script:IQ.Manifest.status = 'Failed'; Save-IQManifest
+        Set-Clock '2026-10-23T08:00:00Z'
+        Find-IQResumableRun -MaxAgeDays 3 | Should -BeNullOrEmpty
+        Initialize-IQRun -RunId '' -ResumePolicy Auto | Out-Null
+        $script:IQ.RunId | Should -Be '2026-10-23'
+        $script:IQ.IsResume | Should -BeFalse
+        Complete-IQRun -Status Completed | Out-Null
+        Initialize-IQRun -RunId 'smoke' -ResumePolicy Auto | Out-Null
+        $script:IQ.IsResume | Should -BeTrue
+        Complete-IQRun -Status Completed | Out-Null
+    }
+    It 'does not adopt a run recorded for another environment' {
+        Set-Clock '2026-10-24T08:00:00Z'
+        Initialize-IQRun -RunId '2026-10-24' -ResumePolicy Never | Out-Null
+        $script:IQ.Manifest.status = 'Failed'; $script:IQ.Manifest.environment = 'Public'; Save-IQManifest
+        Set-Clock '2026-10-25T08:00:00Z'
+        Find-IQResumableRun -MaxAgeDays 3 | Should -BeNullOrEmpty
+        $script:IQ.Manifest.environment = 'USGov'; Save-IQManifest
+        (Find-IQResumableRun -MaxAgeDays 3).RunId | Should -Be '2026-10-24'
+        Initialize-IQRun -RunId '2026-10-24' -ResumePolicy Auto | Out-Null
+        Complete-IQRun -Status Completed | Out-Null
+    }
+}
+
+Describe 'Fresh run over a run folder whose manifest is unreadable' {
+    It 'archives the unreadable manifest and clears stale checkpoints and inventory files' {
+        Set-Clock '2026-10-30T08:00:00Z'
+        Initialize-IQRun -RunId '2026-10-30' -ResumePolicy Never | Out-Null
+        Set-IQItemDone -Stage Extras -ItemKey 'probe' -Item 'probe' -Status Skipped | Out-Null
+        Save-IQInventory -Name 'ws-OLD' -Object @{ WorkspaceId = 'OLD' } | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $script:IQ.RunPath 'manifest.json'), '{ not json')
+        Initialize-IQRun -RunId '2026-10-30' -ResumePolicy Auto | Out-Null
+        $script:IQ.IsResume | Should -BeFalse
+        Test-IQItemDone -Stage Extras -ItemKey 'probe' | Should -BeFalse
+        @(Get-IQAllWorkspaceInventories).Count | Should -Be 0
+        @(Get-ChildItem -LiteralPath $script:IQ.RunPath -Filter 'manifest.*.json').Count | Should -BeGreaterOrEqual 1
         Complete-IQRun -Status Completed | Out-Null
     }
 }
