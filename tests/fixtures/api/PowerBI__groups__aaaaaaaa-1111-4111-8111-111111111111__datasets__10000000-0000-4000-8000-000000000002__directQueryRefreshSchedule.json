@@ -1,0 +1,12 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#directQueryRefreshSchedule",
+  "frequency": 15,
+  "days": [
+    "Monday",
+    "Tuesday"
+  ],
+  "times": [
+    "10:00"
+  ],
+  "localTimeZoneId": "UTC"
+}

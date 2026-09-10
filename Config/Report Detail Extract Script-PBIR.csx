@@ -8,7 +8,9 @@ using System.Text;
 using System.Globalization;
 
 // === CONFIGURATION ===
-string baseFolderPath = Directory.GetCurrentDirectory();
+// ImpactIQ v3: the orchestrator passes the base folder explicitly (IMPACTIQ_BASE); the working directory stays the fallback.
+string baseFolderPath = Environment.GetEnvironmentVariable("IMPACTIQ_BASE");
+if (string.IsNullOrEmpty(baseFolderPath)) baseFolderPath = Directory.GetCurrentDirectory();
 string addedPath = Path.Combine(baseFolderPath, "Report Backups");
 
 // === FIND LATEST-DATED FOLDER ===
@@ -29,6 +31,16 @@ foreach (string folder in folders)
         }
     }
 }
+
+// ImpactIQ v3: IMPACTIQ_DATE_FOLDER names the run folder to process (bypasses the latest-folder heuristic); IMPACTIQ_REPORT_DATE the ReportDate string.
+string iqDateFolder = Environment.GetEnvironmentVariable("IMPACTIQ_DATE_FOLDER");
+if (!string.IsNullOrEmpty(iqDateFolder) && Directory.Exists(iqDateFolder))
+{
+    latestFolder = iqDateFolder;
+    DateTime iqFolderDate;
+    if (DateTime.TryParseExact(Path.GetFileName(iqDateFolder), "yyyy-MM-dd", null, DateTimeStyles.None, out iqFolderDate)) latestDate = iqFolderDate;
+}
+string iqReportDate = Environment.GetEnvironmentVariable("IMPACTIQ_REPORT_DATE");
 
 string pbiFolderName = latestFolder ?? Path.Combine(addedPath, DateTime.Now.ToString("yyyy-MM-dd"));
 Directory.CreateDirectory(pbiFolderName);
@@ -257,9 +269,64 @@ sb_VisualInteractions.Append("ReportName" + '\t' + "ReportID" + '\t' + "ModelID"
 var sb_ReportLevelMeasures = new System.Text.StringBuilder();
 sb_ReportLevelMeasures.Append("ReportName" + '\t' + "ReportID" + '\t' + "ModelID" + '\t' + "TableName" + '\t' + "ObjectName" + '\t' + "ObjectType" + '\t' + "Expression" + '\t' + "DataType" + '\t' + "HiddenFlag" + '\t' + "FormatString" + '\t' + "DataCategory" + '\t' + "ReportDate" + newline);
 
+// ImpactIQ v3 (audit X4-01/X4-03): headers are written up front, every report's rows are appended the moment the
+// report is parsed (crash-safe, nothing held until the end), the per-report body runs in try/catch and failures are
+// recorded in ExtractErrors.txt (an additive sheet) instead of being swallowed.
+bool saveToFile = true;
+string iqErrorsPath = Path.Combine(pbiFolderName, "ExtractErrors.txt");
+string iqRunDate = !string.IsNullOrEmpty(iqReportDate) ? iqReportDate : (latestDate != DateTime.MinValue ? latestDate.ToString("yyyy-MM-dd") : DateTime.Now.ToString("yyyy-MM-dd"));
+Action<string, string, string> iqLogError = (iqReport, iqStage, iqMessage) =>
+{
+    try
+    {
+        if (!File.Exists(iqErrorsPath)) File.WriteAllText(iqErrorsPath, "ReportName" + '\t' + "Script" + '\t' + "Stage" + '\t' + "Error" + '\t' + "ReportDate" + newline);
+        string iqClean = (iqMessage ?? "").Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+        File.AppendAllText(iqErrorsPath, iqReport + '\t' + "PBIR" + '\t' + iqStage + '\t' + iqClean + '\t' + iqRunDate + newline);
+    }
+    catch { }
+};
+Action iqFlush = () =>
+{
+    if (!saveToFile) return;
+    File.AppendAllText(Path.Combine(pbiFolderName, "CustomVisuals.txt"), sb_CustomVisuals.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "ReportFilters.txt"), sb_ReportFilters.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "PageFilters.txt"), sb_PageFilters.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "VisualFilters.txt"), sb_VisualFilters.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "VisualObjects.txt"), sb_VisualObjects.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "Visuals.txt"), sb_Visuals.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "Bookmarks.txt"), sb_Bookmarks.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "Pages.txt"), sb_Pages.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "Connections.txt"), sb_Connections.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "VisualInteractions.txt"), sb_VisualInteractions.ToString());
+    File.AppendAllText(Path.Combine(pbiFolderName, "ReportLevelMeasures.txt"), sb_ReportLevelMeasures.ToString());
+    sb_CustomVisuals.Clear(); sb_ReportFilters.Clear(); sb_PageFilters.Clear(); sb_VisualFilters.Clear();
+    sb_VisualObjects.Clear(); sb_Visuals.Clear(); sb_Bookmarks.Clear(); sb_Pages.Clear();
+    sb_Connections.Clear(); sb_VisualInteractions.Clear(); sb_ReportLevelMeasures.Clear();
+};
+if (saveToFile)
+{
+    // Headers first (the builders only hold the header lines at this point); the files are recreated for this run.
+    File.WriteAllText(Path.Combine(pbiFolderName, "CustomVisuals.txt"), sb_CustomVisuals.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "ReportFilters.txt"), sb_ReportFilters.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "PageFilters.txt"), sb_PageFilters.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "VisualFilters.txt"), sb_VisualFilters.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "VisualObjects.txt"), sb_VisualObjects.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "Visuals.txt"), sb_Visuals.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "Bookmarks.txt"), sb_Bookmarks.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "Pages.txt"), sb_Pages.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "Connections.txt"), sb_Connections.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "VisualInteractions.txt"), sb_VisualInteractions.ToString());
+    File.WriteAllText(Path.Combine(pbiFolderName, "ReportLevelMeasures.txt"), sb_ReportLevelMeasures.ToString());
+    sb_CustomVisuals.Clear(); sb_ReportFilters.Clear(); sb_PageFilters.Clear(); sb_VisualFilters.Clear();
+    sb_VisualObjects.Clear(); sb_Visuals.Clear(); sb_Bookmarks.Clear(); sb_Pages.Clear();
+    sb_Connections.Clear(); sb_VisualInteractions.Clear(); sb_ReportLevelMeasures.Clear();
+}
+
 // === PROCESS EACH FILE ===
 foreach (var rpt in fileList)
 {
+  try
+  {
     var CustomVisuals = new List<CustomVisual>();
     var Bookmarks = new List<Bookmark>();
     var ReportFilters = new List<ReportFilter>();
@@ -276,7 +343,7 @@ foreach (var rpt in fileList)
     if (!(fileExt == ".pbix" || fileExt == ".pbit")) continue;
 
     string reportName = Path.GetFileNameWithoutExtension(rpt);
-    string reportDate = latestDate != DateTime.MinValue ? latestDate.ToString("yyyy-MM-dd") : DateTime.Now.ToString("yyyy-MM-dd");
+    string reportDate = !string.IsNullOrEmpty(iqReportDate) ? iqReportDate : (latestDate != DateTime.MinValue ? latestDate.ToString("yyyy-MM-dd") : DateTime.Now.ToString("yyyy-MM-dd"));
     string folderName = Path.GetDirectoryName(rpt) + @"\";
     string zipPath = folderName + reportName + ".zip";
     string unzipPath = folderName + reportName;
@@ -308,7 +375,7 @@ foreach (var rpt in fileList)
         if (File.Exists(zipPath)) File.Delete(zipPath);
     }
 
-    if (!extractionSucceeded) continue;
+    if (!extractionSucceeded) { iqLogError(reportName, "unzip", "the PBIX/PBIT could not be copied or unzipped"); continue; }
 
     string modelId = "";
     string reportId = "";
@@ -2160,24 +2227,20 @@ if (Directory.Exists(definitionRoot)) // <-- gate on PBIR structure
     foreach (var x in Connections) sb_Connections.Append(reportName + '\t' + reportId + '\t' + modelId + '\t' + x.ServerName + '\t' + x.Type + '\t' + reportDate + newline);
     foreach (var x in VisualInteractions) sb_VisualInteractions.Append(reportName + '\t' + reportId + '\t' + modelId + '\t' + x.PageName + '\t' + x.PageId + '\t' + x.SourceVisualID + '\t' + x.SourceVisualName + '\t' + x.TargetVisualID + '\t' + x.TargetVisualName + '\t' + x.TypeID + '\t' + x.Type + '\t' + reportDate + newline);
     foreach (var x in ReportLevelMeasures) sb_ReportLevelMeasures.Append(reportName + '\t' + reportId + '\t' + modelId + '\t' + x.TableName + '\t' + x.ObjectName + '\t' + x.ObjectType + '\t' + x.Expression + '\t' + x.DataType + '\t' + x.HiddenFlag + '\t' + x.FormatString + '\t' + x.DataCategory + '\t' + reportDate + newline);
+
+    iqFlush();
+  }
+  catch (Exception iqEx)
+  {
+    iqLogError(Path.GetFileNameWithoutExtension(rpt), "report", iqEx.GetType().Name + ": " + iqEx.Message);
+    continue;
+  }
 }
 
-// === SAVE OUTPUT SECTION ===
-bool saveToFile = true;
-
+// === SAVE OUTPUT SECTION === (rows were flushed per report above; the header files already exist)
 if (saveToFile)
 {
-    File.WriteAllText(Path.Combine(pbiFolderName, "CustomVisuals.txt"), sb_CustomVisuals.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "ReportFilters.txt"), sb_ReportFilters.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "PageFilters.txt"), sb_PageFilters.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "VisualFilters.txt"), sb_VisualFilters.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "VisualObjects.txt"), sb_VisualObjects.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "Visuals.txt"), sb_Visuals.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "Bookmarks.txt"), sb_Bookmarks.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "Pages.txt"), sb_Pages.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "Connections.txt"), sb_Connections.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "VisualInteractions.txt"), sb_VisualInteractions.ToString());
-    File.WriteAllText(Path.Combine(pbiFolderName, "ReportLevelMeasures.txt"), sb_ReportLevelMeasures.ToString());
+    iqFlush();
 }
 else
 {

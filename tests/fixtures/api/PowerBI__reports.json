@@ -1,0 +1,58 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "80000000-0000-4000-8000-000000000001",
+      "reportType": "PowerBIReport",
+      "name": "My Report",
+      "webUrl": "https://app.powerbi.com/groups/me/reports/80000000-0000-4000-8000-000000000001",
+      "embedUrl": "https://app.powerbi.com/reportEmbed?reportId=80000000-0000-4000-8000-000000000001&groupId=me",
+      "isFromPbix": true,
+      "isOwnedByMe": true,
+      "datasetId": "70000000-0000-4000-8000-000000000001",
+      "datasetWorkspaceId": null,
+      "users": [],
+      "subscriptions": []
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "reportType": "PowerBIReport",
+      "name": "Finance Report",
+      "webUrl": "https://app.powerbi.com/groups/me/reports/20000000-0000-4000-8000-000000000001",
+      "embedUrl": "https://app.powerbi.com/reportEmbed?reportId=20000000-0000-4000-8000-000000000001&groupId=me",
+      "isFromPbix": true,
+      "isOwnedByMe": false,
+      "datasetId": "10000000-0000-4000-8000-000000000001",
+      "datasetWorkspaceId": "aaaaaaaa-1111-4111-8111-111111111111",
+      "users": [],
+      "subscriptions": []
+    },
+    {
+      "id": "80000000-0000-4000-8000-000000000002",
+      "reportType": "PowerBIReport",
+      "name": "Shared With Me",
+      "webUrl": "https://app.powerbi.com/groups/me/reports/80000000-0000-4000-8000-000000000002",
+      "embedUrl": "https://app.powerbi.com/reportEmbed?reportId=80000000-0000-4000-8000-000000000002&groupId=me",
+      "isFromPbix": true,
+      "isOwnedByMe": false,
+      "datasetId": "99999999-0000-4000-8000-000000000099",
+      "datasetWorkspaceId": null,
+      "users": [],
+      "subscriptions": []
+    },
+    {
+      "id": "80000000-0000-4000-8000-000000000003",
+      "reportType": "PowerBIReport",
+      "name": "App Copy",
+      "webUrl": "https://app.powerbi.com/groups/me/reports/80000000-0000-4000-8000-000000000003",
+      "embedUrl": "https://app.powerbi.com/reportEmbed?reportId=80000000-0000-4000-8000-000000000003&groupId=me",
+      "isFromPbix": true,
+      "isOwnedByMe": false,
+      "datasetId": "10000000-0000-4000-8000-000000000001",
+      "datasetWorkspaceId": null,
+      "users": [],
+      "subscriptions": [],
+      "appId": "50000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

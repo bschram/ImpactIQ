@@ -1,7 +1,9 @@
 using System.IO;
 
 // Define the base path for the backups
-string baseFolderPath = Directory.GetCurrentDirectory();
+// ImpactIQ v3: the orchestrator passes the base folder explicitly (IMPACTIQ_BASE); the working directory stays the fallback.
+string baseFolderPath = Environment.GetEnvironmentVariable("IMPACTIQ_BASE");
+if (string.IsNullOrEmpty(baseFolderPath)) baseFolderPath = Directory.GetCurrentDirectory();
 var addedPath = System.IO.Path.Combine(baseFolderPath, "Model Backups");
 var modelName = Model.Database.Name; // Retrieve the model name
 var modelID = Model.Database.ID;
@@ -26,8 +28,18 @@ foreach (string folder in folders)
     }
 }
 
+// ImpactIQ v3: IMPACTIQ_DATE_FOLDER names the run folder to write to (bypasses the latest-folder heuristic); IMPACTIQ_REPORT_DATE the ModelAsOfDate string.
+string iqDateFolder = Environment.GetEnvironmentVariable("IMPACTIQ_DATE_FOLDER");
+if (!string.IsNullOrEmpty(iqDateFolder) && System.IO.Directory.Exists(iqDateFolder))
+{
+    latestFolder = iqDateFolder;
+    DateTime iqFolderDate;
+    if (DateTime.TryParseExact(System.IO.Path.GetFileName(iqDateFolder), "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out iqFolderDate)) latestDate = iqFolderDate;
+}
+string iqReportDate = Environment.GetEnvironmentVariable("IMPACTIQ_REPORT_DATE");
+
 // Use the latest-dated folder, or fallback to today's date if no valid folder is found
-var currentDateStr = latestFolder != null ? latestDate.ToString("yyyy-MM-dd") : DateTime.Now.ToString("yyyy-MM-dd");
+var currentDateStr = !string.IsNullOrEmpty(iqReportDate) ? iqReportDate : (latestFolder != null && latestDate != DateTime.MinValue ? latestDate.ToString("yyyy-MM-dd") : DateTime.Now.ToString("yyyy-MM-dd"));
 
 // Create the directory path
 var dateFolderPath = latestFolder ?? System.IO.Path.Combine(addedPath, currentDateStr);

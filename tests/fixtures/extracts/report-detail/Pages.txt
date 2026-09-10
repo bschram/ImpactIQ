@@ -1,0 +1,3 @@
+ReportID	BackgroundImage	Type	Number	Name	WallpaperImage	ReportName	Id	ReportDate	VisualCount	Width	Height	ModelID	HiddenFlag	DisplayOption	DataVisualCount	VisibleVisualCount	PageFilterCount
+20000000-0000-4000-8000-000000000001		Page	1	Overview		Finance Report	ReportSection1	2026-09-04									
+20000000-0000-4000-8000-000000000001		Page	2	Détail ünïcode		Finance Report	ReportSection2	2026-09-04									

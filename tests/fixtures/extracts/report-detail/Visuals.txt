@@ -1,0 +1,3 @@
+ReportID	Id	Type	HiddenFlag	ParentGroup	ShowItemsNoDataFlag	Name	Y	ReportName	ReportDate	Z	ObjectCount	SlicerType	Height	ModelID	PageId	PageName	Width	CustomVisualFlag	X	DisplayType	Title	SubTitle	AltText	TabOrder	VisualFilterCount	DataLimit	Divider	RowSubTotals	ColumnSubTotals	DataVisual	HasSparkline
+20000000-0000-4000-8000-000000000001	v1	card	False			Revenue card		Finance Report	2026-09-04																						
+20000000-0000-4000-8000-000000000001	v2	clusteredColumnChart	False			Sales by region		Finance Report	2026-09-04																						

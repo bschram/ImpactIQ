@@ -1,0 +1,23 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "50000000-0000-4000-8000-000000000001",
+      "name": "Finance App",
+      "lastUpdate": "2026-08-01T00:00:00.000Z",
+      "description": "Published finance content",
+      "publishedBy": "analyst@contoso.gov",
+      "workspaceId": "aaaaaaaa-1111-4111-8111-111111111111",
+      "users": []
+    },
+    {
+      "id": "50000000-0000-4000-8000-000000000002",
+      "name": "Elsewhere App",
+      "lastUpdate": "2026-08-01T00:00:00.000Z",
+      "description": "",
+      "publishedBy": "x@contoso.gov",
+      "workspaceId": "eeeeeeee-9999-4999-8999-999999999999",
+      "users": []
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "80000000-0000-4000-8000-000000000003",
+      "reportType": "PowerBIReport",
+      "name": "Finance Report",
+      "webUrl": "https://app.powerbi.com/groups/me/apps/x/reports/y",
+      "embedUrl": "https://app.powerbi.com/reportEmbed?reportId=y",
+      "isOwnedByMe": false,
+      "datasetId": "10000000-0000-4000-8000-000000000001",
+      "originalReportObjectId": "20000000-0000-4000-8000-000000000001",
+      "appId": "50000000-0000-4000-8000-000000000001",
+      "users": [],
+      "subscriptions": []
+    }
+  ]
+}

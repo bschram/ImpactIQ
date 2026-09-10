@@ -1,0 +1,62 @@
+{
+  "name": "Sales [Prod]/Data",
+  "description": "Gen1 staging dataflow",
+  "version": "1.0",
+  "culture": "en-US",
+  "modifiedTime": "2026-08-30T12:00:00.000Z",
+  "pbi:mashup": {
+    "fetchedTime": "2026-08-30T12:00:00.000Z",
+    "allowNativeQueries": true,
+    "document": "section Section1;\nshared Sales = let\n    Source = Sql.Database(\"sql-finance.contoso.gov\", \"Ledger\"),\n    T = Source{[Schema = \"dbo\", Item = \"Sales\"]}[Data]\nin\n    T;\nshared #\"Customers 2024\" = let\n    Source = Sales,\n    Note = \"see shared Foo = bar\"\nin\n    Source;\nshared Region.Lookup = Table.FromRecords({[Region = \"West\"], [Region = \"East\"]});\nshared Ärzte = #table({\"Name\"}, {{\"Dr. Müller\"}});\n[Description = \"nested [bracket] record\", Tags = {\"a\", \"b\"}]\nshared Files = let\n    Source = Folder.Files(\"\\\\fileserver\\new reports\\\"),\n    Path = \"C:\\rn\\data\\\"\nin\n    Source;\nshared #\"Say \"\"Hi\"\"\" = Value.NativeQuery(Sql.Database(\"srv\",\"db\"), \"select 1\");",
+    "queriesMetadata": {
+      "Sales": {
+        "queryId": "q1",
+        "queryName": "Sales",
+        "loadEnabled": true,
+        "queryGroupId": "g1"
+      },
+      "Customers 2024": {
+        "queryId": "q2",
+        "queryName": "Customers 2024",
+        "loadEnabled": false
+      }
+    }
+  },
+  "annotations": [
+    {
+      "name": "pbi:QueryGroups",
+      "value": "[{\"id\":\"g1\",\"name\":\"Facts\",\"order\":0}]"
+    }
+  ],
+  "entities": [
+    {
+      "$type": "LocalEntity",
+      "name": "Sales",
+      "attributes": [
+        {
+          "name": "Id",
+          "dataType": "int64"
+        },
+        {
+          "name": "Amount",
+          "dataType": "double"
+        }
+      ],
+      "pbi:refreshPolicy": {
+        "$type": "IncrementalRefreshPolicy",
+        "location": "Sales.csv",
+        "incrementalPeriods": 3,
+        "incrementalGranularity": "Month"
+      }
+    },
+    {
+      "$type": "LocalEntity",
+      "name": "Empty",
+      "attributes": [],
+      "pbi:refreshPolicy": {
+        "$type": "FullRefreshPolicy",
+        "location": "Empty.csv"
+      }
+    }
+  ]
+}

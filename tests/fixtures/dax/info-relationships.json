@@ -1,0 +1,34 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 200,
+              "[ModelID]": 1,
+              "[Name]": "e1a2b3c4-0000-4000-8000-000000000200",
+              "[IsActive]": true,
+              "[Type]": 1,
+              "[CrossFilteringBehavior]": 1,
+              "[JoinOnDateBehavior]": 1,
+              "[RelyOnReferentialIntegrity]": false,
+              "[FromTableID]": 1,
+              "[FromColumnID]": 13,
+              "[FromCardinality]": 2,
+              "[ToTableID]": 2,
+              "[ToColumnID]": 20,
+              "[ToCardinality]": 1,
+              "[State]": 1,
+              "[RelationshipStorageID]": 1,
+              "[RelationshipStorage2ID]": null,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[RefreshedTime]": null,
+              "[SecurityFilteringBehavior]": 1
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

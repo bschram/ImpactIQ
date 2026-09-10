@@ -1,0 +1,32 @@
+{
+  "value": [
+    {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "type": "Report",
+      "displayName": "Finance Report",
+      "description": "",
+      "workspaceId": "aaaaaaaa-1111-4111-8111-111111111111",
+      "sensitivityLabel": {
+        "labelId": "lbl-0000-confidential"
+      }
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "type": "SemanticModel",
+      "displayName": "Finance Model",
+      "description": "",
+      "workspaceId": "aaaaaaaa-1111-4111-8111-111111111111",
+      "sensitivityLabel": {
+        "labelId": "lbl-0000-general"
+      }
+    },
+    {
+      "id": "90000000-0000-4000-8000-000000000002",
+      "type": "Notebook",
+      "displayName": "Finance Notebook",
+      "description": "Spark notebook",
+      "workspaceId": "aaaaaaaa-1111-4111-8111-111111111111",
+      "folderId": "fo000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

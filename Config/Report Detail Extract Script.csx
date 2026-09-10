@@ -16,7 +16,9 @@ using System.Text;
 ************************************************************************************************************/
 
 // User Parameters
-string baseFolderPath = Directory.GetCurrentDirectory();
+// ImpactIQ v3: the orchestrator passes the base folder explicitly (IMPACTIQ_BASE); the working directory stays the fallback.
+string baseFolderPath = Environment.GetEnvironmentVariable("IMPACTIQ_BASE");
+if (string.IsNullOrEmpty(baseFolderPath)) baseFolderPath = Directory.GetCurrentDirectory();
 
 // Do not modify these parameters
 var addedPath = Path.Combine(baseFolderPath, "Report Backups");
@@ -40,6 +42,16 @@ foreach (string folder in folders)
         }
     }
 }
+
+// ImpactIQ v3: IMPACTIQ_DATE_FOLDER names the run folder to process (bypasses the latest-folder heuristic); IMPACTIQ_REPORT_DATE the ReportDate string.
+string iqDateFolder = Environment.GetEnvironmentVariable("IMPACTIQ_DATE_FOLDER");
+if (!string.IsNullOrEmpty(iqDateFolder) && Directory.Exists(iqDateFolder))
+{
+    latestFolder = iqDateFolder;
+    DateTime iqFolderDate;
+    if (DateTime.TryParseExact(Path.GetFileName(iqDateFolder), "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out iqFolderDate)) latestDate = iqFolderDate;
+}
+string iqReportDate = Environment.GetEnvironmentVariable("IMPACTIQ_REPORT_DATE");
 
 // Use the latest-dated folder, or fallback to today's date if no valid folder is found
 string pbiFolderName = latestFolder != null ? latestFolder : Path.Combine(addedPath, DateTime.Now.ToString("yyyy-MM-dd"));
@@ -101,8 +113,25 @@ else
     FileList.Add(pbiFolderName + @"\" + pbiFile);
 }
 
+// ImpactIQ v3 (audit X2-R1/X3-R1/X2-H2): one bad report no longer loses every other report - the per-report body runs
+// in try/catch, rows are flushed to the TXT files after every report, and failures land in ExtractErrors.txt.
+string iqErrorsPath = Path.Combine(pbiFolderName, "ExtractErrors.txt");
+string iqRunDate = !string.IsNullOrEmpty(iqReportDate) ? iqReportDate : (latestFolder != null && latestDate != DateTime.MinValue ? latestDate.ToString("yyyy-MM-dd") : DateTime.Now.ToString("yyyy-MM-dd"));
+Action<string, string, string> iqLogError = (iqReport, iqStage, iqMessage) =>
+{
+    try
+    {
+        if (!File.Exists(iqErrorsPath)) File.WriteAllText(iqErrorsPath, "ReportName" + '\t' + "Script" + '\t' + "Stage" + '\t' + "Error" + '\t' + "ReportDate" + newline);
+        string iqClean = (iqMessage ?? "").Replace("\r", " ").Replace("\n", " ").Replace("\t", " ");
+        File.AppendAllText(iqErrorsPath, iqReport + '\t' + "Classic" + '\t' + iqStage + '\t' + iqClean + '\t' + iqRunDate + newline);
+    }
+    catch { }
+};
+
 foreach (var rpt in FileList)
 {
+  try
+  {
     var CustomVisuals = new List<CustomVisual>();
     var Bookmarks = new List<Bookmark>();
     var ReportFilters = new List<ReportFilter>();
@@ -117,7 +146,7 @@ foreach (var rpt in FileList)
     
     // Since rpt is now a directory path, get the folder name as ReportName
     string ReportName = Path.GetFileName(rpt);
-    string ReportDate = latestFolder != null ? latestDate.ToString("yyyy-MM-dd") : DateTime.Now.ToString("yyyy-MM-dd");
+    string ReportDate = !string.IsNullOrEmpty(iqReportDate) ? iqReportDate : (latestFolder != null && latestDate != DateTime.MinValue ? latestDate.ToString("yyyy-MM-dd") : DateTime.Now.ToString("yyyy-MM-dd"));
     string folderName = Path.GetDirectoryName(rpt) + @"\";
     string unzipPath = rpt; // rpt is already the directory path, no need for unzipping
 
@@ -497,19 +526,25 @@ try
                         // Added: objectType is always "Measure"
                         string objectType = "Measure";
 
-                        // Keep it raw text with tabs
-                        sb_ReportLevelMeasures.Append(
-                            ReportName + '\t' +
-                            ReportID + '\t' +
-                            ModelID + '\t' +
-                            tableName + '\t' +
-                            objectName + '\t' +
-                            objectType + '\t' +   // inserted after objectName
-                            expr + '\t' +
-                            hidden.ToString().ToLower() + '\t' +
-                            formatStr + '\t' +
-                            ReportDate + newline
-                        );
+                        // ImpactIQ v3 (audit X2-B1/X3-B1): build the object so the 12-column writer below emits the row
+                        // in header order (the old inline Append wrote 10 columns against a 12-column header).
+                        string dataType = "";
+                        try { dataType = (string)m["dataType"]; } catch { }
+                        if (dataType == null) dataType = "";
+                        string dataCategory = "";
+                        try { dataCategory = (string)m["dataCategory"]; } catch { }
+                        if (dataCategory == null) dataCategory = "";
+                        ReportLevelMeasures.Add(new ReportLevelMeasures
+                        {
+                            TableName = tableName,
+                            ObjectName = objectName,
+                            ObjectType = objectType,
+                            Expression = expr,
+                            DataType = dataType,
+                            HiddenFlag = hidden.ToString().ToLower(),
+                            FormatString = formatStr,
+                            DataCategory = dataCategory
+                        });
                     }
                     catch
                     {
@@ -1849,7 +1884,7 @@ catch (Exception ex)
                     foreach (var o2 in configJson["singleVisual"]["objects"]["categoryLabels"].Children())
                     {
                         // labels
-                        string tableName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expresssion"]["SourceRef"]["Entity"];
+                        string tableName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expression"]["SourceRef"]["Entity"];
                         string objectName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Property"];
                         string displayName = (string)o2["displayName"];
                         string objectType = "Column";
@@ -2174,7 +2209,7 @@ catch (Exception ex)
                     foreach (var o2 in configJson["singleVisual"]["vcObjects"]["title"].Children())
                     {
                         // labels
-                        string tableName = (string)o2["properties"]["fontColor"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expresssion"]["SourceRef"]["Entity"];
+                        string tableName = (string)o2["properties"]["fontColor"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expression"]["SourceRef"]["Entity"];
                         string objectName = (string)o2["properties"]["fontColor"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Property"];
                         string displayName = (string)o2["displayName"];
                         string objectType = "Column";
@@ -2250,7 +2285,7 @@ catch (Exception ex)
                     foreach (var o2 in configJson["singleVisual"]["vcObjects"]["title"].Children())
                     {
                         // labels
-                        string tableName = (string)o2["properties"]["background"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expresssion"]["SourceRef"]["Entity"];
+                        string tableName = (string)o2["properties"]["background"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expression"]["SourceRef"]["Entity"];
                         string objectName = (string)o2["properties"]["background"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Property"];
                         string displayName = (string)o2["displayName"];
                         string objectType = "Column";
@@ -2325,7 +2360,7 @@ catch (Exception ex)
                 foreach (var o2 in configJson["singleVisual"]["vcObjects"]["background"].Children())
                 {
                     // labels
-                    string tableName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expresssion"]["SourceRef"]["Entity"];
+                    string tableName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expression"]["SourceRef"]["Entity"];
                     string objectName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Property"];
                         string displayName = (string)o2["displayName"];
                     string objectType = "Column";
@@ -2398,7 +2433,7 @@ catch (Exception ex)
                 foreach (var o2 in configJson["singleVisual"]["vcObjects"]["border"].Children())
                 {
                     // labels
-                    string tableName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expresssion"]["SourceRef"]["Entity"];
+                    string tableName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expression"]["SourceRef"]["Entity"];
                     string objectName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Property"];
                     string displayName = (string)o2["displayName"];
                     string objectType = "Column";
@@ -2471,7 +2506,7 @@ catch (Exception ex)
                 foreach (var o2 in configJson["singleVisual"]["vcObjects"]["dropShadow"].Children())
                 {
                     // labels
-                    string tableName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expresssion"]["SourceRef"]["Entity"];
+                    string tableName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Expression"]["SourceRef"]["Entity"];
                     string objectName = (string)o2["properties"]["color"]["solid"]["color"]["expr"]["Aggregation"]["Expression"]["Column"]["Property"];
                         string displayName = (string)o2["displayName"];
                     string objectType = "Column";
@@ -2756,7 +2791,7 @@ try
          try
         {
             objName1 = (string)o3["expression"]["Arithmetic"]["Left"]["Aggregation"]["Expression"]["Column"]["Property"];
-            tblName1 = (string)o3["expression"]["Arithmetic"]["Left"]["Aggregation"]["Expression"]["Column"]["Expresssion"]["SourceRef"]["Entity"];
+            tblName1 = (string)o3["expression"]["Arithmetic"]["Left"]["Aggregation"]["Expression"]["Column"]["Expression"]["SourceRef"]["Entity"];
             objType1 = "Column";
             
             if (createPersp)
@@ -2777,7 +2812,7 @@ try
          try
         {
             objName1 = (string)o3["expression"]["Arithmetic"]["Right"]["Aggregation"]["Expression"]["Column"]["Property"];
-            tblName1 = (string)o3["expression"]["Arithmetic"]["Right"]["Aggregation"]["Expression"]["Column"]["Expresssion"]["SourceRef"]["Entity"];
+            tblName1 = (string)o3["expression"]["Arithmetic"]["Right"]["Aggregation"]["Expression"]["Column"]["Expression"]["SourceRef"]["Entity"];
             objType1 = "Column";
             
             if (createPersp)
@@ -2882,7 +2917,7 @@ try
          try
         {
             objName1 = (string)o3["expression"]["Arithmetic"]["Left"]["Aggregation"]["Expression"]["Measure"]["Property"];
-            tblName1 = (string)o3["expression"]["Arithmetic"]["Left"]["Aggregation"]["Expression"]["Measure"]["Expresssion"]["SourceRef"]["Entity"];
+            tblName1 = (string)o3["expression"]["Arithmetic"]["Left"]["Aggregation"]["Expression"]["Measure"]["Expression"]["SourceRef"]["Entity"];
             objType1 = "Measure";
             
             if (createPersp)
@@ -2903,7 +2938,7 @@ try
          try
         {
             objName1 = (string)o3["expression"]["Arithmetic"]["Right"]["Aggregation"]["Expression"]["Measure"]["Property"];
-            tblName1 = (string)o3["expression"]["Arithmetic"]["Right"]["Aggregation"]["Expression"]["Measure"]["Expresssion"]["SourceRef"]["Entity"];
+            tblName1 = (string)o3["expression"]["Arithmetic"]["Right"]["Aggregation"]["Expression"]["Measure"]["Expression"]["SourceRef"]["Entity"];
             objType1 = "Measure";
             
             if (createPersp)
@@ -3113,9 +3148,34 @@ catch
 
     foreach (var m in ReportLevelMeasures.ToList())
         sb_ReportLevelMeasures.Append(ReportName + '\t' + ReportID + '\t' + ModelID + '\t' + m.TableName + '\t' + m.ObjectName + '\t' + m.ObjectType + '\t' + m.Expression + '\t' + m.DataType + '\t' + m.HiddenFlag + '\t' + m.FormatString + '\t' + m.DataCategory + '\t' + ReportDate + newline);
+
+    // ImpactIQ v3: flush this report's rows now (resume/crash safety) and clear the builders.
+    if (saveToFile)
+    {
+        File.AppendAllText(Path.Combine(pbiFolderName, "CustomVisuals.txt"), sb_CustomVisuals.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "ReportFilters.txt"), sb_ReportFilters.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "PageFilters.txt"), sb_PageFilters.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "VisualFilters.txt"), sb_VisualFilters.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "VisualObjects.txt"), sb_VisualObjects.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "Visuals.txt"), sb_Visuals.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "Bookmarks.txt"), sb_Bookmarks.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "Pages.txt"), sb_Pages.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "Connections.txt"), sb_Connections.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "VisualInteractions.txt"), sb_VisualInteractions.ToString());
+        File.AppendAllText(Path.Combine(pbiFolderName, "ReportLevelMeasures.txt"), sb_ReportLevelMeasures.ToString());
+        sb_CustomVisuals.Clear(); sb_ReportFilters.Clear(); sb_PageFilters.Clear(); sb_VisualFilters.Clear();
+        sb_VisualObjects.Clear(); sb_Visuals.Clear(); sb_Bookmarks.Clear(); sb_Pages.Clear();
+        sb_Connections.Clear(); sb_VisualInteractions.Clear(); sb_ReportLevelMeasures.Clear();
+    }
+  }
+  catch (Exception iqEx)
+  {
+    iqLogError(Path.GetFileName(rpt), "report", iqEx.GetType().Name + ": " + iqEx.Message);
+    continue;
+  }
 }
 
-// === Save rows only: append to existing TXT files ===
+// === Save rows only: append to existing TXT files (rows are flushed per report above; this appends what is left) ===
 if (saveToFile)
 {    
     File.AppendAllText(Path.Combine(pbiFolderName, "CustomVisuals.txt"), sb_CustomVisuals.ToString());

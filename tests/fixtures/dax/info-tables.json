@@ -1,0 +1,78 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 1,
+              "[ModelID]": 1,
+              "[Name]": "Sales",
+              "[DataCategory]": null,
+              "[Description]": "Fact table",
+              "[IsHidden]": false,
+              "[TableStorageID]": 1,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[StructureModifiedTime]": "2026-08-01T00:00:00",
+              "[SystemFlags]": 0,
+              "[ShowAsVariationsOnly]": false,
+              "[IsPrivate]": false,
+              "[DefaultDetailRowsDefinitionID]": null,
+              "[AlternateSourcePrecedence]": 0,
+              "[RefreshPolicyID]": null,
+              "[CalculationGroupID]": null,
+              "[ExcludeFromModelRefresh]": false,
+              "[LineageTag]": "lt-1",
+              "[SourceLineageTag]": null,
+              "[SystemManaged]": false
+            },
+            {
+              "[ID]": 2,
+              "[ModelID]": 1,
+              "[Name]": "Date",
+              "[DataCategory]": "Time",
+              "[Description]": null,
+              "[IsHidden]": false,
+              "[TableStorageID]": 2,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[StructureModifiedTime]": "2026-08-01T00:00:00",
+              "[SystemFlags]": 0,
+              "[ShowAsVariationsOnly]": false,
+              "[IsPrivate]": false,
+              "[DefaultDetailRowsDefinitionID]": null,
+              "[AlternateSourcePrecedence]": 0,
+              "[RefreshPolicyID]": null,
+              "[CalculationGroupID]": null,
+              "[ExcludeFromModelRefresh]": false,
+              "[LineageTag]": "lt-2",
+              "[SourceLineageTag]": null,
+              "[SystemManaged]": false
+            },
+            {
+              "[ID]": 3,
+              "[ModelID]": 1,
+              "[Name]": "Time Intelligence",
+              "[DataCategory]": null,
+              "[Description]": "Calc group",
+              "[IsHidden]": false,
+              "[TableStorageID]": 3,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[StructureModifiedTime]": "2026-08-01T00:00:00",
+              "[SystemFlags]": 0,
+              "[ShowAsVariationsOnly]": false,
+              "[IsPrivate]": false,
+              "[DefaultDetailRowsDefinitionID]": null,
+              "[AlternateSourcePrecedence]": 0,
+              "[RefreshPolicyID]": null,
+              "[CalculationGroupID]": 600,
+              "[ExcludeFromModelRefresh]": false,
+              "[LineageTag]": "lt-3",
+              "[SourceLineageTag]": null,
+              "[SystemManaged]": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

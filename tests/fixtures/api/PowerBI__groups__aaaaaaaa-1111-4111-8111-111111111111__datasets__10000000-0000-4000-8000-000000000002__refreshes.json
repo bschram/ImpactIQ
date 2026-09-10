@@ -1,0 +1,4 @@
+{
+  "__status": 404,
+  "note": "DirectQuery model: refreshes endpoint returns 404 -> Invoke-IQApi yields $null"
+}

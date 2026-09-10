@@ -1,0 +1,15 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "name": "ServerName",
+      "type": "Text",
+      "isRequired": true,
+      "currentValue": "sql-finance.contoso.gov",
+      "suggestedValues": [
+        "sql-finance.contoso.gov",
+        "sql-finance-dev.contoso.gov"
+      ]
+    }
+  ]
+}

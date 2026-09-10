@@ -1,0 +1,16 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "objectId": "30000000-0000-4000-8000-000000000001",
+      "name": "Sales [Prod]/Data",
+      "description": "Gen1 staging dataflow",
+      "modelUrl": "https://api.powerbi.com/v1.0/myorg/groups/aaaaaaaa-1111-4111-8111-111111111111/dataflows/30000000-0000-4000-8000-000000000001/model.json",
+      "configuredBy": "analyst@contoso.gov",
+      "modifiedBy": "analyst@contoso.gov",
+      "modifiedDateTime": "2026-08-30T12:00:00.000Z",
+      "generation": 1,
+      "users": []
+    }
+  ]
+}

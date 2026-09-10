@@ -1,0 +1,40 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "id": "aaaaaaaa-1111-4111-8111-111111111111",
+      "isReadOnly": false,
+      "isOnDedicatedCapacity": true,
+      "capacityId": "60000000-0000-4000-8000-000000000001",
+      "defaultDatasetStorageFormat": "Large",
+      "type": "Workspace",
+      "state": "Active",
+      "name": "Finance [Prod]",
+      "hasWorkspaceLevelSettings": true
+    },
+    {
+      "id": "bbbbbbbb-2222-4222-8222-222222222222",
+      "isReadOnly": false,
+      "isOnDedicatedCapacity": false,
+      "type": "Workspace",
+      "state": "Active",
+      "name": "Sales"
+    },
+    {
+      "id": "cccccccc-3333-4333-8333-333333333333",
+      "isReadOnly": false,
+      "isOnDedicatedCapacity": false,
+      "type": "Workspace",
+      "state": "Active",
+      "name": "HR Analytics"
+    },
+    {
+      "id": "dddddddd-4444-4444-8444-444444444444",
+      "isReadOnly": true,
+      "isOnDedicatedCapacity": false,
+      "type": "Workspace",
+      "state": "Active",
+      "name": "Other"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#refreshSchedule",
+  "days": [
+    "Monday",
+    "Friday"
+  ],
+  "times": [
+    "08:00",
+    "18:00"
+  ],
+  "enabled": true,
+  "localTimeZoneId": "UTC",
+  "notifyOption": "MailOnFailure"
+}

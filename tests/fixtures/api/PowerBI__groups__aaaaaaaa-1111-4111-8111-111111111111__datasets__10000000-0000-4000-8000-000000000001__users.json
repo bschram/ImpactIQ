@@ -1,0 +1,13 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#groups",
+  "value": [
+    {
+      "identifier": "analyst@contoso.gov",
+      "principalType": "User",
+      "datasetUserAccessRight": "ReadWriteReshareExplore",
+      "displayName": "Finance Analyst",
+      "emailAddress": "analyst@contoso.gov",
+      "graphId": "e1000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

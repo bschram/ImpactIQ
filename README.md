@@ -88,7 +88,7 @@ This automatically:
 > **Environment Selection**: When prompted, choose your Power BI environment:
 > - Press **Enter** for Public cloud (default)
 > - Or choose: `Germany`, `USGov`, `China`, `USGovHigh`, or `USGovMil` for sovereign clouds.
-> - If no selection is made after 120 seconds, it will continue with the default of Public.
+> - If no selection is made after 60 seconds, it will continue with the default of Public.
 
 #### ✅ Step 4: Open the Power BI File  
 > Open: `Power BI Governance Model.pbit`  
@@ -97,6 +97,28 @@ This automatically:
 ---
 
 🎉 That’s it — enjoy! 🎉
+
+---
+
+## 🤖 Automation / Headless (v3)
+
+Everything above still works exactly as before. v3 adds a **headless, resumable** entry point for scheduled runs — no pop-ups, no browser sign-in, and a run that dies at hour five picks up where it stopped.
+
+```powershell
+# unattended run against every workspace the account can see (GCC example); resumes an unfinished run automatically
+.\ImpactIQ.ps1 -BaseFolder "C:\Power BI Backups" -NonInteractive -Environment USGov -AllWorkspaces -IncludeMyWorkspace
+```
+
+- **Sign-in without a service principal**: `-AuthMode DeviceCode` prints a code once (also to a Teams/Slack webhook via `IMPACTIQ_DEVICECODE_WEBHOOK`), caches the refresh token encrypted (`IMPACTIQ_TOKEN_CACHE_KEY` or Windows DPAPI) and runs silently afterwards; `Credential` (`IMPACTIQ_USERNAME` / `IMPACTIQ_PASSWORD`) for MFA-exempt accounts; `AzContext` reuses an Az PowerShell login; `AccessToken` takes `IMPACTIQ_PBI_TOKEN`. → [docs/Auth-Options.md](docs/Auth-Options.md)
+- **Azure DevOps pipeline included**: `pipelines/azure-pipelines.yml` runs weekdays 06:00 UTC on a hosted or self-hosted Windows agent, restores the previous run's state, resumes, and publishes the four workbooks, the state and the logs as artifacts; optionally commits the workbooks to a branch so the Power BI template can read them from Azure Repos with a PAT (`Web.Contents`), or copies them to a SharePoint/OneDrive sync folder. → [docs/Azure-DevOps.md](docs/Azure-DevOps.md)
+- **Scope from the command line**: `-WorkspaceName "Finance*","HR"`, `-WorkspaceId`, `-AllWorkspaces`, `-RunMode Reports -ReportId ...`, `-RunMode Models -DatasetId ...`. Nothing selected headless = the run stops instead of scanning everything.
+- **Stages, checkpoints, exit codes**: `-Stages Inventory,ModelBackup,ReportBackup,ReportDetail,ModelDetail,Dataflows,Extras,Assemble`, `-Resume Auto|Always|Never`, `-Force`; exit `0` ok, `2` finished with item failures (see the new `Failures` sheet), `3` paused, `1` fatal. State lives under `State\runs\<yyyy-MM-dd>\` next to the backups. → [docs/Headless-and-Resume.md](docs/Headless-and-Resume.md)
+- **Time budget for capped agents**: `-TimeBudgetMinutes 55` (pipeline parameter `timeBudgetMinutes`) stops the run cleanly 2 minutes before the budget, still builds the partial workbooks, exits `3` (`Paused`) and the next start resumes from the checkpoints — made for the free Microsoft-hosted agents' 60-minute job cap. → [docs/Headless-and-Resume.md#10-time-budget--timebudgetminutes](docs/Headless-and-Resume.md)
+- **More data, same workbooks**: new sheets `Dashboards`, `DashboardTiles`, `Capacities`, `WorkspaceUsers`, `DatasetUsers`, `DatasetParameters`, `DatasetDQRefreshSchedule`, `RunSummary`, `Failures`, `InventoryErrors`, `ReportExports`; optional `-IncludeUsageMetrics` (per-workspace usage via DAX) and `-IncludeAdminApis` (Scanner API + activity events for Fabric admins); `-ModelDetailMethod Auto|TabularEditor|Bim|Dax|Both` documents models even when Tabular Editor / XMLA is not available (`Bim` = built-in `.bim`/TMSL parser, `Dax` = `INFO.VIEW.*` / `INFO.*` over `executeQueries`; `Auto` tries Tabular Editor, then Bim, then Dax). → [docs/Data-Coverage.md](docs/Data-Coverage.md)
+- **Where to run it**: decision matrix (hosted agent + MFA-exempt account, hosted agent + device code with a cache key, self-hosted agent on any Windows box, local Task Scheduler) and five-minute setups. → [docs/Automation.md](docs/Automation.md)
+- **What was audited and fixed** in the v2 script and the C# extract scripts, what was refuted, and what still has to be validated on a Windows box with real Power BI access. → [docs/Validation-Report.md](docs/Validation-Report.md)
+- **Tests**: `pwsh -File tests/Invoke-Tests.ps1` runs the parser, PSScriptAnalyzer (5.1 + 7 compatibility rules) and the Pester suite (mocked API, no tenant needed). → [tests/README.md](tests/README.md)
+
 
 
 
@@ -109,6 +131,10 @@ This automatically:
 
 ### ℹ️ Additional Notes
 
+> 🤖 **Running it on a schedule?**  
+> Use `ImpactIQ.ps1 -NonInteractive` (see *Automation / Headless* above). The 55-minute re-login timer of v2 is gone: tokens are refreshed silently before they expire, every model/report/dataflow is checkpointed the moment it finishes, and a re-run skips what already succeeded. The environment prompt below only appears in interactive runs (`IMPACTIQ_ENVIRONMENT` or `-Environment` replaces it); its timeout is 60 seconds.
+
+
 > 🌐 **Sovereign Cloud Support**  
 > The script now supports Power BI in Government and International cloud environments:
 > - **Public** (default) - Commercial cloud
@@ -118,7 +144,7 @@ This automatically:
 > - **USGovHigh** - Azure Government (GCC High)
 > - **USGovMil** - Azure Government (DoD)
 > 
-> When you run the script, you'll be prompted to select your environment (or default to Public after 120 seconds). The script automatically uses the correct API endpoints for all Power BI, Fabric, and XMLA connections.
+> When you run the script, you'll be prompted to select your environment (or default to Public after 60 seconds). The script automatically uses the correct API endpoints for all Power BI, Fabric, and XMLA connections.
 
 > ⚙️ *PowerShell may prompt to install required modules.*  
 > No admin access is needed — they install at the user level.

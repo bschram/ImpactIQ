@@ -1,0 +1,289 @@
+{
+  "name": "Finance (Prod) ~ Ledger",
+  "id": "11111111-1111-1111-1111-111111111111",
+  "compatibilityLevel": 1567,
+  "model": {
+    "culture": "en-US",
+    "defaultPowerBIDataSourceVersion": "powerBI_V3",
+    "sourceQueryCulture": "en-US",
+    "dataAccessOptions": {
+      "legacyRedirects": true,
+      "returnErrorValuesAsNull": true
+    },
+    "tables": [
+      {
+        "name": "Sales",
+        "description": "Fact table",
+        "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000001",
+        "columns": [
+          {
+            "name": "Amount",
+            "dataType": "decimal",
+            "sourceColumn": "Amount",
+            "formatString": "#,0.00",
+            "displayFolder": "Money",
+            "description": "Sales \"amount\" in USD",
+            "summarizeBy": "sum",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000002"
+          },
+          {
+            "name": "Cost",
+            "dataType": "decimal",
+            "sourceColumn": "Cost",
+            "formatString": "#,0.00",
+            "summarizeBy": "sum",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000003"
+          },
+          {
+            "name": "DateKey",
+            "dataType": "dateTime",
+            "sourceColumn": "DateKey",
+            "isHidden": true,
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000004"
+          },
+          {
+            "name": "ShipDateKey",
+            "dataType": "dateTime",
+            "sourceColumn": "ShipDateKey",
+            "isHidden": true,
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000005"
+          },
+          {
+            "name": "Region",
+            "dataType": "string",
+            "sourceColumn": "Region",
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000006"
+          },
+          {
+            "type": "calculated",
+            "name": "Amount x2",
+            "dataType": "decimal",
+            "isDataTypeInferred": true,
+            "expression": [
+              "",
+              "Sales[Amount] * 2 // doubled for the demo"
+            ],
+            "formatString": "0",
+            "summarizeBy": "sum",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000007"
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Sales",
+            "mode": "import",
+            "source": {
+              "type": "m",
+              "expression": [
+                "let",
+                "    Source = Sql.Database(\"srv\", \"db\"),",
+                "    dbo_Sales = Source{[Schema=\"dbo\",Item=\"Sales\"]}[Data]",
+                "in",
+                "    dbo_Sales"
+              ]
+            }
+          }
+        ],
+        "measures": [
+          {
+            "name": "Total Sales",
+            "expression": "SUM(Sales[Amount])",
+            "formatString": "#,0.00",
+            "displayFolder": "KPIs",
+            "description": "Sum of amount",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000008"
+          },
+          {
+            "name": "Total Cost",
+            "expression": [
+              "",
+              "SUM ( Sales[Cost] )"
+            ],
+            "formatString": "#,0.00",
+            "displayFolder": "KPIs",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000009"
+          },
+          {
+            "name": "Margin",
+            "expression": [
+              "/* margin = sales - cost; ignore \"[Not A Measure]\" and 'Fake Table' here */",
+              "VAR sales = [Total Sales]",
+              "VAR cost = [Total Cost] -- 'Fake Table'[Fake Column] in a line comment",
+              "RETURN",
+              "    IF ( sales > 0, DIVIDE ( sales - cost, sales ), \"[Another Fake]\" )"
+            ],
+            "formatString": "0.0%",
+            "isHidden": false,
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000010"
+          }
+        ],
+        "annotations": [
+          {
+            "name": "PBI_ResultType",
+            "value": "Table"
+          }
+        ]
+      },
+      {
+        "name": "Date",
+        "dataCategory": "Time",
+        "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000011",
+        "columns": [
+          {
+            "name": "Date",
+            "dataType": "dateTime",
+            "isKey": true,
+            "sourceColumn": "Date",
+            "formatString": "yyyy-MM-dd",
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000012"
+          },
+          {
+            "name": "Year",
+            "dataType": "int64",
+            "sourceColumn": "Year",
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000013"
+          },
+          {
+            "name": "Month",
+            "dataType": "string",
+            "sourceColumn": "Month",
+            "sortByColumn": "MonthNumber",
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000014"
+          },
+          {
+            "name": "MonthNumber",
+            "dataType": "int64",
+            "sourceColumn": "MonthNumber",
+            "isHidden": true,
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000015"
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Date",
+            "source": {
+              "type": "m",
+              "expression": "let\r\n    Source = Sql.Database(\"srv\", \"db\"),\r\n    dbo_Date = Source{[Schema=\"dbo\",Item=\"Date\"]}[Data]\r\nin\r\n    dbo_Date"
+            }
+          }
+        ],
+        "hierarchies": [
+          {
+            "name": "Calendar",
+            "displayFolder": "Hierarchies",
+            "description": "Year > Month",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000016",
+            "levels": [
+              {
+                "name": "Year",
+                "ordinal": 0,
+                "column": "Year",
+                "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000017"
+              },
+              {
+                "name": "Month",
+                "ordinal": 1,
+                "column": "Month",
+                "description": "Month name",
+                "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000018"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Time Intelligence",
+        "description": "Time calculation group",
+        "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000019",
+        "calculationGroup": {
+          "precedence": 10,
+          "calculationItems": [
+            {
+              "name": "Current",
+              "expression": "SELECTEDMEASURE()",
+              "ordinal": 0,
+              "description": "As is"
+            },
+            {
+              "name": "YTD",
+              "expression": "CALCULATE ( SELECTEDMEASURE (), DATESYTD ( 'Date'[Date] ) )",
+              "ordinal": 1
+            }
+          ]
+        },
+        "columns": [
+          {
+            "name": "Name",
+            "dataType": "string",
+            "sourceColumn": "Name",
+            "sortByColumn": "Ordinal",
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000020"
+          },
+          {
+            "name": "Ordinal",
+            "dataType": "int64",
+            "isHidden": true,
+            "sourceColumn": "Ordinal",
+            "summarizeBy": "none",
+            "lineageTag": "4d0b7f1a-1111-4a2b-9c3d-000000000021"
+          }
+        ],
+        "partitions": [
+          {
+            "name": "Time Intelligence",
+            "mode": "import",
+            "source": {
+              "type": "calculationGroup"
+            }
+          }
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "name": "8a6d4c8e-2222-4b2c-9d3e-000000000001",
+        "fromTable": "Sales",
+        "fromColumn": "DateKey",
+        "toTable": "Date",
+        "toColumn": "Date"
+      },
+      {
+        "name": "8a6d4c8e-2222-4b2c-9d3e-000000000002",
+        "fromTable": "Sales",
+        "fromColumn": "ShipDateKey",
+        "toTable": "Date",
+        "toColumn": "Date",
+        "isActive": false,
+        "crossFilteringBehavior": "bothDirections",
+        "fromCardinality": "many",
+        "toCardinality": "one"
+      }
+    ],
+    "roles": [
+      {
+        "name": "Region Manager",
+        "modelPermission": "read",
+        "tablePermissions": [
+          {
+            "name": "Sales",
+            "filterExpression": "[Region] = USERNAME()"
+          }
+        ]
+      }
+    ],
+    "annotations": [
+      {
+        "name": "PBI_QueryOrder",
+        "value": "[\"Sales\",\"Date\"]"
+      }
+    ]
+  }
+}

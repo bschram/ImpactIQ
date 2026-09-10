@@ -1,0 +1,32 @@
+{
+  "results": [
+    {
+      "tables": [
+        {
+          "rows": [
+            {
+              "[ID]": 1,
+              "[Name]": "Model",
+              "[Description]": null,
+              "[StorageLocation]": null,
+              "[DefaultMode]": 0,
+              "[DefaultDataView]": 0,
+              "[Culture]": "en-US",
+              "[Collation]": null,
+              "[ModifiedTime]": "2026-08-01T00:00:00",
+              "[StructureModifiedTime]": "2026-08-01T00:00:00",
+              "[Version]": 1,
+              "[DataAccessOptions]": null,
+              "[DefaultMeasureID]": null,
+              "[DefaultPowerBIDataSourceVersion]": 3,
+              "[ForceUniqueNames]": true,
+              "[DiscourageImplicitMeasures]": false,
+              "[MaxParallelismPerQuery]": 0,
+              "[MaxParallelismPerRefresh]": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

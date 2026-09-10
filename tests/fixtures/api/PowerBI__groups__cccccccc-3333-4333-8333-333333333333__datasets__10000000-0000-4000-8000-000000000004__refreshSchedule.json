@@ -1,0 +1,12 @@
+{
+  "@odata.context": "https://api.powerbi.com/v1.0/myorg/$metadata#refreshSchedule",
+  "days": [
+    "Sunday"
+  ],
+  "times": [
+    "06:00"
+  ],
+  "enabled": true,
+  "localTimeZoneId": "Eastern Standard Time",
+  "notifyOption": "NoNotification"
+}

@@ -1,0 +1,15 @@
+{
+  "value": [
+    {
+      "id": "30000000-0000-4000-8000-000000000011",
+      "type": "Dataflow",
+      "displayName": "Sales Gen2",
+      "description": "Gen2 CI/CD dataflow",
+      "workspaceId": "bbbbbbbb-2222-4222-8222-222222222222",
+      "sensitivityLabel": {
+        "labelId": "lbl-0000-general"
+      },
+      "folderId": "fo000000-0000-4000-8000-000000000002"
+    }
+  ]
+}
