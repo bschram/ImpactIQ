@@ -1875,7 +1875,7 @@ function Invoke-IQReportDetailStage {
     $r1 = $null
     $r2 = $null
     try {
-        $env:IMPACTIQ_BASE = [string]$script:IQ.BaseFolder
+        $env:IMPACTIQ_BASE = [string](Get-IQBackupRootFolder)
         $env:IMPACTIQ_DATE_FOLDER = $runFolder
         $env:IMPACTIQ_REPORT_DATE = $dateName
 
