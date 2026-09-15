@@ -448,6 +448,102 @@ Describe 'Interactive mode: Fabric minting via Az.Accounts gives up instead of r
     }
 }
 
+Describe 'Interactive tenant selection (v2 multi-tenant parity)' {
+    BeforeAll {
+        Reset-IQTestEnvironment
+        Initialize-IQContext -BaseFolder $script:Base -Options @{ Environment = 'USGov'; NonInteractive = $true } | Out-Null
+        Set-IQEnvironment -Environment 'USGov' | Out-Null
+        # Az.Accounts is not installed on the test host: give Pester real commands to mock.
+        function Get-AzContext { param() }
+        function Connect-AzAccount { param($Environment, $Scope, [switch]$SkipContextPopulation, $Tenant) }
+        function Get-AzTenant { param() }
+        function Set-AzContext { param($Tenant, $Scope) }
+        function Select-IQTenantInteractive { param($Tenants, [int]$TimeoutSeconds) }
+        $script:TenantA = [pscustomobject]@{ Id = '11111111-1111-1111-1111-111111111111'; Name = 'Contoso Gov'; Domains = @('contoso.gov') }
+        $script:TenantB = [pscustomobject]@{ Id = '22222222-2222-2222-2222-222222222222'; Name = $null; Domains = @('fabrikam.gov') }
+        $script:TenantC = [pscustomobject]@{ TenantId = '33333333-3333-3333-3333-333333333333'; Name = 'Adatum' }
+    }
+    BeforeEach {
+        $script:IQ.Interactive = $true
+        $script:IQ.Auth = @{ Initialized = $true; Mode = 'Interactive'; Provider = 'Module'; Tokens = @{}; TenantId = 'organizations' }
+        $script:AzConnects = 0
+        Mock Import-IQAuthModule { $true }
+        Mock Get-AzContext { [pscustomobject]@{ Environment = [pscustomobject]@{ Name = 'AzureCloud' }; Tenant = [pscustomobject]@{ Id = $script:TenantB.Id } } }
+        Mock Connect-AzAccount { $script:AzConnects++ }
+        Mock Set-AzContext { }
+        Mock Get-AzTenant { @($script:TenantA, $script:TenantB, $script:TenantC) }
+        Mock Select-IQTenantInteractive { $Tenants | Where-Object { $_.Id -eq $script:TenantC.TenantId } | Select-Object -First 1 }
+    }
+    AfterAll { $script:IQ.Interactive = $false; Reset-IQTestEnvironment }
+    It 'ConvertTo-IQTenantChoiceList puts the default first, then sorts by name, and labels rows like v2' {
+        $rows = @(ConvertTo-IQTenantChoiceList -Tenants @($script:TenantA, $script:TenantB, $script:TenantC) -DefaultTenantId $script:TenantB.Id)
+        $rows.Count | Should -Be 3
+        $rows[0].Id | Should -Be $script:TenantB.Id
+        $rows[0].IsDefault | Should -BeTrue
+        $rows[0].DisplayName | Should -Be ('fabrikam.gov (' + $script:TenantB.Id + ') - Current/Default')
+        $rows[1].DisplayName | Should -Be ('Adatum (' + $script:TenantC.TenantId + ')')
+        $rows[2].DisplayName | Should -Be ('Contoso Gov (' + $script:TenantA.Id + ')')
+        @(ConvertTo-IQTenantChoiceList -Tenants @($null, [pscustomobject]@{ Name = 'no id' })).Count | Should -Be 0
+    }
+    It 'is skipped when a tenant was given explicitly or the run is headless' {
+        $script:IQ.Auth.TenantId = $script:TenantA.Id
+        Select-IQInteractiveTenant | Should -BeNullOrEmpty
+        $script:IQ.Auth.TenantId | Should -Be $script:TenantA.Id
+        $script:IQ.Auth.TenantId = 'organizations'
+        $script:IQ.Interactive = $false
+        Select-IQInteractiveTenant | Should -BeNullOrEmpty
+        $script:IQ.Auth.TenantId | Should -Be 'organizations'
+        Should -Invoke Get-AzTenant -Times 0
+    }
+    It 'keeps the default tenant with a Debug line when Az.Accounts is not installed' {
+        Mock Import-IQAuthModule { $false }
+        Select-IQInteractiveTenant | Should -BeNullOrEmpty
+        $script:IQ.Auth.TenantId | Should -Be 'organizations'
+    }
+    It 'shows the picker on Windows when several tenants exist and pins the chosen one (existing Az context is reused)' {
+        $script:IQ.IsWindows = $true
+        try {
+            Select-IQInteractiveTenant | Should -Be $script:TenantC.TenantId
+            $script:IQ.Auth.TenantId | Should -Be $script:TenantC.TenantId
+            $script:IQ.Auth.TenantSource | Should -Be 'picker'
+            $script:AzConnects | Should -Be 0
+            Should -Invoke Set-AzContext -Times 1 -ParameterFilter { $Tenant -eq $script:TenantC.TenantId }
+            (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[SUCCESS\].*Selected tenant: Adatum'
+        }
+        finally { $script:IQ.IsWindows = ($env:OS -eq 'Windows_NT') }
+    }
+    It 'signs in with the AzureCloud environment for GCC when no matching context exists, and a single tenant is chosen silently' {
+        Mock Get-AzContext { [pscustomobject]@{ Environment = [pscustomobject]@{ Name = 'AzureUSGovernment' }; Tenant = [pscustomobject]@{ Id = $script:TenantA.Id } } }
+        Mock Get-AzTenant { @($script:TenantA) }
+        Select-IQInteractiveTenant | Should -Be $script:TenantA.Id
+        Should -Invoke Connect-AzAccount -Times 1 -ParameterFilter { $Environment -eq 'AzureCloud' }
+        Should -Invoke Select-IQTenantInteractive -Times 0
+        $script:IQ.Auth.TenantId | Should -Be $script:TenantA.Id
+    }
+    It 'falls back to the default tenant with an Info line when the dialog is unavailable (non-Windows)' {
+        $script:IQ.IsWindows = $false
+        try {
+            Select-IQInteractiveTenant | Should -Be $script:TenantB.Id
+            Should -Invoke Select-IQTenantInteractive -Times 0
+            (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '3 tenants are available but the tenant dialog cannot be shown here'
+        }
+        finally { $script:IQ.IsWindows = ($env:OS -eq 'Windows_NT') }
+    }
+    It 'a cancelled dialog stops the run; a discovery failure only warns and keeps the default tenant' {
+        $script:IQ.IsWindows = $true
+        try {
+            Mock Select-IQTenantInteractive { $null }
+            { Select-IQInteractiveTenant } | Should -Throw -ExpectedMessage '*cancelled*'
+            Mock Get-AzTenant { throw 'AADSTS50076: MFA required' }
+            $script:IQ.Auth.TenantId = 'organizations'
+            Select-IQInteractiveTenant | Should -BeNullOrEmpty
+            $script:IQ.Auth.TenantId | Should -Be 'organizations'
+            (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[WARN\].*Tenant discovery through Az.Accounts failed \(AADSTS50076'
+        }
+        finally { $script:IQ.IsWindows = ($env:OS -eq 'Windows_NT') }
+    }
+}
+
 Describe 'Connect-PowerBIServiceAccount -Tenant is only passed when the user parameter set declares it' {
     BeforeAll {
         Reset-IQTestEnvironment

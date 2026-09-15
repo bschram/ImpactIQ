@@ -89,6 +89,162 @@ function Select-IQEnvironmentInteractive {
     return $result
 }
 
+function Show-IQTenantSelectionDialog {
+    <#
+    .SYNOPSIS
+        WinForms tenant dialog (port of the v2 Show-TenantSelectionDialog): returns the selected tenant row, 'Timeout' or 'Cancelled'.
+    .DESCRIPTION
+        -Tenants are the { Id; DisplayName; IsDefault } rows of ConvertTo-IQTenantChoiceList (default first, so it is
+        preselected). The countdown timer is stopped and disposed when the form closes (audit C3-03).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][array]$Tenants,
+        [Parameter(Mandatory = $false)][int]$TimeoutSeconds = 60
+    )
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = 'ImpactIQ - Select Microsoft Tenant'
+    $form.StartPosition = 'CenterScreen'
+    $form.Size = New-Object System.Drawing.Size(620, 405)
+    $form.TopMost = $true
+    $form.FormBorderStyle = 'FixedDialog'
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = 'Select the tenant to use for all Power BI and Fabric API calls (Current/Default is preselected):'
+    $label.AutoSize = $true
+    $label.Location = New-Object System.Drawing.Point(20, 20)
+    $label.Font = New-Object System.Drawing.Font($label.Font.FontFamily, 10)
+    $form.Controls.Add($label)
+
+    $listBox = New-Object System.Windows.Forms.ListBox
+    $listBox.Location = New-Object System.Drawing.Point(20, 50)
+    $listBox.Size = New-Object System.Drawing.Size(565, 200)
+    $listBox.SelectionMode = 'One'
+    $listBox.DisplayMember = 'DisplayName'
+    $listBox.Font = New-Object System.Drawing.Font($listBox.Font.FontFamily, 10)
+    foreach ($tenant in $Tenants) { [void]$listBox.Items.Add($tenant) }
+    if ($listBox.Items.Count -gt 0) { $listBox.SelectedIndex = 0 }
+    $form.Controls.Add($listBox)
+
+    $helpLabel = New-Object System.Windows.Forms.Label
+    $helpLabel.Text = 'Not sure? Use the default.'
+    $helpLabel.AutoSize = $true
+    $helpLabel.Location = New-Object System.Drawing.Point(20, 262)
+    $helpLabel.Font = New-Object System.Drawing.Font($helpLabel.Font.FontFamily, 10)
+    $form.Controls.Add($helpLabel)
+
+    $timeoutLabel = New-Object System.Windows.Forms.Label
+    $timeoutLabel.Text = "Current/Default will be selected automatically in $TimeoutSeconds seconds."
+    $timeoutLabel.AutoSize = $true
+    $timeoutLabel.Location = New-Object System.Drawing.Point(20, 287)
+    $timeoutLabel.Font = New-Object System.Drawing.Font($timeoutLabel.Font.FontFamily, 10)
+    $timeoutLabel.ForeColor = [System.Drawing.Color]::DimGray
+    $form.Controls.Add($timeoutLabel)
+
+    $okButton = New-Object System.Windows.Forms.Button
+    $okButton.Text = 'OK'
+    $okButton.Size = New-Object System.Drawing.Size(85, 30)
+    $okButton.Location = New-Object System.Drawing.Point(405, 320)
+    $okButton.Add_Click({
+        $form.Tag = $listBox.SelectedItem
+        $form.Close()
+    })
+    $form.Controls.Add($okButton)
+
+    $cancelButton = New-Object System.Windows.Forms.Button
+    $cancelButton.Text = 'Cancel'
+    $cancelButton.Size = New-Object System.Drawing.Size(85, 30)
+    $cancelButton.Location = New-Object System.Drawing.Point(500, 320)
+    $cancelButton.Add_Click({
+        $form.Tag = 'Cancelled'
+        $form.Close()
+    })
+    $form.Controls.Add($cancelButton)
+
+    $listBox.Add_DoubleClick({
+        if ($listBox.SelectedItem) {
+            $form.Tag = $listBox.SelectedItem
+            $form.Close()
+        }
+    })
+
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 1000
+    $timer.Tag = $TimeoutSeconds
+    $timer.Add_Tick({
+        $timer.Tag = [int]$timer.Tag - 1
+        $timeoutLabel.Text = "Current/Default will be selected automatically in $($timer.Tag) seconds."
+        if ([int]$timer.Tag -le 0) {
+            $form.Tag = 'Timeout'
+            $form.Close()
+        }
+    })
+
+    $form.Add_FormClosing({
+        param($sender, $e)
+        if (-not $form.Tag) { $form.Tag = 'Cancelled' }
+    })
+
+    $form.AcceptButton = $okButton
+    $form.CancelButton = $cancelButton
+    $timer.Start()
+    try { [void]$form.ShowDialog() }
+    finally {
+        $timer.Stop()
+        $timer.Dispose()
+    }
+    return $form.Tag
+}
+
+function Select-IQTenantInteractive {
+    <#
+    .SYNOPSIS
+        Shows the tenant dialog for several tenants and returns the chosen row; the timeout returns the default row; Cancel returns $null.
+    .DESCRIPTION
+        Reproduces the v2 Select-PowerBITenant loop: the dialog is re-shown with the remaining seconds until a choice,
+        a timeout (default tenant) or Cancel. One tenant is returned without a dialog. Called by
+        Select-IQInteractiveTenant (Auth module) after Az.Accounts listed the tenants.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][array]$Tenants,
+        [Parameter(Mandatory = $false)][int]$TimeoutSeconds = 60
+    )
+    $rows = @($Tenants | Where-Object { $null -ne $_ })
+    if ($rows.Count -eq 0) { return $null }
+    if ($rows.Count -eq 1) { return $rows[0] }
+    Assert-IQInteractiveHost -Dialog 'tenant dialog'
+
+    $defaultRow = $null
+    foreach ($row in $rows) { if ($row.IsDefault) { $defaultRow = $row; break } }
+    if ($null -eq $defaultRow) { $defaultRow = $rows[0] }
+
+    $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ($true) {
+        $remaining = [int][math]::Ceiling(($deadline - [datetime]::UtcNow).TotalSeconds)
+        if ($remaining -le 0) {
+            Write-IQLog -Level Warn -Stage Auth -Message ('No tenant selected before the timeout - using ' + $defaultRow.DisplayName)
+            return $defaultRow
+        }
+        $result = Show-IQTenantSelectionDialog -Tenants $rows -TimeoutSeconds $remaining
+        $text = [string]$result
+        if ($text -eq 'Timeout') {
+            Write-IQLog -Level Warn -Stage Auth -Message ('No tenant selected before the timeout - using ' + $defaultRow.DisplayName)
+            return $defaultRow
+        }
+        if ($text -eq 'Cancelled' -or $null -eq $result) {
+            Write-IQLog -Level Warn -Stage Auth -Message 'Tenant selection cancelled by user.'
+            return $null
+        }
+        if ($result.PSObject.Properties['Id'] -and -not [string]::IsNullOrWhiteSpace([string]$result.Id)) { return $result }
+    }
+}
+
 function ConvertTo-IQPickerWorkspaceRow {
     <#
     .SYNOPSIS

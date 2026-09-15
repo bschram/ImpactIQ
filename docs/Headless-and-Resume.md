@@ -15,7 +15,7 @@ Contents: 1 parameters - 2 examples - 3 state layout and manifest - 4 resume rul
 | `-OutputFolder <path>` | `IMPACTIQ_OUTPUT_FOLDER`, else the base folder | where the four workbooks go; point the `.pbit`'s `Base Directory` there when you change it |
 | `-Environment Public\|Germany\|USGov\|China\|USGovHigh\|USGovMil` (aliases `Commercial`, `Global`, `GCC`, `GCCHigh`, `DoD`) | `IMPACTIQ_ENVIRONMENT`, else the interactive dialog (60 s -> Public), else `Public` | cloud endpoints - REST, sign-in authority, token resource, XMLA, Fabric and portal hosts all follow it (Auth-Options.md section 3); the resolved hosts are printed at the top of every run |
 | `-AuthMode Auto\|Interactive\|DeviceCode\|Credential\|AzContext\|AccessToken` | `Auto` | Auth-Options.md |
-| `-TenantId <guid or domain>` | `organizations` | tenant for device code / ROPC |
+| `-TenantId <guid or domain>` | `IMPACTIQ_TENANT_ID`, else `organizations` | tenant for device code / ROPC, and pinned on the interactive browser sign-in. Interactive runs without it show the tenant picker when the account can reach several tenants (Auth-Options.md 4.5); headless runs use the account's default tenant |
 | `-ClientId <guid>` | `1950a258-227b-4e31-a9cf-717495945fc2` | public client for device code / ROPC |
 | `-Credential <PSCredential>` | `IMPACTIQ_USERNAME` / `IMPACTIQ_PASSWORD` | Credential mode |
 | `-TokenCachePath <file>` | `<BaseFolder>\State\auth\token-cache.json` | DeviceCode refresh-token cache |
