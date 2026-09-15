@@ -57,6 +57,7 @@ This provides a quick and automated way to identify where and how specific field
 - **Comprehensive Environment Overview**: Gain a clear, detailed view of your entire Power BI environment, including complete breakdowns of your models, reports, and dataflows and their dependencies.
 - **Backup Solution**: Automatically backs up every model, report, and dataflow for safekeeping.
 - **User-Friendly Output**: the final output is presented in a Power BI Report & Model, making everything easy to explore, analyze, and share with your team.
+- **Multi-Tenant Selection**: if your account can access multiple Microsoft tenants, a popup lets you choose which tenant receives all Power BI and Fabric API calls (`-TenantId` for scheduled runs).
 - **Runs on a schedule**: the same extraction runs headless from Task Scheduler or Azure DevOps, resumes after any interruption and signs in as a user without a service principal.
 
 ---
@@ -74,12 +75,13 @@ keeps working. What is new:
 | Interruptions | start over | every workspace, model, report, model-detail CSV and dataflow is checkpointed the moment it finishes; re-running skips what succeeded and retries what failed; `-TimeBudgetMinutes` pauses cleanly before a job cap and resumes on the next run |
 | Sign-in | browser every 55 minutes | silent token refresh; `DeviceCode` with an encrypted refresh-token cache, `Credential`, `AzContext`, `AccessToken`, and the original `Interactive` |
 | Robustness | silent failures, no retries | one HTTP wrapper with retry and back-off (429 `Retry-After`, 5xx, network), timeouts and captured output for Tabular Editor and pbi-tools, per-item failure records, a `Failures` sheet, exit codes `0 / 2 / 3 / 1` |
+| Multi-tenant accounts | (added upstream after the fork) | ported: interactive runs list the tenants the account can reach and let you pick one; headless runs take `-TenantId` / `IMPACTIQ_TENANT_ID` |
 | Clouds | endpoint table with two wrong hosts | verified tables for Public, GCC, GCC High, DoD, China (and the retired Germany cloud); aliases `GCC`, `GCCHigh`, `DoD`; every REST, OAuth, XMLA, Fabric and portal URL follows `-Environment` |
 | Fabric absent (GCC) | retries and errors per call | detected once per run (token refused or host unreachable), then skipped without a request; the Fabric-only sheets stay empty and everything else is unaffected |
 | Model detail | Tabular Editor 2 over XMLA only | Tabular Editor, or the built-in `.bim` parser, or DAX `INFO.VIEW.*` over `executeQueries` (`-ModelDetailMethod Auto\|TabularEditor\|Bim\|Dax\|Both`) |
 | Data | 17 sheets | plus Dashboards, DashboardTiles, Capacities, WorkspaceUsers, DatasetUsers, DatasetParameters, DatasetDQRefreshSchedule, RunSummary, Failures, InventoryErrors, ReportExports; optional `-IncludeUsageMetrics` and `-IncludeAdminApis` |
 | Scheduling | none | `pipelines/azure-pipelines.yml` (state restored from the previous run, artifacts, optional commit of the workbooks for a gateway-free refresh) |
-| Quality | none | parser, PSScriptAnalyzer (5.1 and 7 compatibility rules) and a 575-test Pester suite; `docs/Validation-Report.md` lists the v2 defects that were fixed |
+| Quality | none | parser, PSScriptAnalyzer (5.1 and 7 compatibility rules) and a 582-test Pester suite; `docs/Validation-Report.md` lists the v2 defects that were fixed |
 
 ---
 
@@ -95,8 +97,9 @@ The v2 experience: dialogs, browser sign-in, pickers, and the workbooks next to 
 2. **Run the launcher.** Either rename `Final PS Script.txt` to `Final PS Script.ps1` and run it, or open PowerShell in
    the folder and paste the file's contents. PowerShell may offer to install the `ImportExcel` and Power BI modules
    for your user; no admin rights are needed.
-3. **Answer the prompts**: environment (`Public` after 60 seconds; `USGov` for GCC), sign in, choose whether to run
-   against workspaces, reports or models, then pick them.
+3. **Answer the prompts**: environment (`Public` after 60 seconds; `USGov` for GCC), the tenant if your account can
+   reach more than one (the current one after 60 seconds), sign in, choose whether to run against workspaces,
+   reports or models, then pick them.
 4. **Wait.** The console shows each stage and ends with a per-stage summary, the four workbook paths and the log file.
    If the run is interrupted, run the launcher again: finished items are skipped.
 5. **Open `Power BI Governance Model.pbit`**, set `Base Directory` to the folder, let it refresh, save as `.pbix`.
@@ -149,7 +152,8 @@ all → Option D**; **an MFA-exempt service account that security accepts → Op
 1. Download the repository into a folder, for example `C:\ImpactIQ`.
 2. Run `Final PS Script.txt` (rename to `.ps1`, or paste it into a PowerShell window opened in that folder).
    The launcher finds `ImpactIQ.ps1` next to itself.
-3. Choose the environment, sign in in the browser, choose the run mode and the workspaces, reports or models.
+3. Choose the environment, the tenant if your account belongs to several, sign in in the browser, choose the run
+   mode and the workspaces, reports or models.
 4. When it finishes, open `Power BI Governance Model.pbit`, point `Base Directory` at `C:\ImpactIQ`, refresh, save as
    `.pbix`.
 5. Re-run whenever you want fresh data. A run interrupted the same day resumes; `-Force` on `ImpactIQ.ps1` starts

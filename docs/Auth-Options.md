@@ -163,6 +163,15 @@ two-attempt retry, `Get-PowerBIAccessToken` for tokens, Fabric best-effort throu
 <AzEnvironment> -Scope Process -SkipContextPopulation` + `Get-AzAccessToken`. Refused with a clear message when the run
 is headless (`TF_BUILD`, `CI`, `-NonInteractive`, no console).
 
+**Multi-tenant accounts** (v2 "Multi-Tenant Selection", ported): when no `-TenantId` / `IMPACTIQ_TENANT_ID` was given
+and Az.Accounts is installed, the run first signs in through Az, lists the tenants the account can reach
+(`Get-AzTenant`) and, when there are several, shows a picker with the current/default tenant preselected (60-second
+timeout selects it; Cancel stops the run before any API call). The chosen tenant is pinned on the Power BI sign-in
+(`-Tenant`) and on the Az context used for Fabric. One tenant is chosen silently; without Az.Accounts, or when
+discovery fails, the account's default tenant is used with a log line. Headless modes never show the picker: pass
+`-TenantId <guid>` instead. Unlike the v2 script, GCC uses the commercial `AzureCloud` Az environment here (GCC
+tenants live in commercial Entra); `AzureUSGovernment` is for GCC High and DoD.
+
 ## 5. The token cache (DeviceCode)
 
 File: `<BaseFolder>\State\auth\token-cache.json` (override with `-TokenCachePath` / `IMPACTIQ_TOKEN_CACHE_PATH`).

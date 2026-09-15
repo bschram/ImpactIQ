@@ -1122,6 +1122,111 @@ function Connect-IQAzForFabric {
     }
 }
 
+function ConvertTo-IQTenantChoiceList {
+    <#
+    .SYNOPSIS
+        Normalises Get-AzTenant results to { Id; DisplayName; IsDefault } rows: the default tenant first, then by name (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][object[]]$Tenants,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$DefaultTenantId
+    )
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($tenant in @($Tenants)) {
+        if ($null -eq $tenant) { continue }
+        $id = [string](Get-IQMemberValue -Object $tenant -Name 'Id')
+        if ([string]::IsNullOrWhiteSpace($id)) { $id = [string](Get-IQMemberValue -Object $tenant -Name 'TenantId') }
+        if ([string]::IsNullOrWhiteSpace($id)) { continue }
+        $name = [string](Get-IQMemberValue -Object $tenant -Name 'Name')
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            $name = 'Unnamed tenant'
+            $domains = Get-IQMemberValue -Object $tenant -Name 'Domains'
+            if ($domains -is [string]) { $domains = @($domains) }
+            foreach ($domain in @($domains)) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$domain)) { $name = [string]$domain; break }
+            }
+        }
+        $isDefault = (-not [string]::IsNullOrWhiteSpace($DefaultTenantId)) -and ($id -ieq $DefaultTenantId)
+        $label = ''
+        if ($isDefault) { $label = ' - Current/Default' }
+        $rows.Add([pscustomobject]@{ Id = $id; DisplayName = ('{0} ({1}){2}' -f $name, $id, $label); IsDefault = $isDefault })
+    }
+    return @($rows | Sort-Object -Property @{ Expression = { -not $_.IsDefault } }, @{ Expression = 'DisplayName' })
+}
+
+function Select-IQInteractiveTenant {
+    <#
+    .SYNOPSIS
+        Interactive mode only: discovers the account's tenants through Az.Accounts and lets the user pick one when there are several; returns the tenant id or $null.
+    .DESCRIPTION
+        Port of the v2 script's tenant selection (upstream "Multi-Tenant Selection"). Skipped, returning $null, when a
+        tenant was already given (-TenantId / IMPACTIQ_TENANT_ID), when the run is headless, or when Az.Accounts is not
+        installed. A discovery failure never stops the run: the account's default tenant is used, exactly as before
+        the dialog existed. One tenant is selected silently; several show the dialog (the 60-second timeout selects
+        the current/default tenant, Cancel throws). The choice lands in $script:IQ.Auth.TenantId, so
+        Connect-IQPowerBIModule pins it with -Tenant and Connect-IQAzForFabric reuses the context. The Az environment
+        comes from the endpoint table (GCC = AzureCloud, GCC High / DoD = AzureUSGovernment); the v2 script's
+        AzureUSGovernment mapping for GCC is deliberately not carried over.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][int]$TimeoutSeconds = 60)
+    $auth = Get-IQAuthState -AllowUninitialized
+    if ($null -eq $auth) { return $null }
+    $current = [string]$auth.TenantId
+    if (-not [string]::IsNullOrWhiteSpace($current) -and $current -ne 'organizations') {
+        Write-IQLog -Level Debug -Stage Auth -Message ("Tenant '{0}' was given explicitly; the tenant picker is skipped." -f $current)
+        return $null
+    }
+    if (-not [bool]$script:IQ.Interactive) { return $null }
+    if (-not (Import-IQAuthModule -Name 'Az.Accounts')) {
+        Write-IQLog -Level Debug -Stage Auth -Message 'Az.Accounts is not installed; signing in to the account''s default tenant (install Az.Accounts or pass -TenantId to choose another).'
+        return $null
+    }
+    $azEnvironment = [string]$script:IQ.Endpoints.AzEnvironment
+    $choices = @()
+    try {
+        $azContext = $null
+        try { $azContext = Get-AzContext -ErrorAction SilentlyContinue } catch { $azContext = $null }
+        if (-not ($azContext -and $azContext.Environment -and $azContext.Environment.Name -eq $azEnvironment)) {
+            Write-IQLog -Level Info -Stage Auth -Message 'Sign in to discover the tenants available to your account...'
+            if (Get-Command -Name Update-AzConfig -ErrorAction SilentlyContinue) {
+                Update-AzConfig -LoginExperienceV2 Off -Scope Process -ErrorAction SilentlyContinue | Out-Null
+            }
+            Connect-AzAccount -Environment $azEnvironment -Scope Process -SkipContextPopulation -ErrorAction Stop -WarningAction SilentlyContinue 3>$null | Out-Null
+            $azContext = Get-AzContext -ErrorAction Stop
+        }
+        $defaultId = $null
+        if ($azContext -and $azContext.Tenant) { $defaultId = [string]$azContext.Tenant.Id }
+        $choices = @(ConvertTo-IQTenantChoiceList -Tenants @(Get-AzTenant -ErrorAction Stop -WarningAction SilentlyContinue 3>$null) -DefaultTenantId $defaultId)
+    }
+    catch {
+        Write-IQLog -Level Warn -Stage Auth -Message ('Tenant discovery through Az.Accounts failed (' + $_.Exception.Message + '); signing in to the account''s default tenant. Pass -TenantId to choose another.')
+        return $null
+    }
+    if ($choices.Count -eq 0) {
+        Write-IQLog -Level Warn -Stage Auth -Message 'Az.Accounts returned no tenants for the signed-in account; signing in to the default tenant.'
+        return $null
+    }
+    $selected = $null
+    if ($choices.Count -eq 1) { $selected = $choices[0] }
+    elseif ([bool]$script:IQ.IsWindows -and (Get-Command -Name Select-IQTenantInteractive -ErrorAction SilentlyContinue)) {
+        $selected = Select-IQTenantInteractive -Tenants $choices -TimeoutSeconds $TimeoutSeconds
+        if ($null -eq $selected) { throw 'Tenant selection was cancelled. No API calls were made.' }
+    }
+    else {
+        foreach ($choice in $choices) { if ($choice.IsDefault) { $selected = $choice; break } }
+        if ($null -eq $selected) { $selected = $choices[0] }
+        Write-IQLog -Level Info -Stage Auth -Message ("{0} tenants are available but the tenant dialog cannot be shown here; using {1}. Pass -TenantId to choose another." -f $choices.Count, $selected.DisplayName)
+    }
+    try { Set-AzContext -Tenant ([string]$selected.Id) -Scope Process -ErrorAction Stop -WarningAction SilentlyContinue 3>$null | Out-Null }
+    catch { Write-IQLog -Level Debug -Stage Auth -Message ('Set-AzContext -Tenant failed (' + $_.Exception.Message + '); the Power BI sign-in still pins the tenant.') }
+    $auth.TenantId = [string]$selected.Id
+    $auth.TenantSource = 'picker'
+    Write-IQLog -Level Success -Stage Auth -Message ('Selected tenant: ' + $selected.DisplayName)
+    return [string]$selected.Id
+}
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Mode resolution and initial sign-in
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1293,6 +1398,8 @@ function Initialize-IQAuthInteractive {
     }
     $auth.Provider = 'Module'
     $auth.Source = 'MicrosoftPowerBIMgmt'
+    # Multi-tenant accounts: discover and pick the tenant first so the Power BI sign-in below pins it (v2 parity).
+    Select-IQInteractiveTenant | Out-Null
     $token = Connect-IQPowerBIModule -MaxAttempts 2
     Set-IQAuthToken -Resource PowerBI -AccessToken $token -Source 'MicrosoftPowerBIMgmt' | Out-Null
 
