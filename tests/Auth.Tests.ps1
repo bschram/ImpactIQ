@@ -448,6 +448,67 @@ Describe 'Interactive mode: Fabric minting via Az.Accounts gives up instead of r
     }
 }
 
+Describe 'Interactive sign-in reuses the Az context instead of a second sign-in window' {
+    BeforeAll {
+        Reset-IQTestEnvironment
+        Initialize-IQContext -BaseFolder $script:Base -Options @{ Environment = 'USGov'; NonInteractive = $true } | Out-Null
+        Set-IQEnvironment -Environment 'USGov' | Out-Null
+        function Get-AzContext { param() }
+        $script:AzPbiJwt = New-IQTestJwt -Claims @{ upn = 'az.user@contoso.gov'; tid = '11111111-1111-1111-1111-111111111111' } -ExpiresInMinutes 60
+        $script:ModulePbiJwt = New-IQTestJwt -Claims @{ upn = 'module.user@contoso.gov' } -ExpiresInMinutes 60
+    }
+    BeforeEach {
+        $script:IQ.Interactive = $true
+        $script:IQ.Auth = @{ Initialized = $true; Mode = 'Interactive'; Provider = $null; Source = $null; Tokens = @{}; FabricUnavailable = $false; FabricWarned = $false; FabricFailures = 0; TenantId = 'organizations'; Account = $null; StaticTokens = @{} }
+        $script:AzMints = 0
+        Mock Select-IQInteractiveTenant { $null }
+        Mock Connect-IQAzForFabric { $false }
+        Mock Get-AzContext { [pscustomobject]@{ Account = [pscustomobject]@{ Id = 'az.user@contoso.gov' }; Environment = [pscustomobject]@{ Name = 'AzureCloud' } } }
+        Mock Connect-IQPowerBIModule { throw 'module sign-in must not run when the Az context works' }
+    }
+    AfterAll { $script:IQ.Interactive = $false; Reset-IQTestEnvironment }
+    It 'mints the Power BI token from the Az context and never opens the module sign-in' {
+        Mock Test-IQAuthAzContextUsable { $true }
+        Mock Get-IQAzAccessTokenValue { $script:AzMints++; $script:AzPbiJwt }
+        Initialize-IQAuthInteractive
+        $script:IQ.Auth.Provider | Should -Be 'Az'
+        $script:IQ.Auth.Account | Should -Be 'az.user@contoso.gov'
+        $script:IQ.Auth.Tokens['PowerBI'].AccessToken | Should -Be $script:AzPbiJwt
+        Should -Invoke Connect-IQPowerBIModule -Times 0
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[SUCCESS\].*Connected to Power BI through the Az sign-in'
+        # a forced refresh (401 path) also goes through Az, not the module
+        Get-IQToken -Resource PowerBI -Force | Should -Be $script:AzPbiJwt
+        $script:AzMints | Should -Be 2
+    }
+    It 'falls back to the Power BI module when the Az context cannot provide a Power BI token' {
+        Mock Test-IQAuthAzContextUsable { $true }
+        Mock Get-IQAzAccessTokenValue { throw 'AADSTS65001: consent required' }
+        Mock Connect-IQPowerBIModule { $script:ModulePbiJwt }
+        Initialize-IQAuthInteractive
+        $script:IQ.Auth.Provider | Should -Be 'Module'
+        $script:IQ.Auth.Tokens['PowerBI'].AccessToken | Should -Be $script:ModulePbiJwt
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'could not provide a Power BI token \(AADSTS65001'
+    }
+    It 'uses the module sign-in when no Az context exists (Az.Accounts missing or not signed in)' {
+        Mock Test-IQAuthAzContextUsable { $false }
+        Mock Get-IQAzAccessTokenValue { throw 'Az must not be asked for a token without a context' }
+        Mock Connect-IQPowerBIModule { $script:ModulePbiJwt }
+        Initialize-IQAuthInteractive
+        $script:IQ.Auth.Provider | Should -Be 'Module'
+        Should -Invoke Get-IQAzAccessTokenValue -Times 0
+    }
+    It 'Test-IQAuthAzContextUsable needs a loaded module, an account and the matching Az environment' {
+        Mock Import-IQAuthModule { $true }
+        Test-IQAuthAzContextUsable | Should -BeTrue
+        Mock Get-AzContext { [pscustomobject]@{ Account = [pscustomobject]@{ Id = 'x' }; Environment = [pscustomobject]@{ Name = 'AzureUSGovernment' } } }
+        Test-IQAuthAzContextUsable | Should -BeFalse
+        Mock Get-AzContext { $null }
+        Test-IQAuthAzContextUsable | Should -BeFalse
+        Mock Import-IQAuthModule { $false }
+        Test-IQAuthAzContextUsable | Should -BeFalse
+    }
+}
+
 Describe 'Interactive tenant selection (v2 multi-tenant parity)' {
     BeforeAll {
         Reset-IQTestEnvironment

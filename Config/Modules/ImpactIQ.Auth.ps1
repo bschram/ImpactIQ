@@ -946,6 +946,11 @@ function Connect-IQPowerBIModule {
                 if ($auth -and (Test-IQAuthGuid -Value ([string]$auth.TenantId)) -and (Test-IQAuthConnectSupportsTenant -UseCredential:($null -ne $Credential))) {
                     $connectArgs.Tenant = [string]$auth.TenantId
                 }
+                $argText = @(($connectArgs.Keys | Where-Object { $_ -notin @('ErrorAction', 'WarningAction', 'Credential') } | Sort-Object | ForEach-Object { '-' + $_ + ' ' + $connectArgs[$_] })) -join ' '
+                Write-IQLog -Level Debug -Stage Auth -Message ('Connect-PowerBIServiceAccount ' + $argText)
+                if ($null -eq $Credential) {
+                    Write-IQLog -Level Info -Stage Auth -Message 'A Microsoft sign-in window opens now (it may sit behind other windows). If nothing appears within a minute, press Ctrl+C and run with -AuthMode DeviceCode, or install Az.Accounts so the run can reuse one sign-in.'
+                }
                 try {
                     Connect-PowerBIServiceAccount @connectArgs 3>$null | Out-Null
                 }
@@ -1083,6 +1088,22 @@ function Get-IQAzAccessTokenValue {
         }
     }
     throw $lastError
+}
+
+function Test-IQAuthAzContextUsable {
+    <#
+    .SYNOPSIS
+        $true when Az.Accounts is loaded and an Az context with an account exists for the environment's Az cloud (never prompts, never throws).
+    #>
+    [CmdletBinding()]
+    param()
+    if (-not (Import-IQAuthModule -Name 'Az.Accounts')) { return $false }
+    $azEnvironment = [string]$script:IQ.Endpoints.AzEnvironment
+    $azContext = $null
+    try { $azContext = Get-AzContext -ErrorAction SilentlyContinue } catch { $azContext = $null }
+    if ($null -eq $azContext -or $null -eq $azContext.Account) { return $false }
+    if ($azContext.Environment -and $azContext.Environment.Name -ne $azEnvironment) { return $false }
+    return $true
 }
 
 function Connect-IQAzForFabric {
@@ -1396,12 +1417,34 @@ function Initialize-IQAuthInteractive {
     if (-not $script:IQ.Interactive) {
         throw 'AuthMode Interactive needs an interactive desktop session (browser sign-in). Use -AuthMode DeviceCode, Credential, AzContext or AccessToken for headless runs.'
     }
-    $auth.Provider = 'Module'
-    $auth.Source = 'MicrosoftPowerBIMgmt'
     # Multi-tenant accounts: discover and pick the tenant first so the Power BI sign-in below pins it (v2 parity).
     Select-IQInteractiveTenant | Out-Null
-    $token = Connect-IQPowerBIModule -MaxAttempts 2
-    Set-IQAuthToken -Resource PowerBI -AccessToken $token -Source 'MicrosoftPowerBIMgmt' | Out-Null
+
+    # One sign-in instead of two: when the tenant discovery (or an earlier Connect-AzAccount) left a usable Az context,
+    # mint the Power BI token from it exactly like AzContext mode. The Power BI PowerShell module's own browser
+    # sign-in is only the fallback - it can hang silently when its second window never shows or the commercial
+    # discovery endpoint is blocked, and there is nothing to refresh from it that Az cannot provide.
+    $token = $null
+    if (Test-IQAuthAzContextUsable) {
+        try {
+            $token = Get-IQAzAccessTokenValue -ResourceUrl (Get-IQAuthResourceUrl -Resource PowerBI) -Quiet
+            $auth.Provider = 'Az'
+            $auth.Source = 'Az.Accounts'
+            try { $ctx = Get-AzContext -ErrorAction SilentlyContinue; if ($ctx -and $ctx.Account -and $ctx.Account.Id) { $auth.Account = [string]$ctx.Account.Id } } catch { $null = $_.Exception }
+            Set-IQAuthToken -Resource PowerBI -AccessToken $token -Source 'Az.Accounts' | Out-Null
+            Write-IQLog -Level Success -Stage Auth -Message 'Connected to Power BI through the Az sign-in (no second sign-in window).'
+        }
+        catch {
+            $token = $null
+            Write-IQLog -Level Info -Stage Auth -Message ('The Az sign-in could not provide a Power BI token (' + $_.Exception.Message + '); using the Power BI PowerShell module sign-in instead.')
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        $auth.Provider = 'Module'
+        $auth.Source = 'MicrosoftPowerBIMgmt'
+        $token = Connect-IQPowerBIModule -MaxAttempts 2
+        Set-IQAuthToken -Resource PowerBI -AccessToken $token -Source 'MicrosoftPowerBIMgmt' | Out-Null
+    }
 
     # Fabric token: best effort, never blocks the run (monolith 555; audit C2-02: no re-login on token failure).
     if (Connect-IQAzForFabric) {
@@ -1592,6 +1635,13 @@ function Update-IQAuthToken {
     switch ($auth.Mode) {
         'Interactive' {
             if ($Resource -eq 'PowerBI') {
+                if ($auth.Provider -eq 'Az') {
+                    try {
+                        $t = Get-IQAzAccessTokenValue -ResourceUrl (Get-IQAuthResourceUrl -Resource PowerBI)
+                        return (Set-IQAuthToken -Resource PowerBI -AccessToken $t -Source 'Az.Accounts')
+                    }
+                    catch { throw ('Could not refresh the Power BI access token from the Az sign-in (' + $_.Exception.Message + '). Start the run again to sign in.') }
+                }
                 $t = Get-IQPowerBIModuleToken
                 return (Set-IQAuthToken -Resource PowerBI -AccessToken $t -Source 'MicrosoftPowerBIMgmt')
             }

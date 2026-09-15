@@ -163,6 +163,14 @@ two-attempt retry, `Get-PowerBIAccessToken` for tokens, Fabric best-effort throu
 <AzEnvironment> -Scope Process -SkipContextPopulation` + `Get-AzAccessToken`. Refused with a clear message when the run
 is headless (`TF_BUILD`, `CI`, `-NonInteractive`, no console).
 
+**One sign-in when Az.Accounts is installed.** After the tenant discovery below (or whenever a matching Az context
+already exists), the Power BI token is minted from that Az sign-in with `Get-AzAccessToken`, the same way `AzContext`
+mode works, and the Power BI PowerShell module's own browser window is never opened. The module sign-in remains the
+fallback for machines without Az.Accounts or when the Az token request is refused. That fallback can appear to hang:
+its window may sit behind other windows, and for GCC it first calls the commercial discovery endpoint
+(`api.powerbi.com`), which a proxy can block silently. The log now says when the window is expected; if nothing
+appears within a minute, press Ctrl+C and use `-AuthMode DeviceCode` or install Az.Accounts.
+
 **Multi-tenant accounts** (v2 "Multi-Tenant Selection", ported): when no `-TenantId` / `IMPACTIQ_TENANT_ID` was given
 and Az.Accounts is installed, the run first signs in through Az, lists the tenants the account can reach
 (`Get-AzTenant`) and, when there are several, shows a picker with the current/default tenant preselected (60-second
