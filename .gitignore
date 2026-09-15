@@ -6,6 +6,7 @@ Config/Temp/
 tests/TestResults/
 
 # Backups and workbooks produced by a run (keep the repo to code + config)
+Outputs/
 Model Backups/
 Report Backups/
 Dataflow Backups/

@@ -42,9 +42,9 @@ Describe 'Initialize-IQRun (fresh run) and the manifest' {
         $script:M.options.MaxRetries | Should -Be 5
     }
     It 'creates the backup folders for the run id' {
-        (Join-Path (Join-Path $script:Base 'Model Backups') '2026-09-04') | Should -Exist
-        (Join-Path (Join-Path $script:Base 'Report Backups') '2026-09-04') | Should -Exist
-        (Join-Path (Join-Path $script:Base 'Dataflow Backups') '2026-09-04') | Should -Exist
+        (Join-Path (Join-Path (Join-Path $script:Base 'Outputs') 'Model Backups') '2026-09-04') | Should -Exist
+        (Join-Path (Join-Path (Join-Path $script:Base 'Outputs') 'Report Backups') '2026-09-04') | Should -Exist
+        (Join-Path (Join-Path (Join-Path $script:Base 'Outputs') 'Dataflow Backups') '2026-09-04') | Should -Exist
     }
     It 'rejects a RunId that is not a plain folder name' {
         { Initialize-IQRun -RunId '../escape' -ResumePolicy Never } | Should -Throw

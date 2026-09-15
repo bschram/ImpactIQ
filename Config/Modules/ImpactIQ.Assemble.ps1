@@ -1477,8 +1477,8 @@ function Invoke-IQAssembleStage {
     catch { throw ("The ImportExcel module is required to build the workbooks (Install-Module ImportExcel -Scope CurrentUser). {0}" -f $_.Exception.Message) }
     if (-not (Get-Command -Name 'Export-Excel' -ErrorAction SilentlyContinue)) { throw 'Export-Excel (ImportExcel module) is not available.' }
 
-    # -OutputFolder wins, then the context's OutputFolder (-OutputFolder / IMPACTIQ_OUTPUT_FOLDER on the entry point),
-    # then the BaseFolder (the v2 layout: workbooks next to the script).
+    # -OutputFolder wins, then the context's OutputFolder (-OutputFolder / IMPACTIQ_OUTPUT_FOLDER on the entry point,
+    # default <BaseFolder>\Outputs), then the BaseFolder for a context created without one.
     if ([string]::IsNullOrWhiteSpace($OutputFolder) -and $script:IQ.ContainsKey('OutputFolder')) { $OutputFolder = [string]$script:IQ.OutputFolder }
     if ([string]::IsNullOrWhiteSpace($OutputFolder)) { $OutputFolder = [string]$script:IQ.BaseFolder }
     if ([string]::IsNullOrWhiteSpace($OutputFolder)) { throw 'No output folder (BaseFolder) is set.' }

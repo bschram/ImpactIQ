@@ -94,7 +94,7 @@ BeforeAll {
 
     function New-BackupFile {
         param([string]$Base, [string]$Kind, [string]$RunId, [string]$Name)
-        $folder = Join-Path (Join-Path $Base $Kind) $RunId
+        $folder = Join-Path (Join-Path (Join-Path $Base 'Outputs') $Kind) $RunId
         New-Item -ItemType Directory -Force -Path $folder | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $folder $Name), "backup $Name")
     }
@@ -212,7 +212,8 @@ Describe 'Stage artifacts step' -Skip:(-not $script:HasTemplate) {
             $auth = Join-Path (Join-Path $base 'State') 'auth'
             New-Item -ItemType Directory -Force -Path $auth | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $auth 'token-cache.json'), '{"encrypted":"x"}')
-            [System.IO.File]::WriteAllText((Join-Path $base 'Model Detail.xlsx'), 'not really a workbook')
+            New-Item -ItemType Directory -Force -Path (Join-Path $base 'Outputs') | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path (Join-Path $base 'Outputs') 'Model Detail.xlsx'), 'not really a workbook')
             New-Item -ItemType Directory -Force -Path (Join-Path $base 'Logs') | Out-Null
             [System.IO.File]::WriteAllText((Join-Path (Join-Path $base 'Logs') 'ImpactIQ.log'), 'log')
             New-Item -ItemType Directory -Force -Path (Join-Path $base 'staging') | Out-Null
@@ -267,7 +268,7 @@ Describe 'Stage artifacts step' -Skip:(-not $script:HasTemplate) {
 }
 
 Describe 'Restore run backups step' -Skip:(-not $script:HasTemplate) {
-    It 'moves the restored backups\Kind\RunId folders next to State, merging with files already there' {
+    It 'moves the restored backups\Kind\RunId folders into Outputs, merging with files already there' {
         $base = New-IQTestBaseFolder -Prefix 'pipe-restore'
         try {
             $restored = Join-Path (Join-Path $base 'State') 'backups'
@@ -280,10 +281,10 @@ Describe 'Restore run backups step' -Skip:(-not $script:HasTemplate) {
             New-BackupFile -Base $base -Kind 'Model Backups' -RunId '2026-07-30' -Name 'Local.bim'
             $r = Invoke-PipelineScript -DisplayName 'Restore run backups next to State' -Folder $base -Environment @{ IMPACTIQ_P_BASEFOLDER = $base }
             $r.ExitCode | Should -Be 0 -Because $r.Output
-            $modelRun = Join-Path (Join-Path $base 'Model Backups') '2026-07-30'
+            $modelRun = Join-Path (Join-Path (Join-Path $base 'Outputs') 'Model Backups') '2026-07-30'
             Get-Content -LiteralPath (Join-Path (Join-Path $modelRun 'sub') 'Sales.bim') -Raw | Should -Be 'restored'
             Test-Path -LiteralPath (Join-Path $modelRun 'Local.bim') | Should -BeTrue -Because 'files already on the agent are kept'
-            Test-Path -LiteralPath (Join-Path (Join-Path (Join-Path $base 'Report Backups') '2026-07-30') 'Sales.txt') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path (Join-Path (Join-Path (Join-Path $base 'Outputs') 'Report Backups') '2026-07-30') 'Sales.txt') | Should -BeTrue
             Test-Path -LiteralPath $restored | Should -BeFalse -Because 'the staging copy is removed after the merge'
             $r.Output | Should -Match 'Restored 2 backup file'
         }

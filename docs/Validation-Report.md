@@ -101,3 +101,20 @@ Pester tests with a mocked API) runs green on PowerShell 7.4 / Linux. The follow
 * Each module was additionally smoke-tested by its owner with strict mode (`Set-StrictMode -Version Latest`) and
   fake `TabularEditor.exe` / `pbi-tools.exe` shims to exercise the process pool, checkpoint and fallback paths.
 * The C# scripts were edited textually (brace balance checked; no compiler available on Linux) - see section 4.
+
+## 6. Findings from the first real run (GCC, 2026-09-15) and what changed
+
+The owner's first interactive run against one GCC workspace (19 models, 22 reports) ended `CompletedWithErrors` and its
+assessment surfaced six defects that the mocked tests could not see. All are fixed:
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | `pbi-tools generate-bim` writes `<extractFolder>.bim` **next to** the extract folder; the tool only searched inside it, so every Pro model was reported as "no .bim" | `Get-IQReportGeneratedBimFile` reads the path from the tool's "BIM file written to:" line, then looks beside the folder, then inside it; the source copy is removed after use |
+| 2 | The Power BI Desktop / msmdsrv kill switch matched pbi-tools' normal start-up lines ("Using Power BI Desktop install", "MSMDSRV.EXE found at"), so the first per-file problem disabled model extraction for the whole run | `Test-IQReportDesktopFailureText` only matches error phrasing (not found, could not start, missing...) |
+| 3 | No Fabric token could be minted (Az.Accounts refuses the Fabric resource in GCC), so every Fabric call, including the `getDefinition` fallback, was skipped, and the failure text said "returned no definition" for a call never made | Fabric calls use the Power BI token when no Fabric token exists (the Fabric REST API accepts it); a refused token or an unreachable host trips the circuit breaker once; the export note now says "Fabric API unavailable in this run (...)" |
+| 4 | A 401 `ModelExportActionDenied` (scorecards / metrics items) triggered a token refresh and retry, then counted as a failure; `ExportPBIX_ModelessWorkbookNotFound` and the large-format `PremiumFiles` refusal were failures too | A 401 whose body names a permission refusal is handled like a 403 (no refresh); the three service refusals are recorded as **Skipped** with the reason in `ReportExports` instead of in `Failures` |
+| 5 | A workspace listed without dedicated capacity held large-storage-format models (capacity only), so ModelBackup classed it as Pro and never tried XMLA | `Test-IQDedicatedCapacity`: the flag, a capacity id, or a `PremiumFiles` model all count as capacity; the model list logs when the dataset evidence overrides the workspace flag |
+| 6 | 19 x HTTP 400 warnings for `directQueryRefreshSchedule` on import models | A 400 on an optional collector is logged at Debug |
+
+Still to confirm on the next Windows run: model backups appear for the Pro workspace (`Outputs\Model Backups\<date>\*.bim`),
+the large-format models export over XMLA, and the three scorecard / metrics items show as Skipped in `ReportExports`.

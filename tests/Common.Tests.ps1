@@ -60,12 +60,13 @@ Describe 'Initialize-IQContext / Get-IQContext' {
 }
 
 Describe 'Initialize-IQContext BackupFolder / OutputFolder' {
-    It 'defaults the backup and output folders to the BaseFolder (v2 layout)' {
+    It 'defaults the backup and output folders to <BaseFolder>\Outputs and creates it' {
         $ctx = Get-IQContext
-        $ctx.BackupFolder | Should -Be $ctx.BaseFolder
-        $ctx.OutputFolder | Should -Be $ctx.BaseFolder
-        $ctx.Paths.ModelBackups | Should -Be (Join-Path $ctx.BaseFolder 'Model Backups')
-        Get-IQBackupRootFolder | Should -Be $ctx.BaseFolder
+        $ctx.BackupFolder | Should -Be (Join-Path $ctx.BaseFolder 'Outputs')
+        $ctx.OutputFolder | Should -Be (Join-Path $ctx.BaseFolder 'Outputs')
+        (Join-Path $ctx.BaseFolder 'Outputs') | Should -Exist
+        $ctx.Paths.ModelBackups | Should -Be (Join-Path (Join-Path $ctx.BaseFolder 'Outputs') 'Model Backups')
+        Get-IQBackupRootFolder | Should -Be $ctx.BackupFolder
     }
     It 'moves the three backup folders to an absolute -BackupFolder and creates it' {
         $saved = $script:IQ
@@ -79,7 +80,7 @@ Describe 'Initialize-IQContext BackupFolder / OutputFolder' {
             $ctx.Paths.DataflowBackups | Should -Be (Join-Path $ctx.BackupFolder 'Dataflow Backups')
             Get-IQBackupRootFolder | Should -Be $ctx.BackupFolder
             $ctx.StatePath | Should -Be (Join-Path $ctx.BaseFolder 'State')   # State and Logs never move
-            $ctx.OutputFolder | Should -Be $ctx.BaseFolder
+            $ctx.OutputFolder | Should -Be (Join-Path $ctx.BaseFolder 'Outputs')
         }
         finally { $script:IQ = $saved }
     }
@@ -397,5 +398,23 @@ Describe 'Get-IQExitCode (brief section 5.1)' {
     }
     It 'returns 1 for a missing manifest' {
         Get-IQExitCode -Manifest $null | Should -Be 1
+    }
+}
+
+Describe 'Test-IQDedicatedCapacity (run assessment 2026-09-15, fix 5)' {
+    It 'trusts an explicit isOnDedicatedCapacity flag' {
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceIsOnDedicatedCapacity = $true }) | Should -BeTrue
+        Test-IQDedicatedCapacity -Workspace @{ isOnDedicatedCapacity = 'True' } | Should -BeTrue
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceIsOnDedicatedCapacity = $false }) | Should -BeFalse
+    }
+    It 'a capacity id or a large-format (PremiumFiles) model proves a capacity even when the flag says no' {
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceIsOnDedicatedCapacity = $false; WorkspaceCapacityId = '3f2504e0-4f89-41d3-9a0c-0305e82c3301' }) | Should -BeTrue
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceIsOnDedicatedCapacity = $false }) -Dataset ([pscustomobject]@{ DatasetTargetStorageMode = 'PremiumFiles' }) | Should -BeTrue
+        Test-IQDedicatedCapacity -Dataset @{ targetStorageMode = 'Abf' } | Should -BeNullOrEmpty
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceCapacityId = '' }) | Should -BeNullOrEmpty
+    }
+    It 'returns $null when nothing is known' {
+        Test-IQDedicatedCapacity | Should -BeNullOrEmpty
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceName = 'x' }) | Should -BeNullOrEmpty
     }
 }

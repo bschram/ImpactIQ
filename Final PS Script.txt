@@ -7,10 +7,11 @@
 #    ImpactIQ.ps1 and run it (or paste the whole text into a PowerShell window opened in that folder). It starts
 #    ImpactIQ.ps1 with the interactive defaults - the environment dialog, the browser sign-in and the run-mode /
 #    workspace / report / model pickers all appear as before - and the four workbooks plus the Model / Report /
-#    Dataflow Backups folders land in the folder ImpactIQ runs from.
+#    Dataflow Backups folders land in the Outputs folder next to ImpactIQ.ps1.
 #
 #  WHERE THE DATA GOES
-#    By default everything stays next to ImpactIQ.ps1 (the folder you downloaded the repository into). To keep the
+#    By default everything a run produces goes to Outputs\ under the folder you downloaded the repository into
+#    (Config, State and Logs stay outside it). To keep the
 #    backups or the workbooks somewhere else, set IMPACTIQ_BACKUP_FOLDER and/or IMPACTIQ_OUTPUT_FOLDER before
 #    running this launcher, or add -BackupFolder / -OutputFolder to the ImpactIQ.ps1 call below. The old fixed
 #    location C:\Power BI Backups is no longer assumed; it is only used when this text is pasted into a console
@@ -86,11 +87,11 @@ catch {
 switch ($impactIqExitCode) {
     0 {
         Write-Host ''
-        Write-Host "[DONE] ImpactIQ finished. Open 'Power BI Governance Model.pbit' in '$impactIqBaseFolder', let it refresh and save it as .pbix." -ForegroundColor Green
+        Write-Host "[DONE] ImpactIQ finished. Open 'Power BI Governance Model.pbit' in '$impactIqBaseFolder', set its Base Directory to '$impactIqBaseFolder\Outputs' (or the folder you chose with IMPACTIQ_OUTPUT_FOLDER), let it refresh and save it as .pbix." -ForegroundColor Green
     }
     2 {
         Write-Host ''
-        Write-Host "[DONE] ImpactIQ finished with some item failures - the workbooks were still produced. Check the 'Failures' sheet in 'Power BI Environment Detail.xlsx' and the newest file in '$impactIqBaseFolder\Logs'. Running this launcher again retries only what failed." -ForegroundColor Yellow
+        Write-Host "[DONE] ImpactIQ finished with some item failures - the workbooks were still produced. Check the 'Failures' sheet in 'Outputs\Power BI Environment Detail.xlsx' and the newest file in '$impactIqBaseFolder\Logs'. Running this launcher again retries only what failed." -ForegroundColor Yellow
     }
     3 {
         Write-Host ''

@@ -70,7 +70,7 @@ keeps working. What is new:
 | Area | v2 | v3 |
 |---|---|---|
 | Entry point | one 3,740-line interactive script | `ImpactIQ.ps1` plus fourteen modules under `Config\Modules\`; `Final PS Script.txt` is a thin launcher for the interactive experience |
-| Where it runs from | hard-coded `C:\Power BI Backups` | the folder you downloaded it to; backups and workbooks can be moved with `-BackupFolder` / `-OutputFolder` |
+| Where it runs from | hard-coded `C:\Power BI Backups`, data mixed with the script | the folder you downloaded it to; backups and workbooks go to `Outputs\` under it and can be moved with `-BackupFolder` / `-OutputFolder` |
 | Headless | not possible (dialogs, browser sign-in, `Read-Host`) | `-NonInteractive` plus a parameter or `IMPACTIQ_*` variable for every former prompt; no scope given means the run stops instead of scanning the tenant |
 | Interruptions | start over | every workspace, model, report, model-detail CSV and dataflow is checkpointed the moment it finishes; re-running skips what succeeded and retries what failed; `-TimeBudgetMinutes` pauses cleanly before a job cap and resumes on the next run |
 | Sign-in | browser every 55 minutes | silent token refresh; `DeviceCode` with an encrypted refresh-token cache, `Credential`, `AzContext`, `AccessToken`, and the original `Interactive` |
@@ -87,7 +87,7 @@ keeps working. What is new:
 
 ## 🚀 Quick Start (interactive, 5 minutes)
 
-The v2 experience: dialogs, browser sign-in, pickers, and the workbooks next to the script when it finishes.
+The v2 experience: dialogs, browser sign-in, pickers, and the workbooks in the `Outputs` folder when it finishes.
 
 1. **Download this repository** (Code > Download ZIP, or `git clone`) and extract it into any folder, for example
    `C:\ImpactIQ`. Keep the layout: `ImpactIQ.ps1`, `Final PS Script.txt`, `Config\`, `Power BI Governance Model.pbit`.
@@ -102,9 +102,11 @@ The v2 experience: dialogs, browser sign-in, pickers, and the workbooks next to 
    reports or models, then pick them.
 4. **Wait.** The console shows each stage and ends with a per-stage summary, the four workbook paths and the log file.
    If the run is interrupted, run the launcher again: finished items are skipped.
-5. **Open `Power BI Governance Model.pbit`**, set `Base Directory` to the folder, let it refresh, save as `.pbix`.
+5. **Open `Power BI Governance Model.pbit`**, set `Base Directory` to the `Outputs` folder (for example
+   `C:\ImpactIQ\Outputs`), let it refresh, save as `.pbix`.
 
-📂 **All backups and the four workbooks land in the folder you ran it from.** To put them elsewhere, set
+📂 **All backups and the four workbooks land in `Outputs\` under the folder you ran it from.** The code, `Config\`,
+`State\` and `Logs\` stay outside it. To put the data elsewhere, set
 `IMPACTIQ_BACKUP_FOLDER` and/or `IMPACTIQ_OUTPUT_FOLDER` before running the launcher (or pass `-BackupFolder` /
 `-OutputFolder` to `ImpactIQ.ps1`).
 
@@ -154,7 +156,7 @@ all → Option D**; **an MFA-exempt service account that security accepts → Op
    The launcher finds `ImpactIQ.ps1` next to itself.
 3. Choose the environment, the tenant if your account belongs to several, sign in in the browser, choose the run
    mode and the workspaces, reports or models.
-4. When it finishes, open `Power BI Governance Model.pbit`, point `Base Directory` at `C:\ImpactIQ`, refresh, save as
+4. When it finishes, open `Power BI Governance Model.pbit`, point `Base Directory` at `C:\ImpactIQ\Outputs`, refresh, save as
    `.pbix`.
 5. Re-run whenever you want fresh data. A run interrupted the same day resumes; `-Force` on `ImpactIQ.ps1` starts
    the day over.
@@ -190,7 +192,7 @@ Runs nightly on a workstation or a server as a user who signed in once. Nothing 
 6. **Check the result**: the task's *Last Run Result* is the exit code (`0` ok, `2` finished with item failures,
    `3` paused by a time budget, `1` fatal). Details are in `Logs\ImpactIQ_<timestamp>.log` and the `Failures` sheet.
 7. **Connect the template**: open the `.pbit` on the machine (or on any machine that can read the output folder),
-   set `Base Directory`, refresh, publish. For a scheduled refresh in the Service, see
+   set `Base Directory` to the `Outputs` folder, refresh, publish. For a scheduled refresh in the Service, see
    [Connecting the Power BI Governance Model](#connecting-the-power-bi-governance-model).
 8. **Every ~90 days** (or after a password change or a Conditional Access change) the log says `invalid_grant`:
    repeat step 3.
@@ -295,7 +297,7 @@ Access. Microsoft is retiring the password grant; expect this to stop working on
 `Power BI Governance Model.pbit` reads the four workbooks through the parameters `UseWeb`, `Base Directory`,
 `Base Model File`, `Base Report File`, `Base Environment File` and `Base Dataflow File`.
 
-- **Local files (Options A, B)**: `UseWeb = false`, `Base Directory` = the output folder. Refresh in Desktop. The
+- **Local files (Options A, B)**: `UseWeb = false`, `Base Directory` = the `Outputs` folder (or your `-OutputFolder`). Refresh in Desktop. The
   Service can refresh a local folder only through an on-premises data gateway installed on that machine.
 - **Azure Repos with a read-only PAT (Options C, D, E; no gateway)**: set `commitOutputs: true` so the pipeline
   pushes `outputs\*.xlsx` to the `data` branch. One-time: give `<Project> Build Service (<Org>)` *Contribute* and
@@ -338,15 +340,16 @@ Access. Microsoft is retiring the password grant; expect this to stop working on
   State\runs\<yyyy-MM-dd>\     manifest.json, per-item checkpoints, inventory JSON, DAX and dataflow extracts, tool logs
   State\auth\token-cache.json  encrypted refresh token (DeviceCode)
   Logs\ImpactIQ_<timestamp>.log
-  Model Backups\<yyyy-MM-dd>\    <Workspace> ~ <Model>.bim, .csv          }  -BackupFolder / IMPACTIQ_BACKUP_FOLDER
-  Report Backups\<yyyy-MM-dd>\   <Workspace> ~ <Report>.pbix|.rdl, *.txt  }  moves these three
-  Dataflow Backups\<yyyy-MM-dd>\ <Workspace> ~ <Dataflow>.txt|.pq         }
-  Power BI Environment Detail.xlsx, Report Detail.xlsx,                   }  -OutputFolder / IMPACTIQ_OUTPUT_FOLDER
-  Model Detail.xlsx, Dataflow Detail.xlsx                                 }  moves these four
+  Outputs\                                 everything a run produces (set Base Directory in the .pbit to this folder)
+    Model Backups\<yyyy-MM-dd>\    <Workspace> ~ <Model>.bim, .csv          }  -BackupFolder / IMPACTIQ_BACKUP_FOLDER
+    Report Backups\<yyyy-MM-dd>\   <Workspace> ~ <Report>.pbix|.rdl, *.txt  }  moves these three
+    Dataflow Backups\<yyyy-MM-dd>\ <Workspace> ~ <Dataflow>.txt|.pq         }
+    Power BI Environment Detail.xlsx, Report Detail.xlsx,                   }  -OutputFolder / IMPACTIQ_OUTPUT_FOLDER
+    Model Detail.xlsx, Dataflow Detail.xlsx                                 }  moves these four
 ```
 
-`Config\`, `State\` and `Logs\` always stay in the base folder. A relative `-BackupFolder Data` is created under the
-base folder; an absolute path or a UNC share works too. Keep the same folders between the runs of one day: the
+`Config\`, `State\` and `Logs\` always stay in the base folder; everything a run produces goes under `Outputs\`. A
+relative `-BackupFolder Data` is created under the base folder; an absolute path or a UNC share works too. Keep the same folders between the runs of one day: the
 checkpoints record where each file was written.
 
 ---
@@ -381,7 +384,7 @@ pass arguments (full list in [docs/Headless-and-Resume.md](docs/Headless-and-Res
 | Parameter | Variable | Meaning |
 |---|---|---|
 | `-BaseFolder` | `IMPACTIQ_BASE_FOLDER` | deployment folder; default: where the script runs from |
-| `-BackupFolder`, `-OutputFolder` | `IMPACTIQ_BACKUP_FOLDER`, `IMPACTIQ_OUTPUT_FOLDER` | move the backups / the workbooks; default: the base folder |
+| `-BackupFolder`, `-OutputFolder` | `IMPACTIQ_BACKUP_FOLDER`, `IMPACTIQ_OUTPUT_FOLDER` | move the backups / the workbooks; default: `Outputs\` under the base folder |
 | `-Environment` | `IMPACTIQ_ENVIRONMENT` | `Public`, `USGov`/`GCC`, `USGovHigh`/`GCCHigh`, `USGovMil`/`DoD`, `China` |
 | `-AuthMode` | (see variables below) | `Auto`, `Interactive`, `DeviceCode`, `Credential`, `AzContext`, `AccessToken` |
 | `-TokenCacheKey` | `IMPACTIQ_TOKEN_CACHE_KEY` | AES key for the refresh-token cache on hosted agents (DPAPI on Windows without it) |

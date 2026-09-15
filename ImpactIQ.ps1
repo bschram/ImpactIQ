@@ -22,15 +22,16 @@
 
 .PARAMETER BaseFolder
     Root folder: contains Config\ (csx scripts, Blank Model.bim, TabularEditor\, PBI Tools\, Modules\) and receives
-    State\ and Logs\ (and, unless -BackupFolder / -OutputFolder say otherwise, the backups and the workbooks).
+    State\ and Logs\ (the backups and the workbooks go to <BaseFolder>\Outputs unless -BackupFolder / -OutputFolder
+    say otherwise).
     Default: IMPACTIQ_BASE_FOLDER, else the folder this script runs from. 'C:\Power BI Backups' is only used when the
     script was pasted into a console (no script path) and that folder exists.
 .PARAMETER BackupFolder
-    Where Model Backups\, Report Backups\ and Dataflow Backups\ are written (or IMPACTIQ_BACKUP_FOLDER). Default: the
-    BaseFolder. A relative path is resolved under the BaseFolder.
+    Where Model Backups\, Report Backups\ and Dataflow Backups\ are written (or IMPACTIQ_BACKUP_FOLDER). Default:
+    <BaseFolder>\Outputs. A relative path is resolved under the BaseFolder.
 .PARAMETER OutputFolder
-    Where the four workbooks are written (or IMPACTIQ_OUTPUT_FOLDER). Default: the BaseFolder, which is where the
-    Power BI Governance Model template looks. A relative path is resolved under the BaseFolder.
+    Where the four workbooks are written (or IMPACTIQ_OUTPUT_FOLDER). Default: <BaseFolder>\Outputs; point the Power
+    BI Governance Model template's Base Directory there. A relative path is resolved under the BaseFolder.
 .PARAMETER Environment
     Power BI cloud: Public (aliases Commercial, Global), USGov (alias GCC), USGovHigh (alias GCCHigh), USGovMil
     (alias DoD), China, Germany. Every REST, OAuth, XMLA, Fabric and portal URL follows this choice

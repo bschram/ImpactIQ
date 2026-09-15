@@ -63,14 +63,16 @@ function Initialize-IQContext {
     $isAzureDevOps = ($env:TF_BUILD -eq 'True')
 
     # Where the data lands. BackupFolder holds "Model Backups", "Report Backups" and "Dataflow Backups"; OutputFolder
-    # receives the four workbooks. Both default to the BaseFolder (the v2 layout); relative values are resolved against
-    # the BaseFolder so "-BackupFolder Data" keeps the deployment self-contained. Config, State and Logs never move.
+    # receives the four workbooks. Both default to <BaseFolder>\Outputs so the code, Config, State and Logs stay apart
+    # from what a run produces; relative values are resolved against the BaseFolder so "-BackupFolder Data" keeps the
+    # deployment self-contained. Config, State and Logs never move.
+    $defaultDataFolder = Join-Path $BaseFolder 'Outputs'
     $backupFolder = [string]$Options['BackupFolder']
-    if ([string]::IsNullOrWhiteSpace($backupFolder)) { $backupFolder = $BaseFolder }
+    if ([string]::IsNullOrWhiteSpace($backupFolder)) { $backupFolder = $defaultDataFolder }
     elseif (-not [System.IO.Path]::IsPathRooted($backupFolder)) { $backupFolder = Join-Path $BaseFolder $backupFolder }
     $backupFolder = Resolve-IQFullPath -Path $backupFolder
     $outputFolder = [string]$Options['OutputFolder']
-    if ([string]::IsNullOrWhiteSpace($outputFolder)) { $outputFolder = $BaseFolder }
+    if ([string]::IsNullOrWhiteSpace($outputFolder)) { $outputFolder = $defaultDataFolder }
     elseif (-not [System.IO.Path]::IsPathRooted($outputFolder)) { $outputFolder = Join-Path $BaseFolder $outputFolder }
     $outputFolder = Resolve-IQFullPath -Path $outputFolder
     foreach ($folder in @($backupFolder, $outputFolder)) {
@@ -132,6 +134,48 @@ function Get-IQBackupRootFolder {
     if (-not $script:IQ) { throw 'ImpactIQ context not initialised. Call Initialize-IQContext first.' }
     if ($script:IQ.ContainsKey('BackupFolder') -and -not [string]::IsNullOrWhiteSpace([string]$script:IQ.BackupFolder)) { return [string]$script:IQ.BackupFolder }
     return [string]$script:IQ.BaseFolder
+}
+
+function Test-IQDedicatedCapacity {
+    <#
+    .SYNOPSIS
+        $true when a workspace row and/or its dataset row shows dedicated capacity; $false when the API said no; $null when nothing is known.
+    .DESCRIPTION
+        Evidence, any of which wins: isOnDedicatedCapacity / WorkspaceIsOnDedicatedCapacity true; a capacityId /
+        WorkspaceCapacityId GUID (Premium, PPU, Fabric or Embedded capacity assignment); a dataset in the large
+        semantic model storage format (targetStorageMode / DatasetTargetStorageMode = PremiumFiles), which only
+        exists on a capacity. A workspace the listing reports as not dedicated but whose models are large-format was
+        classed as Pro in v3.0 and never exported over XMLA (run assessment 2026-09-15, fix 5).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()]$Workspace,
+        [Parameter(Mandatory = $false)][AllowNull()]$Dataset
+    )
+    $known = $false
+    foreach ($object in @($Workspace, $Dataset)) {
+        if ($null -eq $object) { continue }
+        foreach ($name in @('WorkspaceIsOnDedicatedCapacity', 'isOnDedicatedCapacity')) {
+            $value = Get-IQMemberValue -Object $object -Name $name
+            if ($null -eq $value) { continue }
+            $known = $true
+            if ($value -is [bool]) { if ($value) { return $true } }
+            else {
+                $text = ([string]$value).Trim()
+                if ($text -ieq 'true' -or $text -eq '1') { return $true }
+            }
+        }
+        foreach ($name in @('WorkspaceCapacityId', 'capacityId')) {
+            $value = [string](Get-IQMemberValue -Object $object -Name $name)
+            if ($value -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { return $true }
+        }
+        foreach ($name in @('DatasetTargetStorageMode', 'targetStorageMode')) {
+            $value = [string](Get-IQMemberValue -Object $object -Name $name)
+            if ($value.Trim() -ieq 'PremiumFiles') { return $true }
+        }
+    }
+    if ($known) { return $false }
+    return $null
 }
 
 function Resolve-IQFullPath {

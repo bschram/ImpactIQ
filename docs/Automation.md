@@ -31,7 +31,7 @@ principal, no Azure VM, Azure DevOps available**. Everything also applies to com
   (`0` clean, `2` finished with item failures, `3` paused - `-TimeBudgetMinutes` reached, the next run resumes it,
   `1` fatal).
 * **Same outputs** - `Power BI Environment Detail.xlsx`, `Report Detail.xlsx`, `Model Detail.xlsx`,
-  `Dataflow Detail.xlsx` in the base folder; backups under `Model Backups\<yyyy-MM-dd>\`, `Report Backups\<yyyy-MM-dd>\`,
+  `Dataflow Detail.xlsx` in `Outputs\` under the base folder; backups under `Outputs\Model Backups\<yyyy-MM-dd>\`, `Outputs\Report Backups\<yyyy-MM-dd>\`,
   `Dataflow Backups\<yyyy-MM-dd>\`. New sheets and columns are additive only (see Data-Coverage.md).
 
 The interactive experience is unchanged: double-click `Final PS Script` (now a thin launcher) or run `ImpactIQ.ps1`
@@ -128,8 +128,8 @@ Every variable is optional; parameters win over variables. Secrets are never log
 | Variable | Used for | Equivalent parameter |
 |---|---|---|
 | `IMPACTIQ_BASE_FOLDER` | the deployment folder (`Config\`, `State\`, `Logs\`); default: the folder `ImpactIQ.ps1` runs from | `-BaseFolder` |
-| `IMPACTIQ_BACKUP_FOLDER` | where `Model Backups\`, `Report Backups\`, `Dataflow Backups\` are written; default: the base folder; a relative value lands under it | `-BackupFolder` |
-| `IMPACTIQ_OUTPUT_FOLDER` | where the four workbooks are written; default: the base folder (what the `.pbit` expects) | `-OutputFolder` |
+| `IMPACTIQ_BACKUP_FOLDER` | where `Model Backups\`, `Report Backups\`, `Dataflow Backups\` are written; default: `<base folder>\Outputs`; a relative value lands under the base folder | `-BackupFolder` |
+| `IMPACTIQ_OUTPUT_FOLDER` | where the four workbooks are written; default: `<base folder>\Outputs` (point the `.pbit`'s `Base Directory` there) | `-OutputFolder` |
 | `IMPACTIQ_ENVIRONMENT` | `Public`, `USGov`, `USGovHigh`, `USGovMil`, `China`, `Germany` (aliases `GCC`, `GCCHigh`, `DoD` accepted) | `-Environment` |
 | `IMPACTIQ_USERNAME`, `IMPACTIQ_PASSWORD` | `Credential` mode (ROPC). Both set -> `Auto` picks `Credential` | `-Credential` |
 | `IMPACTIQ_PBI_TOKEN` (+ `IMPACTIQ_FABRIC_TOKEN`) | `AccessToken` mode: a bearer token minted elsewhere; no refresh possible | `-AuthMode AccessToken` |
@@ -153,5 +153,5 @@ Every variable is optional; parameters win over variables. Secrets are never log
    `State\runs\<RunId>\manifest.json`.
 4. Stages run in order, each item checkpointed. The console (and the log) ends with a per-stage summary table, the four
    output paths and the exit code.
-5. Open `Power BI Governance Model.pbit`, point `Base Directory` at the folder (or set `UseWeb` for SharePoint /
+5. Open `Power BI Governance Model.pbit`, point `Base Directory` at the `Outputs` folder (or set `UseWeb` for SharePoint /
    Azure Repos, see Azure-DevOps.md section 6) and refresh.
