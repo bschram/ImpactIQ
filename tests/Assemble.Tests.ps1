@@ -32,7 +32,7 @@ BeforeAll {
     # A header-only NON-contract txt (ReportExports.txt as written when nothing was exported) must still become a sheet.
     [System.IO.File]::WriteAllText((Join-Path $script:IQ.RunPaths.ReportBackups 'ReportExports.txt'), "ReportName`tReportID`tExportStatus`tExportMessage`r`n", (New-Object System.Text.UTF8Encoding($false)))
     # A temp workbook left behind by a killed earlier run must be cleaned up by the next Assemble.
-    [System.IO.File]::WriteAllText((Join-Path $script:Base 'Power BI Environment Detail.tmp-deadbeef.xlsx'), 'stale')
+    [System.IO.File]::WriteAllText((Join-Path (Join-Path $script:Base 'Outputs') 'Power BI Environment Detail.tmp-deadbeef.xlsx'), 'stale')
     Copy-IQTestFixtureFolder -Relative 'extracts/model-detail' -Destination $script:IQ.RunPaths.ModelBackups
     $dfFolder = Join-Path $script:IQ.RunPaths.Extracts 'dataflows'
     New-Item -ItemType Directory -Path $dfFolder -Force | Out-Null
@@ -42,15 +42,16 @@ BeforeAll {
     $script:Contract = ConvertFrom-IQJsonFile -Path (Join-Path (Join-Path $script:Base 'Config') 'SheetContract.json')
     $script:Result = $null
     if ($script:HasImportExcel) { $script:Status = Invoke-IQStage -Name Assemble -Body { $script:Result = Invoke-IQAssembleStage } }
-    $script:EnvPath = Join-Path $script:Base 'Power BI Environment Detail.xlsx'
-    $script:RepPath = Join-Path $script:Base 'Report Detail.xlsx'
-    $script:ModPath = Join-Path $script:Base 'Model Detail.xlsx'
-    $script:DfPath = Join-Path $script:Base 'Dataflow Detail.xlsx'
+    $script:OutputsPath = Join-Path $script:Base 'Outputs'
+    $script:EnvPath = Join-Path $script:OutputsPath 'Power BI Environment Detail.xlsx'
+    $script:RepPath = Join-Path $script:OutputsPath 'Report Detail.xlsx'
+    $script:ModPath = Join-Path $script:OutputsPath 'Model Detail.xlsx'
+    $script:DfPath = Join-Path $script:OutputsPath 'Dataflow Detail.xlsx'
 }
 AfterAll { Remove-IQTestFolder -Path $script:Base }
 
 Describe 'Invoke-IQAssembleStage' -Skip:(-not $script:HasImportExcel) {
-    It 'builds the four workbooks in the BaseFolder (and the dataflow workbook in its run folder) without leaving temp files' {
+    It 'builds the four workbooks in the Outputs folder (and the dataflow workbook in its run folder) without leaving temp files' {
         $script:Status | Should -Be 'Completed'
         foreach ($p in @($script:EnvPath, $script:RepPath, $script:ModPath, $script:DfPath)) { $p | Should -Exist }
         (Join-Path $script:IQ.RunPaths.DataflowBackups 'Dataflow Detail.xlsx') | Should -Exist
@@ -66,7 +67,7 @@ Describe 'Invoke-IQAssembleStage' -Skip:(-not $script:HasImportExcel) {
     }
     It 'every contract sheet exists with every expected column: <Workbook> / <Sheet>' -TestCases $script:ContractCases {
         param($Workbook, $Sheet, $Columns)
-        $path = Join-Path $script:Base $Workbook
+        $path = Join-Path (Join-Path $script:Base 'Outputs') $Workbook
         @(Get-ExcelSheetInfo -Path $path | Where-Object { $_.Name -eq $Sheet }).Count | Should -Be 1
         $header = @(Get-IQTestSheetHeader -Path $path -Sheet $Sheet)
         $header.Count | Should -BeGreaterOrEqual 1
@@ -170,7 +171,7 @@ Describe 'Assemble on an empty run state' -Skip:(-not $script:HasImportExcel) {
         $script:Result2.Built | Should -Be 4
         $script:Result2.Failed | Should -Be 0
         foreach ($wb in $script:Contract.workbooks.PSObject.Properties) {
-            $path = Join-Path $script:Base2 $wb.Name
+            $path = Join-Path (Join-Path $script:Base2 'Outputs') $wb.Name
             $path | Should -Exist
             $sheets = @(Get-ExcelSheetInfo -Path $path | ForEach-Object { $_.Name })
             foreach ($sheet in $wb.Value.PSObject.Properties) {
@@ -179,7 +180,7 @@ Describe 'Assemble on an empty run state' -Skip:(-not $script:HasImportExcel) {
                 @($sheet.Value.expectedColumns | Where-Object { $_ -notin $hdr }) | Should -BeNullOrEmpty
             }
         }
-        (Get-IQTestSheetHeader -Path (Join-Path $script:Base2 'Dataflow Detail.xlsx') -Sheet 'Sheet1') -join ',' | Should -Be 'Dataflow ID,Dataflow Name,Query Name,Query,Report Date,Workspace Name - Dataflow Name,RowError,RowState,Table,ItemArray,HasErrors'
+        (Get-IQTestSheetHeader -Path (Join-Path (Join-Path $script:Base2 'Outputs') 'Dataflow Detail.xlsx') -Sheet 'Sheet1') -join ',' | Should -Be 'Dataflow ID,Dataflow Name,Query Name,Query,Report Date,Workspace Name - Dataflow Name,RowError,RowState,Table,ItemArray,HasErrors'
     }
     It 'rebuilding over existing workbooks works (temp file then move)' {
         $r = Invoke-IQAssembleStage
@@ -194,7 +195,7 @@ Describe 'Report Detail.xlsx: header-only non-contract txt files keep their head
         (Get-IQTestSheetHeader -Path $script:RepPath -Sheet 'ReportExports') -join ',' | Should -Be 'ReportName,ReportID,ExportStatus,ExportMessage'
     }
     It 'the stale temp workbook of an earlier run was removed by the rebuild (ASM-06)' {
-        (Join-Path $script:Base 'Power BI Environment Detail.tmp-deadbeef.xlsx') | Should -Not -Exist
+        (Join-Path (Join-Path $script:Base 'Outputs') 'Power BI Environment Detail.tmp-deadbeef.xlsx') | Should -Not -Exist
     }
 }
 
@@ -358,11 +359,11 @@ Describe 'Assemble records unreadable source files and never reads another run''
         @($f | Where-Object { $_.itemKey -like 'source-*' }).Count | Should -Be 2
         @($f | Where-Object { $_.item -like '*extras-scandatasets.json' }).Count | Should -Be 1
         @($f | Where-Object { $_.item -like '*broken.json' }).Count | Should -Be 1
-        (Join-Path $script:Base3 'Power BI Environment Detail.xlsx') | Should -Exist
+        (Join-Path (Join-Path $script:Base3 'Outputs') 'Power BI Environment Detail.xlsx') | Should -Exist
     }
     It 'does not fall back to another run''s Model Backups folder while a run is active' {
         Get-IQAssembleFolder -Kind 'Model' | Should -BeNullOrEmpty
-        @(Import-Excel -Path (Join-Path $script:Base3 'Model Detail.xlsx') -WorksheetName 'Semantic Models' -WarningAction SilentlyContinue).Count | Should -Be 0
+        @(Import-Excel -Path (Join-Path (Join-Path $script:Base3 'Outputs') 'Model Detail.xlsx') -WorksheetName 'Semantic Models' -WarningAction SilentlyContinue).Count | Should -Be 0
     }
     It 'writes the Dataflow workbook into this run''s (re-created) Dataflow Backups folder, not the other run''s' {
         (Join-Path $script:IQ.RunPaths.DataflowBackups 'Dataflow Detail.xlsx') | Should -Exist

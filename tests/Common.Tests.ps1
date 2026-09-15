@@ -60,12 +60,13 @@ Describe 'Initialize-IQContext / Get-IQContext' {
 }
 
 Describe 'Initialize-IQContext BackupFolder / OutputFolder' {
-    It 'defaults the backup and output folders to the BaseFolder (v2 layout)' {
+    It 'defaults the backup and output folders to <BaseFolder>\Outputs and creates it' {
         $ctx = Get-IQContext
-        $ctx.BackupFolder | Should -Be $ctx.BaseFolder
-        $ctx.OutputFolder | Should -Be $ctx.BaseFolder
-        $ctx.Paths.ModelBackups | Should -Be (Join-Path $ctx.BaseFolder 'Model Backups')
-        Get-IQBackupRootFolder | Should -Be $ctx.BaseFolder
+        $ctx.BackupFolder | Should -Be (Join-Path $ctx.BaseFolder 'Outputs')
+        $ctx.OutputFolder | Should -Be (Join-Path $ctx.BaseFolder 'Outputs')
+        (Join-Path $ctx.BaseFolder 'Outputs') | Should -Exist
+        $ctx.Paths.ModelBackups | Should -Be (Join-Path (Join-Path $ctx.BaseFolder 'Outputs') 'Model Backups')
+        Get-IQBackupRootFolder | Should -Be $ctx.BackupFolder
     }
     It 'moves the three backup folders to an absolute -BackupFolder and creates it' {
         $saved = $script:IQ
@@ -79,7 +80,7 @@ Describe 'Initialize-IQContext BackupFolder / OutputFolder' {
             $ctx.Paths.DataflowBackups | Should -Be (Join-Path $ctx.BackupFolder 'Dataflow Backups')
             Get-IQBackupRootFolder | Should -Be $ctx.BackupFolder
             $ctx.StatePath | Should -Be (Join-Path $ctx.BaseFolder 'State')   # State and Logs never move
-            $ctx.OutputFolder | Should -Be $ctx.BaseFolder
+            $ctx.OutputFolder | Should -Be (Join-Path $ctx.BaseFolder 'Outputs')
         }
         finally { $script:IQ = $saved }
     }

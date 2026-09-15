@@ -63,14 +63,16 @@ function Initialize-IQContext {
     $isAzureDevOps = ($env:TF_BUILD -eq 'True')
 
     # Where the data lands. BackupFolder holds "Model Backups", "Report Backups" and "Dataflow Backups"; OutputFolder
-    # receives the four workbooks. Both default to the BaseFolder (the v2 layout); relative values are resolved against
-    # the BaseFolder so "-BackupFolder Data" keeps the deployment self-contained. Config, State and Logs never move.
+    # receives the four workbooks. Both default to <BaseFolder>\Outputs so the code, Config, State and Logs stay apart
+    # from what a run produces; relative values are resolved against the BaseFolder so "-BackupFolder Data" keeps the
+    # deployment self-contained. Config, State and Logs never move.
+    $defaultDataFolder = Join-Path $BaseFolder 'Outputs'
     $backupFolder = [string]$Options['BackupFolder']
-    if ([string]::IsNullOrWhiteSpace($backupFolder)) { $backupFolder = $BaseFolder }
+    if ([string]::IsNullOrWhiteSpace($backupFolder)) { $backupFolder = $defaultDataFolder }
     elseif (-not [System.IO.Path]::IsPathRooted($backupFolder)) { $backupFolder = Join-Path $BaseFolder $backupFolder }
     $backupFolder = Resolve-IQFullPath -Path $backupFolder
     $outputFolder = [string]$Options['OutputFolder']
-    if ([string]::IsNullOrWhiteSpace($outputFolder)) { $outputFolder = $BaseFolder }
+    if ([string]::IsNullOrWhiteSpace($outputFolder)) { $outputFolder = $defaultDataFolder }
     elseif (-not [System.IO.Path]::IsPathRooted($outputFolder)) { $outputFolder = Join-Path $BaseFolder $outputFolder }
     $outputFolder = Resolve-IQFullPath -Path $outputFolder
     foreach ($folder in @($backupFolder, $outputFolder)) {

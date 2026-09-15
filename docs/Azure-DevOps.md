@@ -144,7 +144,7 @@ checkout  ->  restore impactiq-state (previous run)  ->  install modules  ->  Ru
 
 `Power BI Governance Model.pbit` reads the four workbooks through the parameters `UseWeb` (true/false),
 `Base Directory`, `Base Model File`, `Base Report File`, `Base Environment File`, `Base Dataflow File`. With
-`UseWeb = false` it opens local files (set `Base Directory` to the folder ImpactIQ runs from, or to `-OutputFolder` when you moved the workbooks) - fine on a workstation, useless in the Power
+`UseWeb = false` it opens local files (set `Base Directory` to `<base folder>\Outputs`, or to `-OutputFolder` when you moved the workbooks) - fine on a workstation, useless in the Power
 BI Service. Two ways to make the Service refresh from what the pipeline produced:
 
 ### 6.1 Azure Repos + PAT (no gateway, no service principal) - `commitOutputs: true`

@@ -135,7 +135,7 @@ Describe '-Stages validation and run resolution without Inventory' -Skip:(-not $
     It 'refuses -Stages Assemble when no run exists instead of assembling an empty fresh run' {
         $script:RunNoRun.ExitCode | Should -Not -Be 0 -Because $script:RunNoRun.Output
         $script:RunNoRun.Output | Should -Match '(?i)no previous run'
-        foreach ($f in @('Power BI Environment Detail.xlsx', 'Report Detail.xlsx', 'Model Detail.xlsx', 'Dataflow Detail.xlsx')) { (Join-Path $script:Base4 $f) | Should -Not -Exist }
+        foreach ($f in @('Power BI Environment Detail.xlsx', 'Report Detail.xlsx', 'Model Detail.xlsx', 'Dataflow Detail.xlsx')) { (Join-Path (Join-Path $script:Base4 'Outputs') $f) | Should -Not -Exist }
         $runs = Join-Path (Join-Path $script:Base4 'State') 'runs'
         if (Test-Path -LiteralPath $runs) { @(Get-ChildItem -LiteralPath $runs -Directory).Count | Should -Be 0 -Because 'no run folder may be created for a stage list that cannot run' }
     }
@@ -162,7 +162,7 @@ Describe '-Stages Assemble on a prepared state folder' -Skip:(-not ($script:HasE
     AfterAll { Remove-IQTestFolder -Path $script:Base2 }
     It 'exits 0 and produces the four workbooks' {
         $script:Run2.ExitCode | Should -Be 0 -Because $script:Run2.Output
-        foreach ($f in @('Power BI Environment Detail.xlsx', 'Report Detail.xlsx', 'Model Detail.xlsx', 'Dataflow Detail.xlsx')) { (Join-Path $script:Base2 $f) | Should -Exist }
+        foreach ($f in @('Power BI Environment Detail.xlsx', 'Report Detail.xlsx', 'Model Detail.xlsx', 'Dataflow Detail.xlsx')) { (Join-Path (Join-Path $script:Base2 'Outputs') $f) | Should -Exist }
     }
     It 'records the outputs in the manifest and marks the run Completed' {
         $manifest = ConvertFrom-IQJsonFile -Path (Join-Path (Join-Path (Join-Path (Join-Path $script:Base2 'State') 'runs') 'entry-assemble') 'manifest.json')
@@ -172,7 +172,7 @@ Describe '-Stages Assemble on a prepared state folder' -Skip:(-not ($script:HasE
         $manifest.stages.Inventory.status | Should -Be 'Completed' -Because 'the prepared inventory stage is kept on resume'
     }
     It 'the assembled Model Detail workbook contains the prepared CSV rows' {
-        @(Import-Excel -Path (Join-Path $script:Base2 'Model Detail.xlsx') -WorksheetName 'Semantic Models').Count | Should -Be 5
+        @(Import-Excel -Path (Join-Path (Join-Path $script:Base2 'Outputs') 'Model Detail.xlsx') -WorksheetName 'Semantic Models').Count | Should -Be 5
     }
     It '-OutputFolder (relative to the BaseFolder) moves the four workbooks; -Environment accepts the GCC alias' {
         $run = Invoke-Entry -Base $script:Base2 -Parameters @{ BaseFolder = $script:Base2; OutputFolder = 'out'; NonInteractive = $true; Environment = 'Public'; AuthMode = 'AccessToken'; SkipToolUpdate = $true; Stages = @('Assemble'); RunId = 'entry-assemble'; Resume = 'Always' }

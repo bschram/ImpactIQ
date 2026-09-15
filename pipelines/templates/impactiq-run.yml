@@ -17,7 +17,7 @@
 #      next run) -> SucceededWithIssues, 1 -> Failed
 #   5. stage artifacts (always) and upload a run summary to the pipeline UI. impactiq-state keeps only the runs
 #      updated in the last stateRetentionDays days (the newest run is always kept) and carries
-#      Model/Report/Dataflow Backups\<RunId> for every run that is still resumable (manifest status <> Completed):
+#      Outputs\<Kind> Backups\<RunId> for every run that is still resumable (manifest status <> Completed):
 #      the checkpoints point at those files, so without them a resumed run on a fresh hosted VM re-exports every
 #      item (never converging) and Assemble builds empty Model/Report Detail workbooks.
 #   6. publish impactiq-state / impactiq-outputs / impactiq-logs (always) and impactiq-backups [publishBackups]
@@ -111,18 +111,19 @@ steps:
           failOnStderr: false
           script: |
             # impactiq-state carries backups\<Kind>\<RunId>\ for every run that was still resumable when it was published
-            # (see "Stage artifacts"). Merge them into <BaseFolder>\<Kind>\<RunId>\: the checkpoints in State\runs record
+            # (see "Stage artifacts"). Merge them into <BaseFolder>\Outputs\<Kind>\<RunId>\: the checkpoints in State\runs record
             # those files as their outputs and Test-IQItemDone rejects a checkpoint whose output is missing, so without
             # this step a resumed run on a fresh hosted VM exports every item again and Assemble reads empty folders.
             # (Hosted agents check out to the same path every run - D:\a\1\s - so the absolute paths still match.)
             $ErrorActionPreference = 'Continue'
             $base = $env:IMPACTIQ_P_BASEFOLDER
+            $dataRoot = Join-Path $base 'Outputs'   # ImpactIQ.ps1 default for backups and workbooks (-BackupFolder / -OutputFolder)
             $restored = Join-Path (Join-Path $base 'State') 'backups'
             if (-not (Test-Path -LiteralPath $restored)) { Write-Host 'No backup folders in the restored state (no unfinished run to resume).'; exit 0 }
             $files = 0
             foreach ($kindDir in @(Get-ChildItem -LiteralPath $restored -Directory)) {
               foreach ($runDir in @(Get-ChildItem -LiteralPath $kindDir.FullName -Directory)) {
-                $dest = Join-Path (Join-Path $base $kindDir.Name) $runDir.Name
+                $dest = Join-Path (Join-Path $dataRoot $kindDir.Name) $runDir.Name
                 foreach ($f in @(Get-ChildItem -LiteralPath $runDir.FullName -Recurse -File)) {
                   $rel = $f.FullName.Substring($runDir.FullName.Length).TrimStart('\', '/')
                   $target = Join-Path $dest $rel
@@ -357,7 +358,7 @@ steps:
             # the next run (restored by "Restore run backups next to State") skips the items already exported.
             $backupFiles = 0
             foreach ($kind in @('Model Backups', 'Report Backups', 'Dataflow Backups')) {
-              $src = Join-Path (Join-Path $base $kind) $d.Name
+              $src = Join-Path (Join-Path (Join-Path $base 'Outputs') $kind) $d.Name
               if (-not (Test-Path -LiteralPath $src)) { continue }
               $kindDir = Join-Path $stagedBackups $kind
               New-Item -ItemType Directory -Force -Path $kindDir | Out-Null
@@ -379,12 +380,13 @@ steps:
             Write-Host 'Token cache NOT published: IMPACTIQ_TOKEN_CACHE_KEY is not set (a DPAPI cache only works on this machine/user anyway).'
           }
         }
-        Set-Content -LiteralPath (Join-Path $stagedState 'README.txt') -Value "ImpactIQ state published by $env:BUILD_BUILDNUMBER on $((Get-Date).ToUniversalTime().ToString('u')). Restored into <BaseFolder>\State by the next run for -Resume Auto; backups\<Kind>\<RunId> are moved next to State by the 'Restore run backups' step."
+        Set-Content -LiteralPath (Join-Path $stagedState 'README.txt') -Value "ImpactIQ state published by $env:BUILD_BUILDNUMBER on $((Get-Date).ToUniversalTime().ToString('u')). Restored into <BaseFolder>\State by the next run for -Resume Auto; backups\<Kind>\<RunId> are moved into <BaseFolder>\Outputs by the 'Restore run backups' step."
 
-        # --- outputs: the four workbooks
+        # --- outputs: the four workbooks (ImpactIQ.ps1 writes them to <BaseFolder>\Outputs by default)
+        $dataRoot = Join-Path $base 'Outputs'
         $missing = @()
         foreach ($wb in @('Power BI Environment Detail.xlsx', 'Report Detail.xlsx', 'Model Detail.xlsx', 'Dataflow Detail.xlsx')) {
-          $p = Join-Path $base $wb
+          $p = Join-Path $dataRoot $wb
           if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $staging 'outputs') -Force } else { $missing += $wb }
         }
         if ($missing.Count -gt 0) { Write-Host "##vso[task.logissue type=warning]Workbook(s) not produced this run: $($missing -join ', ')" }
@@ -394,7 +396,7 @@ steps:
         if ($env:IMPACTIQ_P_PUBLISHBACKUPS -eq 'True') {
           $cutoff = (Get-Date).AddDays(-3)
           foreach ($kind in @('Model Backups', 'Report Backups', 'Dataflow Backups')) {
-            $root = Join-Path $base $kind
+            $root = Join-Path $dataRoot $kind
             if (-not (Test-Path -LiteralPath $root)) { continue }
             foreach ($d in (Get-ChildItem -LiteralPath $root -Directory | Where-Object { $_.LastWriteTime -ge $cutoff })) {
               Copy-Item -LiteralPath $d.FullName -Destination (Join-Path (Join-Path $staging 'backups') (Join-Path $kind $d.Name)) -Recurse -Force
