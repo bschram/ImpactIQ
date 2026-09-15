@@ -22,11 +22,19 @@
 
 .PARAMETER BaseFolder
     Root folder: contains Config\ (csx scripts, Blank Model.bim, TabularEditor\, PBI Tools\, Modules\) and receives
-    Model Backups\, Report Backups\, Dataflow Backups\, State\, Logs\ and the workbooks. Default: the folder of this
-    script when it contains Config\, else 'C:\Power BI Backups'.
+    State\ and Logs\ (and, unless -BackupFolder / -OutputFolder say otherwise, the backups and the workbooks).
+    Default: IMPACTIQ_BASE_FOLDER, else the folder this script runs from. 'C:\Power BI Backups' is only used when the
+    script was pasted into a console (no script path) and that folder exists.
+.PARAMETER BackupFolder
+    Where Model Backups\, Report Backups\ and Dataflow Backups\ are written (or IMPACTIQ_BACKUP_FOLDER). Default: the
+    BaseFolder. A relative path is resolved under the BaseFolder.
+.PARAMETER OutputFolder
+    Where the four workbooks are written (or IMPACTIQ_OUTPUT_FOLDER). Default: the BaseFolder, which is where the
+    Power BI Governance Model template looks. A relative path is resolved under the BaseFolder.
 .PARAMETER Environment
-    Power BI cloud: Public, USGov (GCC), USGovHigh, USGovMil, China, Germany. Default: IMPACTIQ_ENVIRONMENT, else the
-    interactive dialog, else Public.
+    Power BI cloud: Public (aliases Commercial, Global), USGov (alias GCC), USGovHigh (alias GCCHigh), USGovMil
+    (alias DoD), China, Germany. Every REST, OAuth, XMLA, Fabric and portal URL follows this choice
+    (docs/Auth-Options.md section 3). Default: IMPACTIQ_ENVIRONMENT, else the interactive dialog, else Public.
 .PARAMETER AuthMode
     Auto | Interactive | DeviceCode | Credential | AzContext | AccessToken (docs/Auth-Options.md). Auto picks
     Credential (IMPACTIQ_USERNAME/PASSWORD or -Credential) -> AccessToken (IMPACTIQ_PBI_TOKEN) -> DeviceCode with a
@@ -129,7 +137,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)][string]$BaseFolder,
-    [Parameter(Mandatory = $false)][ValidateSet('Public', 'Germany', 'USGov', 'China', 'USGovHigh', 'USGovMil')][string]$Environment,
+    [Parameter(Mandatory = $false)][string]$BackupFolder,
+    [Parameter(Mandatory = $false)][string]$OutputFolder,
+    [Parameter(Mandatory = $false)][ValidateSet('Public', 'Commercial', 'Global', 'Germany', 'USGov', 'GCC', 'China', 'USGovHigh', 'GCCHigh', 'USGovMil', 'DoD')][string]$Environment,
     [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Interactive', 'DeviceCode', 'Credential', 'AzContext', 'AccessToken')][string]$AuthMode = 'Auto',
     [Parameter(Mandatory = $false)][string]$TenantId = 'organizations',
     [Parameter(Mandatory = $false)][string]$ClientId = '1950a258-227b-4e31-a9cf-717495945fc2',
@@ -221,29 +231,63 @@ function Get-IQEntryScriptRoot {
     return $null
 }
 
+function Resolve-IQEntryPath {
+    <#
+    .SYNOPSIS
+        Resolves a user-supplied folder to an absolute path against $PWD (PowerShell's location, not the process CWD).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    # Through the provider, not [System.IO.Path]::GetFullPath: .NET resolves a relative path against the process
+    # working directory, which Windows PowerShell does not move on Set-Location, so ".\Backups" would land under
+    # the folder the console was started in (or System32 for a scheduled task). Works for paths that do not exist yet.
+    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+
 function Resolve-IQEntryBaseFolder {
     <#
     .SYNOPSIS
-        Resolves the base folder: -BaseFolder, else the script folder when it contains Config\, else 'C:\Power BI Backups' (audit C1-01).
+        Resolves the base folder: -BaseFolder, else IMPACTIQ_BASE_FOLDER, else the folder this script runs from (audit C1-01).
+    .DESCRIPTION
+        The v2 monolith hard-coded 'C:\Power BI Backups'. v3 runs from wherever the repository was downloaded: the
+        script folder is the base folder, so Config\, State\, Logs\, the backups and the workbooks sit next to
+        ImpactIQ.ps1 unless -BackupFolder / -OutputFolder move the data. The legacy folder is only consulted when the
+        script text was pasted into a console (no script path) and that folder exists; otherwise the current location.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Requested,
         [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$ScriptRoot
     )
-    if (-not [string]::IsNullOrWhiteSpace($Requested)) {
-        # Through the provider, not [System.IO.Path]::GetFullPath: .NET resolves a relative path against the process
-        # working directory, which Windows PowerShell does not move on Set-Location, so ".\Backups" would land under
-        # the folder the console was started in (or System32 for a scheduled task). Works for paths that do not exist yet.
-        return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Requested)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($ScriptRoot) -and (Test-Path -LiteralPath (Join-Path $ScriptRoot 'Config') -PathType Container)) {
-        return [System.IO.Path]::GetFullPath($ScriptRoot)
-    }
-    $legacy = 'C:\Power BI Backups'
-    if (Test-Path -LiteralPath $legacy -PathType Container) { return $legacy }
+    if (-not [string]::IsNullOrWhiteSpace($Requested)) { return (Resolve-IQEntryPath -Path $Requested) }
+    if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_BASE_FOLDER)) { return (Resolve-IQEntryPath -Path $env:IMPACTIQ_BASE_FOLDER) }
     if (-not [string]::IsNullOrWhiteSpace($ScriptRoot)) { return [System.IO.Path]::GetFullPath($ScriptRoot) }
-    return [System.IO.Path]::GetFullPath($legacy)
+    $legacy = 'C:\Power BI Backups'
+    if (Test-Path -LiteralPath (Join-Path $legacy 'ImpactIQ.ps1') -PathType Leaf) { return $legacy }
+    return (Resolve-IQEntryPath -Path (Get-Location).Path)
+}
+
+function Resolve-IQEntryDataFolder {
+    <#
+    .SYNOPSIS
+        Resolves -BackupFolder / -OutputFolder: the parameter, else the environment variable, else $null (= BaseFolder).
+    .DESCRIPTION
+        Absolute paths are used as given; relative paths are returned as-is and Initialize-IQContext resolves them
+        under the BaseFolder, so "-BackupFolder Data" keeps a deployment self-contained wherever it is started from.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Requested,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$EnvironmentVariable
+    )
+    $value = $Requested
+    if ([string]::IsNullOrWhiteSpace($value) -and -not [string]::IsNullOrWhiteSpace($EnvironmentVariable)) {
+        $value = [System.Environment]::GetEnvironmentVariable($EnvironmentVariable)
+    }
+    if ([string]::IsNullOrWhiteSpace($value)) { return $null }
+    $value = $value.Trim()
+    if ([System.IO.Path]::IsPathRooted($value)) { return (Resolve-IQEntryPath -Path $value) }
+    return $value
 }
 
 function Resolve-IQEntryModuleFolder {
@@ -646,6 +690,8 @@ try {
     # ---- 2. context (all entry-point parameters by name; secrets stay out of the options) -------------------------
     $options = @{
         BaseFolder              = $resolvedBase
+        BackupFolder            = (Resolve-IQEntryDataFolder -Requested $BackupFolder -EnvironmentVariable 'IMPACTIQ_BACKUP_FOLDER')
+        OutputFolder            = (Resolve-IQEntryDataFolder -Requested $OutputFolder -EnvironmentVariable 'IMPACTIQ_OUTPUT_FOLDER')
         Environment             = $Environment
         AuthMode                = $AuthMode
         TenantId                = $TenantId
@@ -696,6 +742,9 @@ try {
     Write-IQEntryMessage -Level Info -Message ('ImpactIQ v3 starting. BaseFolder={0} PowerShell={1} Host={2} Interactive={3} AzureDevOps={4}' -f `
             $script:IQ.BaseFolder, $PSVersionTable.PSVersion, $Host.Name, $script:IQ.Interactive, $script:IQ.IsAzureDevOps)
     Write-IQEntryMessage -Level Info -Message ('Log file: {0}' -f $script:IQ.LogFile)
+    if ($script:IQ.BackupFolder -ne $script:IQ.BaseFolder -or $script:IQ.OutputFolder -ne $script:IQ.BaseFolder) {
+        Write-IQEntryMessage -Level Info -Message ('Backups: {0} | Workbooks: {1}' -f $script:IQ.BackupFolder, $script:IQ.OutputFolder)
+    }
     if ($TimeBudgetMinutes -gt 0) { Write-IQEntryMessage -Level Info -Message ('Time budget: {0} min (stages stop cleanly 2 min before it; the run is then Paused, exit code 3, and resumes on the next start).' -f $TimeBudgetMinutes) }
     if ($scriptRoot -and ([System.IO.Path]::GetFullPath($scriptRoot).TrimEnd('\', '/') -ne $script:IQ.BaseFolder.TrimEnd('\', '/'))) {
         Write-IQEntryMessage -Level Info -Message ('Modules loaded from {0}' -f $moduleFolder)
@@ -731,7 +780,7 @@ try {
     }
     $endpoints = Set-IQEnvironment -Environment $envName
     $script:IQ.Options['Environment'] = $endpoints.Name
-    Write-IQEntryMessage -Level Info -Message ('Environment {0}: API {1}, Fabric {2}' -f $endpoints.Name, $endpoints.ApiPrefix, $endpoints.FabricApiPrefix)
+    Write-IQEntryMessage -Level Info -Message ('Environment {0}: API {1}, sign-in {2}, XMLA {3}, Fabric {4}{5}' -f $endpoints.Name, $endpoints.ApiPrefix, $endpoints.Authority, $endpoints.XmlaPrefix, $endpoints.FabricApiPrefix, $(if ($endpoints.ContainsKey('FabricVerified') -and -not [bool]$endpoints.FabricVerified) { ' (unverified; skipped automatically when unreachable)' } else { '' }))
 
     # ---- 5b. early "no scope" check (after the environment is known so the resume peek applies the same environment
     #          rule as Initialize-IQRun): fail before any sign-in when nothing could possibly run. Headless runs need a

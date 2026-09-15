@@ -11,7 +11,8 @@ using System.Text;
 
     1. Open Blank Model.bim in Tabular Editor or create a new model (compatibility level does not matter)
     2. Paste this code into the Advanced Scripting window of Tabular Editor.
-    3. Update the baseFolderPath below with the actual directory in quotes - example: "C:/Power BI Backups"
+    3. Set the IMPACTIQ_BASE environment variable to the folder that contains "Report Backups" (ImpactIQ.ps1 does this;
+       by default it is the folder ImpactIQ runs from), or run Tabular Editor from that folder.
 
 ************************************************************************************************************/
 

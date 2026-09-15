@@ -70,7 +70,7 @@ Describe 'ImpactIQ.ps1 parses and declares the headless parameters' -Skip:(-not 
     }
     It 'declares [CmdletBinding()] and the section 5.1 parameters' {
         $params = @($script:Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-        foreach ($p in @('BaseFolder', 'Environment', 'AuthMode', 'TenantId', 'ClientId', 'Credential', 'TokenCachePath', 'TokenCacheKey', 'DeviceCodeWebhookUrl', 'NonInteractive', 'RunMode', 'WorkspaceId', 'WorkspaceName', 'AllWorkspaces', 'IncludeMyWorkspace', 'ReportId', 'DatasetId', 'Stages', 'SkipStages', 'RunId', 'Resume', 'ResumeMaxAgeDays', 'Force', 'RefreshInventory', 'ModelDetailMethod', 'MaxParallelExtracts', 'ToolTimeoutMinutes', 'MaxRetries', 'SkipToolUpdate', 'IncludeAdminApis', 'IncludeUsageMetrics', 'ActivityDays', 'LogPath', 'PassThru', 'TimeBudgetMinutes', 'DefinitionTimeoutMinutes')) {
+        foreach ($p in @('BaseFolder', 'BackupFolder', 'OutputFolder', 'Environment', 'AuthMode', 'TenantId', 'ClientId', 'Credential', 'TokenCachePath', 'TokenCacheKey', 'DeviceCodeWebhookUrl', 'NonInteractive', 'RunMode', 'WorkspaceId', 'WorkspaceName', 'AllWorkspaces', 'IncludeMyWorkspace', 'ReportId', 'DatasetId', 'Stages', 'SkipStages', 'RunId', 'Resume', 'ResumeMaxAgeDays', 'Force', 'RefreshInventory', 'ModelDetailMethod', 'MaxParallelExtracts', 'ToolTimeoutMinutes', 'MaxRetries', 'SkipToolUpdate', 'IncludeAdminApis', 'IncludeUsageMetrics', 'ActivityDays', 'LogPath', 'PassThru', 'TimeBudgetMinutes', 'DefinitionTimeoutMinutes')) {
             $params | Should -Contain $p
         }
         @($script:Ast.ParamBlock.Attributes | Where-Object { $_.TypeName.Name -eq 'CmdletBinding' }).Count | Should -Be 1
@@ -173,5 +173,13 @@ Describe '-Stages Assemble on a prepared state folder' -Skip:(-not ($script:HasE
     }
     It 'the assembled Model Detail workbook contains the prepared CSV rows' {
         @(Import-Excel -Path (Join-Path $script:Base2 'Model Detail.xlsx') -WorksheetName 'Semantic Models').Count | Should -Be 5
+    }
+    It '-OutputFolder (relative to the BaseFolder) moves the four workbooks; -Environment accepts the GCC alias' {
+        $run = Invoke-Entry -Base $script:Base2 -Parameters @{ BaseFolder = $script:Base2; OutputFolder = 'out'; NonInteractive = $true; Environment = 'Public'; AuthMode = 'AccessToken'; SkipToolUpdate = $true; Stages = @('Assemble'); RunId = 'entry-assemble'; Resume = 'Always' }
+        $run.ExitCode | Should -Be 0 -Because $run.Output
+        foreach ($f in @('Power BI Environment Detail.xlsx', 'Report Detail.xlsx', 'Model Detail.xlsx', 'Dataflow Detail.xlsx')) { (Join-Path (Join-Path $script:Base2 'out') $f) | Should -Exist }
+        $run.Output | Should -Match 'Workbooks: .*out'
+        $text = Get-Content -LiteralPath $script:Entry -Raw
+        $text | Should -Match "ValidateSet\('Public', 'Commercial', 'Global', 'Germany', 'USGov', 'GCC', 'China', 'USGovHigh', 'GCCHigh', 'USGovMil', 'DoD'\)"
     }
 }

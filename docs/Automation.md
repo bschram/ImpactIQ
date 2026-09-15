@@ -115,9 +115,9 @@ switch to B or C (there is no workaround inside the tool).
 
 ```powershell
 # one-time, as the user that the task will run as:
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Power BI Backups\ImpactIQ.ps1" -BaseFolder "C:\Power BI Backups" -NonInteractive -Environment USGov -AuthMode DeviceCode -Stages Inventory -WorkspaceName "Finance"
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\ImpactIQ\ImpactIQ.ps1" -NonInteractive -Environment USGov -AuthMode DeviceCode -Stages Inventory -WorkspaceName "Finance"
 # then the task action (daily 06:00, "run whether user is logged on or not", "do not store password" unchecked):
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\Power BI Backups\ImpactIQ.ps1" -BaseFolder "C:\Power BI Backups" -NonInteractive -Environment USGov -AllWorkspaces -IncludeMyWorkspace
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\ImpactIQ\ImpactIQ.ps1" -NonInteractive -Environment USGov -AllWorkspaces -IncludeMyWorkspace
 # exit code 0 = ok, 2 = finished with item failures (see Failures sheet), 3 = paused (-TimeBudgetMinutes reached; run it again), 1 = fatal (see Logs\ImpactIQ_*.log)
 ```
 
@@ -127,6 +127,9 @@ Every variable is optional; parameters win over variables. Secrets are never log
 
 | Variable | Used for | Equivalent parameter |
 |---|---|---|
+| `IMPACTIQ_BASE_FOLDER` | the deployment folder (`Config\`, `State\`, `Logs\`); default: the folder `ImpactIQ.ps1` runs from | `-BaseFolder` |
+| `IMPACTIQ_BACKUP_FOLDER` | where `Model Backups\`, `Report Backups\`, `Dataflow Backups\` are written; default: the base folder; a relative value lands under it | `-BackupFolder` |
+| `IMPACTIQ_OUTPUT_FOLDER` | where the four workbooks are written; default: the base folder (what the `.pbit` expects) | `-OutputFolder` |
 | `IMPACTIQ_ENVIRONMENT` | `Public`, `USGov`, `USGovHigh`, `USGovMil`, `China`, `Germany` (aliases `GCC`, `GCCHigh`, `DoD` accepted) | `-Environment` |
 | `IMPACTIQ_USERNAME`, `IMPACTIQ_PASSWORD` | `Credential` mode (ROPC). Both set -> `Auto` picks `Credential` | `-Credential` |
 | `IMPACTIQ_PBI_TOKEN` (+ `IMPACTIQ_FABRIC_TOKEN`) | `AccessToken` mode: a bearer token minted elsewhere; no refresh possible | `-AuthMode AccessToken` |

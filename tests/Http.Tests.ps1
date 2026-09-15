@@ -324,6 +324,70 @@ Describe 'Retry matrix' {
     }
 }
 
+Describe 'Fabric circuit breaker (environments without Fabric, e.g. GCC)' {
+    BeforeEach { Reset-Http; if ($script:IQ.ContainsKey('FabricApi')) { $script:IQ.Remove('FabricApi') } }
+    AfterAll { if ($script:IQ.ContainsKey('FabricApi')) { $script:IQ.Remove('FabricApi') } }
+    It 'a name-resolution failure on a Fabric call returns $null at once (no retry) and marks Fabric unreachable for the run' {
+        Add-HttpResponse (New-IQTestWebException -Status 'NameResolutionFailure')
+        $res = Invoke-IQApi -Method GET -Path 'workspaces/w/items' -Api Fabric
+        $res | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 1
+        $script:Sleeps.Count | Should -Be 0
+        (Get-IQHttpFabricState).Unreachable | Should -BeTrue
+        $script:IQ.LastHttpError.Message | Should -Not -BeNullOrEmpty
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[WARN\].*Fabric REST API.*unreachable.*skipped for the rest of this run'
+    }
+    It 'later Fabric calls (including LRO operations) make no request; Power BI calls are unaffected' {
+        Add-HttpResponse (New-IQTestWebException -Status 'NameResolutionFailure')
+        Invoke-IQApi -Method GET -Path 'workspaces/w/items' -Api Fabric | Out-Null
+        $script:Requests.Count | Should -Be 1
+        Invoke-IQApi -Method GET -Path 'connections' -Api Fabric | Should -BeNullOrEmpty
+        Invoke-IQFabricLro -Method POST -Path 'workspaces/w/dataflows/d/getDefinition' | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 1
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 'g1' }) })
+        $groups = Invoke-IQApi -Method GET -Path 'groups'
+        @($groups.value).Count | Should -Be 1
+        $script:Requests.Count | Should -Be 2
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'unreachable earlier in this run; skipping GET /v1/connections'
+    }
+    It 'a PowerShell 7 style DNS error message ("No such host is known") trips the breaker too' {
+        $ex = New-Object System.Net.Http.HttpRequestException ('No such host is known. (api.fabric.microsoft.us:443)')
+        Add-HttpResponse (New-Object System.Management.Automation.ErrorRecord ($ex, 'WebCmdletWebResponseException', [System.Management.Automation.ErrorCategory]::InvalidOperation, $null))
+        Invoke-IQApi -Method GET -Path 'gateways' -Api Fabric | Should -BeNullOrEmpty
+        $script:Sleeps.Count | Should -Be 0
+        (Get-IQHttpFabricState).Unreachable | Should -BeTrue
+    }
+    It 'other Fabric transport failures get one retry per call, degrade to $null and trip the breaker after three calls in a row' {
+        foreach ($i in 1..6) { Add-HttpResponse (New-IQTestWebException -Status 'ConnectFailure') }
+        Invoke-IQApi -Method GET -Path 'workspaces/a/items' -Api Fabric | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 2
+        (Get-IQHttpFabricState).Unreachable | Should -BeFalse
+        (Get-IQHttpFabricState).ConsecutiveTransportFailures | Should -Be 1
+        Invoke-IQApi -Method GET -Path 'workspaces/b/items' -Api Fabric | Should -BeNullOrEmpty
+        Invoke-IQApi -Method GET -Path 'workspaces/c/items' -Api Fabric | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 6
+        (Get-IQHttpFabricState).Unreachable | Should -BeTrue
+        Invoke-IQApi -Method GET -Path 'workspaces/d/items' -Api Fabric | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 6
+    }
+    It 'a successful Fabric response resets the consecutive-failure counter' {
+        Add-HttpResponse (New-IQTestWebException -Status 'ConnectFailure')
+        Add-HttpResponse (New-IQTestWebException -Status 'ConnectFailure')
+        Invoke-IQApi -Method GET -Path 'workspaces/a/items' -Api Fabric | Should -BeNullOrEmpty
+        (Get-IQHttpFabricState).ConsecutiveTransportFailures | Should -Be 1
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @() })
+        Invoke-IQApi -Method GET -Path 'workspaces/b/items' -Api Fabric | Out-Null
+        (Get-IQHttpFabricState).ConsecutiveTransportFailures | Should -Be 0
+        (Get-IQHttpFabricState).Unreachable | Should -BeFalse
+    }
+    It 'Power BI transport failures keep the full MaxRetries budget and still throw' {
+        foreach ($i in 1..3) { Add-HttpResponse (New-IQTestWebException -Status 'ConnectFailure') }
+        { Invoke-IQApi -Method GET -Path 'groups' } | Should -Throw
+        $script:Requests.Count | Should -Be 3
+        $script:IQ.ContainsKey('FabricApi') | Should -BeFalse
+    }
+}
+
 Describe 'Get-IQHttpErrorInfo' {
     It 'reads a synthetic WebException (timeout, no response) as transient' {
         $record = New-IQTestWebException -Status 'Timeout'

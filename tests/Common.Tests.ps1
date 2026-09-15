@@ -59,6 +59,44 @@ Describe 'Initialize-IQContext / Get-IQContext' {
     }
 }
 
+Describe 'Initialize-IQContext BackupFolder / OutputFolder' {
+    It 'defaults the backup and output folders to the BaseFolder (v2 layout)' {
+        $ctx = Get-IQContext
+        $ctx.BackupFolder | Should -Be $ctx.BaseFolder
+        $ctx.OutputFolder | Should -Be $ctx.BaseFolder
+        $ctx.Paths.ModelBackups | Should -Be (Join-Path $ctx.BaseFolder 'Model Backups')
+        Get-IQBackupRootFolder | Should -Be $ctx.BaseFolder
+    }
+    It 'moves the three backup folders to an absolute -BackupFolder and creates it' {
+        $saved = $script:IQ
+        $backups = Join-Path $script:Base 'elsewhere-backups'
+        try {
+            $ctx = Initialize-IQContext -BaseFolder (Join-Path $script:Base 'bf-abs') -Options @{ NonInteractive = $true; BackupFolder = $backups }
+            $ctx.BackupFolder | Should -Be ([System.IO.Path]::GetFullPath($backups))
+            $backups | Should -Exist
+            $ctx.Paths.ModelBackups | Should -Be (Join-Path $ctx.BackupFolder 'Model Backups')
+            $ctx.Paths.ReportBackups | Should -Be (Join-Path $ctx.BackupFolder 'Report Backups')
+            $ctx.Paths.DataflowBackups | Should -Be (Join-Path $ctx.BackupFolder 'Dataflow Backups')
+            Get-IQBackupRootFolder | Should -Be $ctx.BackupFolder
+            $ctx.StatePath | Should -Be (Join-Path $ctx.BaseFolder 'State')   # State and Logs never move
+            $ctx.OutputFolder | Should -Be $ctx.BaseFolder
+        }
+        finally { $script:IQ = $saved }
+    }
+    It 'resolves relative -BackupFolder / -OutputFolder values under the BaseFolder' {
+        $saved = $script:IQ
+        try {
+            $base = Join-Path $script:Base 'bf-rel'
+            $ctx = Initialize-IQContext -BaseFolder $base -Options @{ NonInteractive = $true; BackupFolder = 'Data'; OutputFolder = 'Workbooks' }
+            $ctx.BackupFolder | Should -Be ([System.IO.Path]::GetFullPath((Join-Path $base 'Data')))
+            $ctx.OutputFolder | Should -Be ([System.IO.Path]::GetFullPath((Join-Path $base 'Workbooks')))
+            (Join-Path $base 'Data') | Should -Exist
+            (Join-Path $base 'Workbooks') | Should -Exist
+        }
+        finally { $script:IQ = $saved }
+    }
+}
+
 Describe 'Get-IQCleanName (monolith parity)' {
     It 'matches the original sanitiser for <Name>' -TestCases @(
         @{ Name = 'Finance [Prod]' }

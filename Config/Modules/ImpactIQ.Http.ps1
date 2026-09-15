@@ -376,6 +376,55 @@ function Set-IQHttpLastError {
     $script:IQ['LastHttpError'] = @{ StatusCode = $code; Body = [string]$Body; Message = [string]$Message; Url = [string]$Url; Method = [string]$Method }
 }
 
+function Get-IQHttpFabricState {
+    <#
+    .SYNOPSIS
+    Run-wide Fabric reachability state (private): @{ Unreachable; Reason; ConsecutiveTransportFailures; MaxConsecutiveTransportFailures; Warned }.
+    .DESCRIPTION
+    Environments without Microsoft Fabric (GCC today, any tenant behind a firewall that blocks the Fabric host) make
+    every Fabric call fail at the transport level - DNS, connect or timeout - and the inventory issues several Fabric
+    calls per workspace. Instead of paying the retry back-off for each one, the first name-resolution failure (or
+    MaxConsecutiveTransportFailures consecutive transport failures) marks the Fabric API unreachable for the rest of
+    the run and every later Fabric request returns $null immediately, exactly like "no Fabric token".
+    #>
+    [CmdletBinding()]
+    param()
+    if (-not $script:IQ) { return @{ Unreachable = $false; Reason = ''; ConsecutiveTransportFailures = 0; MaxConsecutiveTransportFailures = 3; Warned = $false } }
+    if (-not $script:IQ.ContainsKey('FabricApi') -or -not ($script:IQ['FabricApi'] -is [hashtable])) {
+        $script:IQ['FabricApi'] = @{ Unreachable = $false; Reason = ''; ConsecutiveTransportFailures = 0; MaxConsecutiveTransportFailures = 3; Warned = $false }
+    }
+    return $script:IQ['FabricApi']
+}
+
+function Set-IQHttpFabricUnreachable {
+    <#
+    .SYNOPSIS
+    Marks the Fabric REST API unreachable for the rest of the run; logs one Warn line (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Reason,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Stage = 'Http'
+    )
+    $state = Get-IQHttpFabricState
+    $state.Unreachable = $true
+    $state.Reason = [string]$Reason
+    if ($state.Warned) { return }
+    $state.Warned = $true
+    $prefix = ''
+    $hint = ''
+    try {
+        if ($script:IQ -and $script:IQ.Endpoints) {
+            $prefix = [string]$script:IQ.Endpoints.FabricApiPrefix
+            if ($script:IQ.Endpoints.ContainsKey('FabricVerified') -and -not [bool]$script:IQ.Endpoints.FabricVerified) {
+                $hint = ' This is expected where Microsoft Fabric is not offered (for example GCC); the Power BI REST collectors are not affected and the Fabric-only sheets stay empty.'
+            }
+        }
+    }
+    catch { $prefix = '' }
+    Write-IQLog -Level Warn -Stage $Stage -Message ("The Fabric REST API at {0} is unreachable ({1}); Fabric calls are skipped for the rest of this run.{2}" -f $prefix, $Reason, $hint)
+}
+
 function Test-IQHttpTimeBudget {
     <#
     .SYNOPSIS
@@ -466,6 +515,17 @@ function Invoke-IQHttpRequest {
     $maxRateLimitRetries = 8
     $displayPath = Get-IQHttpDisplayPath -Url $Url
 
+    # Fabric circuit breaker (Get-IQHttpFabricState): once the Fabric host proved unreachable, skip without a request.
+    $fabricState = $null
+    if ($Api -eq 'Fabric') {
+        $fabricState = Get-IQHttpFabricState
+        if ($fabricState.Unreachable) {
+            Write-IQLog -Level Debug -Stage $Stage -Message "Fabric API unreachable earlier in this run; skipping $Method $displayPath"
+            Set-IQHttpLastError -StatusCode $null -Body '' -Message ('Fabric API unreachable: ' + [string]$fabricState.Reason) -Url $displayPath -Method $Method
+            return $null
+        }
+    }
+
     # Prepare the body once.
     $requestBody = $null
     if ($PSBoundParameters.ContainsKey('Body') -and $null -ne $Body) {
@@ -532,6 +592,7 @@ function Invoke-IQHttpRequest {
         try {
             $response = Invoke-WebRequest @params
             $stopwatch.Stop()
+            if ($null -ne $fabricState) { $fabricState.ConsecutiveTransportFailures = 0 }
             if ($OutFile) {
                 # Invoke-WebRequest -OutFile returns nothing (and a non-success status still throws), so the status is
                 # known to be 2xx; the file on disk is the result.
@@ -628,9 +689,23 @@ function Invoke-IQHttpRequest {
                 return $null
             }
             $retryable = ($null -eq $status -and $info.Transient) -or ($status -eq 408) -or ($null -ne $status -and $status -ge 500 -and $status -le 599)
+            $attemptLimit = $maxAttempts
+            if ($null -ne $fabricState -and $null -eq $status) {
+                # Fabric transport failures: a host that cannot be resolved means the environment has no Fabric API -
+                # trip the breaker at once, no retry. Other transport failures get a single retry per call and trip the
+                # breaker after MaxConsecutiveTransportFailures calls in a row; the call itself degrades to $null.
+                $dnsFailure = ($info.WebStatus -and @('NameResolutionFailure', 'ProxyNameResolutionFailure') -contains [string]$info.WebStatus) -or
+                    ([string]$info.Message -match '(?i)no such host|name or service not known|could not be resolved|nodename nor servname|resolve host')
+                if ($dnsFailure) {
+                    Set-IQHttpFabricUnreachable -Reason $info.Message -Stage $Stage
+                    Set-IQHttpLastError -StatusCode $null -Body '' -Message $info.Message -Url $displayPath -Method $Method
+                    return $null
+                }
+                if ($info.Transient) { $attemptLimit = [math]::Min($maxAttempts, 2) }
+            }
             if ($retryable) {
                 $transientAttempts++
-                if ($transientAttempts -lt $maxAttempts) {
+                if ($transientAttempts -lt $attemptLimit) {
                     if (Test-IQHttpTimeBudget -Stage $Stage) {
                         $fatalMessage = "Time budget reached while waiting to retry $Method $displayPath after $(if ($null -ne $status) { "HTTP $status" } else { 'a network error' }): $($info.Message)"
                         $fatalInner = $_.Exception
@@ -644,6 +719,17 @@ function Invoke-IQHttpRequest {
                     Start-IQHttpSleep -Seconds $wait
                     continue
                 }
+            }
+            if ($null -ne $fabricState -and $null -eq $status -and $info.Transient) {
+                $fabricState.ConsecutiveTransportFailures = [int]$fabricState.ConsecutiveTransportFailures + 1
+                if ([int]$fabricState.ConsecutiveTransportFailures -ge [int]$fabricState.MaxConsecutiveTransportFailures) {
+                    Set-IQHttpFabricUnreachable -Reason $info.Message -Stage $Stage
+                }
+                else {
+                    Write-IQLog -Level Warn -Stage $Stage -Message ("Fabric API transport failure for {0} {1} after {2} attempt(s): {3} ({4} consecutive; Fabric calls stop after {5})" -f $Method, $displayPath, $transientAttempts, $info.Message, $fabricState.ConsecutiveTransportFailures, $fabricState.MaxConsecutiveTransportFailures)
+                }
+                Set-IQHttpLastError -StatusCode $null -Body '' -Message $info.Message -Url $displayPath -Method $Method
+                return $null
             }
             $statusText = 'no response'
             if ($null -ne $status) { $statusText = "HTTP $status" }

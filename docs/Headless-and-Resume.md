@@ -10,8 +10,10 @@ Contents: 1 parameters - 2 examples - 3 state layout and manifest - 4 resume rul
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `-BaseFolder <path>` | the script folder when it contains `Config\`, else `C:\Power BI Backups` | root for `Config\`, `State\`, `Logs\`, the backup folders and the four workbooks |
-| `-Environment Public\|Germany\|USGov\|China\|USGovHigh\|USGovMil` | `IMPACTIQ_ENVIRONMENT`, else the interactive dialog (60 s -> Public), else `Public` | cloud endpoints (Auth-Options.md section 3) |
+| `-BaseFolder <path>` | `IMPACTIQ_BASE_FOLDER`, else the folder `ImpactIQ.ps1` runs from | root for `Config\`, `State\`, `Logs\` and, by default, the backup folders and the four workbooks. `C:\Power BI Backups` is no longer assumed (it is only tried when the script text was pasted into a console and that folder still holds `ImpactIQ.ps1`) |
+| `-BackupFolder <path>` | `IMPACTIQ_BACKUP_FOLDER`, else the base folder | where `Model Backups\`, `Report Backups\` and `Dataflow Backups\` go; a relative path is created under the base folder (`-BackupFolder Data` -> `<BaseFolder>\Data\Model Backups\...`). The csx scripts receive it as `IMPACTIQ_BASE` |
+| `-OutputFolder <path>` | `IMPACTIQ_OUTPUT_FOLDER`, else the base folder | where the four workbooks go; point the `.pbit`'s `Base Directory` there when you change it |
+| `-Environment Public\|Germany\|USGov\|China\|USGovHigh\|USGovMil` (aliases `Commercial`, `Global`, `GCC`, `GCCHigh`, `DoD`) | `IMPACTIQ_ENVIRONMENT`, else the interactive dialog (60 s -> Public), else `Public` | cloud endpoints - REST, sign-in authority, token resource, XMLA, Fabric and portal hosts all follow it (Auth-Options.md section 3); the resolved hosts are printed at the top of every run |
 | `-AuthMode Auto\|Interactive\|DeviceCode\|Credential\|AzContext\|AccessToken` | `Auto` | Auth-Options.md |
 | `-TenantId <guid or domain>` | `organizations` | tenant for device code / ROPC |
 | `-ClientId <guid>` | `1950a258-227b-4e31-a9cf-717495945fc2` | public client for device code / ROPC |
@@ -100,11 +102,15 @@ Environment-variable equivalents (parameters win): `IMPACTIQ_ENVIRONMENT`, `IMPA
   State\runs\<RunId>\extracts\dataflows\<id>.json     parsed dataflow queries (Dataflow Detail.xlsx is built from these)
   State\runs\<RunId>\extracts\admin\ , extracts\usage\  raw Extras responses
   State\runs\<RunId>\tool-logs\<Stage>\<itemKey>.out.txt / .err.txt  external process output
-  Model Backups\<RunId>\<Ws> ~ <Model>.bim, .csv, _MD.csv
+  Model Backups\<RunId>\<Ws> ~ <Model>.bim, .csv, _MD.csv          } under -BackupFolder when given
   Report Backups\<RunId>\<Ws> ~ <Report>.pbix|.rdl, *.txt (report detail extracts), ReportExports.txt
   Dataflow Backups\<RunId>\<Ws> ~ <Dataflow>.txt|.pq, <name>.definition\, Dataflow Detail.xlsx
-  Power BI Environment Detail.xlsx, Report Detail.xlsx, Model Detail.xlsx, Dataflow Detail.xlsx
+  Power BI Environment Detail.xlsx, Report Detail.xlsx, Model Detail.xlsx, Dataflow Detail.xlsx   } under -OutputFolder when given
 ```
+
+`Config\`, `State\` and `Logs\` always stay in the base folder; only the three backup folders (`-BackupFolder`) and
+the four workbooks (`-OutputFolder`) can be moved. Checkpoints record absolute output paths, so keep the same folders
+between the runs of one resumable RunId.
 
 `manifest.json` (schema 1, no secrets):
 

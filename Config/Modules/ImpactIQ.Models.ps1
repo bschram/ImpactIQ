@@ -1021,7 +1021,7 @@ function Invoke-IQModelDetailTabularEditor {
     $previousEnv = @{ IMPACTIQ_BASE = $env:IMPACTIQ_BASE; IMPACTIQ_DATE_FOLDER = $env:IMPACTIQ_DATE_FOLDER; IMPACTIQ_REPORT_DATE = $env:IMPACTIQ_REPORT_DATE }
     $results = $null
     try {
-        $env:IMPACTIQ_BASE = [string]$script:IQ.BaseFolder
+        $env:IMPACTIQ_BASE = [string](Get-IQBackupRootFolder)
         $env:IMPACTIQ_DATE_FOLDER = [string]$RunFolder
         $env:IMPACTIQ_REPORT_DATE = [string](Get-IQDaxModelAsOfDate)
         $results = Invoke-IQProcessBatch -Jobs $jobs -MaxParallel $maxParallel -TimeoutMinutes $timeout -Stage $stage

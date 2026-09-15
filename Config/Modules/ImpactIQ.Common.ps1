@@ -62,8 +62,25 @@ function Initialize-IQContext {
     $onWindows = ($env:OS -eq 'Windows_NT')
     $isAzureDevOps = ($env:TF_BUILD -eq 'True')
 
+    # Where the data lands. BackupFolder holds "Model Backups", "Report Backups" and "Dataflow Backups"; OutputFolder
+    # receives the four workbooks. Both default to the BaseFolder (the v2 layout); relative values are resolved against
+    # the BaseFolder so "-BackupFolder Data" keeps the deployment self-contained. Config, State and Logs never move.
+    $backupFolder = [string]$Options['BackupFolder']
+    if ([string]::IsNullOrWhiteSpace($backupFolder)) { $backupFolder = $BaseFolder }
+    elseif (-not [System.IO.Path]::IsPathRooted($backupFolder)) { $backupFolder = Join-Path $BaseFolder $backupFolder }
+    $backupFolder = Resolve-IQFullPath -Path $backupFolder
+    $outputFolder = [string]$Options['OutputFolder']
+    if ([string]::IsNullOrWhiteSpace($outputFolder)) { $outputFolder = $BaseFolder }
+    elseif (-not [System.IO.Path]::IsPathRooted($outputFolder)) { $outputFolder = Join-Path $BaseFolder $outputFolder }
+    $outputFolder = Resolve-IQFullPath -Path $outputFolder
+    foreach ($folder in @($backupFolder, $outputFolder)) {
+        if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+    }
+
     $script:IQ = @{
         BaseFolder    = $BaseFolder
+        BackupFolder  = $backupFolder
+        OutputFolder  = $outputFolder
         ConfigFolder  = $configFolder
         StatePath     = $statePath
         LogsPath      = $logsPath
@@ -85,9 +102,9 @@ function Initialize-IQContext {
         StartedUtc    = [datetime]::UtcNow
         BudgetExceeded = $false
         Paths         = @{
-            ModelBackups    = Join-Path $BaseFolder 'Model Backups'
-            ReportBackups   = Join-Path $BaseFolder 'Report Backups'
-            DataflowBackups = Join-Path $BaseFolder 'Dataflow Backups'
+            ModelBackups    = Join-Path $backupFolder 'Model Backups'
+            ReportBackups   = Join-Path $backupFolder 'Report Backups'
+            DataflowBackups = Join-Path $backupFolder 'Dataflow Backups'
             TempExtract     = Join-Path $configFolder 'Temp'
         }
         Stats         = @{ ApiCalls = 0; Retries = 0 }
@@ -100,9 +117,21 @@ function Initialize-IQContext {
         Set-IQEnvironment -Environment $envName | Out-Null
     }
 
-    Write-IQLog -Level Debug -Message ("Context initialised. BaseFolder='{0}' IsWindows={1} IsAzureDevOps={2} Interactive={3} PS={4}" -f `
-            $BaseFolder, $onWindows, $isAzureDevOps, $script:IQ.Interactive, $PSVersionTable.PSVersion)
+    Write-IQLog -Level Debug -Message ("Context initialised. BaseFolder='{0}' BackupFolder='{1}' OutputFolder='{2}' IsWindows={3} IsAzureDevOps={4} Interactive={5} PS={6}" -f `
+            $BaseFolder, $backupFolder, $outputFolder, $onWindows, $isAzureDevOps, $script:IQ.Interactive, $PSVersionTable.PSVersion)
     return $script:IQ
+}
+
+function Get-IQBackupRootFolder {
+    <#
+    .SYNOPSIS
+        The folder that holds "Model Backups", "Report Backups" and "Dataflow Backups" (BackupFolder, else BaseFolder).
+    #>
+    [CmdletBinding()]
+    param()
+    if (-not $script:IQ) { throw 'ImpactIQ context not initialised. Call Initialize-IQContext first.' }
+    if ($script:IQ.ContainsKey('BackupFolder') -and -not [string]::IsNullOrWhiteSpace([string]$script:IQ.BackupFolder)) { return [string]$script:IQ.BackupFolder }
+    return [string]$script:IQ.BaseFolder
 }
 
 function Resolve-IQFullPath {
