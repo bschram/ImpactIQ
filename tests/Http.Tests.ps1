@@ -32,6 +32,7 @@ BeforeAll {
     function Reset-Http {
         $script:Requests.Clear(); $script:Responses.Clear(); $script:Sleeps.Clear()
         $script:IQ.Stats.ApiCalls = 0; $script:IQ.Stats.Retries = 0
+        if ($script:IQ.ContainsKey('FabricApi')) { $script:IQ.Remove('FabricApi') }
     }
     Mock Get-IQToken { if ($Resource -eq 'Fabric') { return 'fabric-token' } return 'pbi-token' }
     Mock Invoke-WebRequest { Pop-HttpResponse -Uri $Uri -Method $Method -Headers $Headers -Body $Body -OutFile $OutFile -UserAgent $UserAgent -ContentType $ContentType }
@@ -85,8 +86,20 @@ Describe 'Invoke-IQApi URL building and headers' {
         Add-HttpResponse (New-IQTestHttpResponse -Content '{"raw":true}')
         Invoke-IQApi -Method GET -Path 'groups/x/dataflows/y' -Raw | Should -Be '{"raw":true}'
     }
-    It 'returns $null with a Debug line when no Fabric token is available' {
+    It 'uses the Power BI token for Fabric calls when no Fabric token can be minted (noted once)' {
         Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'pbi-token' }
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @() })
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @() })
+        Invoke-IQApi -Method GET -Path 'workspaces' -Api Fabric | Out-Null
+        Invoke-IQApi -Method GET -Path 'connections' -Api Fabric | Out-Null
+        $script:Requests.Count | Should -Be 2
+        $script:Requests[0].Headers['Authorization'] | Should -Be 'Bearer pbi-token'
+        (Get-IQHttpFabricState).UsingPowerBIToken | Should -BeTrue
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        ([regex]::Matches($log, 'Fabric calls use the Power BI token')).Count | Should -Be 1
+    }
+    It 'returns $null with a Debug line when neither a Fabric nor a Power BI token is available' {
+        Mock Get-IQToken { $null }
         Invoke-IQApi -Method GET -Path 'workspaces' -Api Fabric | Should -BeNullOrEmpty
         $script:Requests.Count | Should -Be 0
     }
@@ -216,7 +229,7 @@ Describe 'Retry matrix' {
         $script:IQ.LastHttpError | Should -BeNullOrEmpty
     }
     It 'no Fabric token: records a LastHttpError without a status' {
-        Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'pbi-token' }
+        Mock Get-IQToken { $null }
         Invoke-IQApi -Method GET -Path 'workspaces' -Api Fabric | Should -BeNullOrEmpty
         $script:IQ.LastHttpError | Should -Not -BeNullOrEmpty
         $script:IQ.LastHttpError.StatusCode | Should -BeNullOrEmpty
@@ -388,6 +401,43 @@ Describe 'Fabric circuit breaker (environments without Fabric, e.g. GCC)' {
     }
 }
 
+Describe 'Permission refusals and expected 400s (run assessment 2026-09-15)' {
+    BeforeEach { Reset-Http }
+    It 'a 401 whose body names ModelExportActionDenied is not retried with a refreshed token' {
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 401 -Body '{"error":{"code":"ModelExportActionDenied","pbi.error":{"code":"ModelExportActionDenied"}}}')
+        $res = Invoke-IQApi -Method GET -Path 'groups/w/reports/r/Export?downloadType=IncludeModel'
+        $res | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 1
+        $script:IQ.LastHttpError.StatusCode | Should -Be 401
+        $script:IQ.LastHttpError.Body | Should -Match 'ModelExportActionDenied'
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[WARN\].*permission refusal, not an expired token'
+    }
+    It 'a plain 401 still gets one token refresh and retry' {
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 401 -Body '{"error":{"code":"TokenExpired"}}')
+        Add-HttpResponse (New-IQTestHttpResponse -Content @{ value = @(@{ id = 1 }) })
+        $res = Invoke-IQApi -Method GET -Path 'groups'
+        @($res.value).Count | Should -Be 1
+        $script:Requests.Count | Should -Be 2
+    }
+    It 'a Fabric 401 while the Power BI token stands in trips the circuit breaker instead of refreshing' {
+        Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'pbi-token' }
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 401 -Body '{"message":"Unauthorized"}')
+        Invoke-IQApi -Method GET -Path 'workspaces/w/items' -Api Fabric | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 1
+        (Get-IQHttpFabricState).Unreachable | Should -BeTrue
+        Invoke-IQApi -Method GET -Path 'connections' -Api Fabric | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 1
+    }
+    It 'a 400 on an optional collector (-AllowNotFound) is logged at Debug, not Warn' {
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 400 -Body '{"error":{"code":"InvalidRequest","message":"This API can only be called on a DirectQuery or Live Connection dataset."}}')
+        Invoke-IQApi -Method GET -Path 'groups/w/datasets/d/directQueryRefreshSchedule' -AllowNotFound | Should -BeNullOrEmpty
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match '\[DEBUG\].*HTTP 400 for GET /v1\.0/myorg/groups/w/datasets/d/directQueryRefreshSchedule'
+        $log | Should -Not -Match '\[WARN\].*directQueryRefreshSchedule'
+        $script:IQ.LastHttpError.StatusCode | Should -Be 400
+    }
+}
+
 Describe 'Get-IQHttpErrorInfo' {
     It 'reads a synthetic WebException (timeout, no response) as transient' {
         $record = New-IQTestWebException -Status 'Timeout'
@@ -477,8 +527,8 @@ Describe 'Invoke-IQFabricLro' {
         $log | Should -Match '\[WARN\].*HTTP 404 for POST.*getDefinition.*ItemNotFound'
         $log | Should -Not -Match 'was not accepted'
     }
-    It 'returns $null with one Debug line and no request when no Fabric token is available' {
-        Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'pbi-token' }
+    It 'returns $null with one Debug line and no request when neither a Fabric nor a Power BI token is available' {
+        Mock Get-IQToken { $null }
         Invoke-IQFabricLro -Method POST -Path 'workspaces/w/semanticModels/m/getDefinition' | Should -BeNullOrEmpty
         $script:Requests.Count | Should -Be 0
         (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Not -Match '\[WARN\].*semanticModels/m/getDefinition'

@@ -357,6 +357,33 @@ function Get-IQHttpBearerToken {
     return (Get-IQToken -Resource $Api)
 }
 
+function Get-IQHttpFabricBearerToken {
+    <#
+    .SYNOPSIS
+    Bearer token for Fabric calls: the Fabric token when the provider can mint one, else the Power BI token (private).
+    .DESCRIPTION
+    The Fabric REST API accepts tokens issued for the Power BI resource, so a provider that cannot mint a Fabric token
+    (Az.Accounts refusing the Fabric resource, a tenant rejecting the Fabric scope) no longer silences every Fabric call
+    (run assessment 2026-09-15, fix 3). The fallback is noted once; Get-IQHttpFabricState.UsingPowerBIToken lets the
+    401 handler trip the circuit breaker when the service does not accept that token either.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][switch]$ForceRefresh)
+    $state = Get-IQHttpFabricState
+    $token = $null
+    try { $token = Get-IQHttpBearerToken -Api Fabric -ForceRefresh:$ForceRefresh } catch { $token = $null }
+    if (-not [string]::IsNullOrEmpty($token)) { $state.UsingPowerBIToken = $false; return $token }
+    $fallback = $null
+    try { $fallback = Get-IQHttpBearerToken -Api PowerBI -ForceRefresh:$ForceRefresh } catch { $fallback = $null }
+    if ([string]::IsNullOrEmpty($fallback)) { return $null }
+    $state.UsingPowerBIToken = $true
+    if (-not ($state.ContainsKey('PowerBITokenNoticeShown') -and $state.PowerBITokenNoticeShown)) {
+        $state.PowerBITokenNoticeShown = $true
+        Write-IQLog -Level Info -Stage Http -Message 'No Fabric token could be minted; Fabric calls use the Power BI token, which the Fabric REST API accepts. Where Fabric is not offered, the calls stop after the first unreachable host or refused token.'
+    }
+    return $fallback
+}
+
 function Set-IQHttpLastError {
     <#
     .SYNOPSIS
@@ -389,9 +416,9 @@ function Get-IQHttpFabricState {
     #>
     [CmdletBinding()]
     param()
-    if (-not $script:IQ) { return @{ Unreachable = $false; Reason = ''; ConsecutiveTransportFailures = 0; MaxConsecutiveTransportFailures = 3; Warned = $false } }
+    if (-not $script:IQ) { return @{ Unreachable = $false; Reason = ''; ConsecutiveTransportFailures = 0; MaxConsecutiveTransportFailures = 3; Warned = $false; UsingPowerBIToken = $false; PowerBITokenNoticeShown = $false } }
     if (-not $script:IQ.ContainsKey('FabricApi') -or -not ($script:IQ['FabricApi'] -is [hashtable])) {
-        $script:IQ['FabricApi'] = @{ Unreachable = $false; Reason = ''; ConsecutiveTransportFailures = 0; MaxConsecutiveTransportFailures = 3; Warned = $false }
+        $script:IQ['FabricApi'] = @{ Unreachable = $false; Reason = ''; ConsecutiveTransportFailures = 0; MaxConsecutiveTransportFailures = 3; Warned = $false; UsingPowerBIToken = $false; PowerBITokenNoticeShown = $false }
     }
     return $script:IQ['FabricApi']
 }
@@ -560,7 +587,8 @@ function Invoke-IQHttpRequest {
         $requestHeaders = @{}
         if ($Headers) { foreach ($key in $Headers.Keys) { $requestHeaders[$key] = $Headers[$key] } }
         if (-not $NoAuth) {
-            $token = Get-IQHttpBearerToken -Api $Api -ForceRefresh:$forceRefresh
+            if ($Api -eq 'Fabric') { $token = Get-IQHttpFabricBearerToken -ForceRefresh:$forceRefresh }
+            else { $token = Get-IQHttpBearerToken -Api $Api -ForceRefresh:$forceRefresh }
             $forceRefresh = $false
             if ([string]::IsNullOrEmpty($token)) {
                 if ($Api -eq 'Fabric') {
@@ -665,6 +693,20 @@ function Invoke-IQHttpRequest {
                 break
             }
             if ($status -eq 401) {
+                # A 401 whose body names a permission refusal (ModelExportActionDenied for scorecards / metrics items,
+                # ...NotAuthorized, AccessDenied) is not an expired token: a refresh cannot help, so it is handled like a
+                # 403 (run assessment 2026-09-15, fix 4).
+                if ([string]$info.Body -match '(?i)ActionDenied|NotAuthorized|AccessDenied|PermissionDenied|Forbidden|NotAllowed') {
+                    Write-IQLog -Level Warn -Stage $Stage -Message ("HTTP 401 for {0} {1} is a permission refusal, not an expired token; not retried. {2}" -f $Method, $displayPath, $bodySnippet)
+                    Set-IQHttpLastError -StatusCode $status -Body $info.Body -Message $info.Message -Url $displayPath -Method $Method
+                    return $null
+                }
+                if ($null -ne $fabricState -and $fabricState.UsingPowerBIToken) {
+                    # The Fabric service did not accept the Power BI token used as a stand-in: no Fabric for this run.
+                    Set-IQHttpFabricUnreachable -Reason 'the Fabric API refused the Power BI token (HTTP 401) and no Fabric token can be minted' -Stage $Stage
+                    Set-IQHttpLastError -StatusCode $status -Body $info.Body -Message $info.Message -Url $displayPath -Method $Method
+                    return $null
+                }
                 if (-not $authRetried -and -not $NoAuth) {
                     $authRetried = $true
                     $forceRefresh = $true
@@ -684,7 +726,11 @@ function Invoke-IQHttpRequest {
                 return $null
             }
             if ($status -eq 400) {
-                Write-IQLog -Level Warn -Stage $Stage -Message ("HTTP 400 for {0} {1}. {2}" -f $Method, $displayPath, $bodySnippet)
+                # Optional collectors (-AllowNotFound) expect a 400 from endpoints that do not apply to the item, e.g.
+                # directQueryRefreshSchedule on an import model: Debug, not Warn (run assessment 2026-09-15, fix 6).
+                $level = 'Warn'
+                if ($AllowNotFound) { $level = 'Debug' }
+                Write-IQLog -Level $level -Stage $Stage -Message ("HTTP 400 for {0} {1}. {2}" -f $Method, $displayPath, $bodySnippet)
                 Set-IQHttpLastError -StatusCode $status -Body $info.Body -Message $info.Message -Url $displayPath -Method $Method
                 return $null
             }
@@ -971,7 +1017,7 @@ function Invoke-IQFabricLro {
     )
     $url = Get-IQApiUrl -Path $Path -Query $Query -Api Fabric
     $displayPath = Get-IQHttpDisplayPath -Url $url
-    if ([string]::IsNullOrEmpty((Get-IQHttpBearerToken -Api Fabric))) {
+    if ([string]::IsNullOrEmpty((Get-IQHttpFabricBearerToken))) {
         Write-IQLog -Level Debug -Stage $Stage -Message "No Fabric token available; skipping Fabric operation $Method $displayPath"
         return $null
     }

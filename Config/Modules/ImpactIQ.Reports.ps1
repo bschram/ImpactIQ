@@ -349,7 +349,10 @@ function Disable-IQReportModelExtract {
         [Parameter(Mandatory = $false)][int]$MaxConsecutiveFailures = 3
     )
     if (-not $script:IQ.Tools) { return $false }
-    $mentionsDesktop = (-not [string]::IsNullOrWhiteSpace($Output)) -and ($Output -match '(?i)Power ?BI ?Desktop|msmdsrv|PBIDesktop|Analysis Services instance|no .*desktop .*install')
+    # Only an ERROR about Power BI Desktop / msmdsrv counts. pbi-tools prints "Using Power BI Desktop install: ..." and
+    # "MSMDSRV.EXE found at ..." on every successful extract, so a bare keyword match disabled extraction for the whole
+    # run after the first per-file problem (run assessment 2026-09-15, bug B).
+    $mentionsDesktop = (-not [string]::IsNullOrWhiteSpace($Output)) -and (Test-IQReportDesktopFailureText -Text $Output)
     $desktopMissing = $false
     try { if ($script:IQ.Tools.ContainsKey('PbiDesktopFound')) { $desktopMissing = ((ConvertTo-IQReportBool -Value $script:IQ.Tools.PbiDesktopFound) -eq $false) } } catch { $desktopMissing = $false }
     $consecutive = 0
@@ -369,6 +372,69 @@ function Disable-IQReportModelExtract {
     $script:IQ.Tools.PbiToolsExtractDisabled = $why
     Write-IQLog -Level Warn -Stage $Stage -Item $Item -Message ('Model extraction from PBIX files disabled for the rest of this run - ' + $why + '. Report backups continue; ModelDetail falls back to DAX for Pro models.')
     return $true
+}
+
+function Test-IQReportDesktopFailureText {
+    <#
+    .SYNOPSIS
+    $true when tool output reports a MISSING or FAILED Power BI Desktop / msmdsrv / Analysis Services engine, not merely mentions one (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+    $engine = '(?:Power ?BI ?Desktop|PBIDesktop|msmdsrv(?:\.exe)?|Analysis Services (?:instance|engine))'
+    $negBefore = '(?im)^[^\r\n]*(?:\bno\b|\bnot\b|cannot|can''t|could ?not|couldn''t|unable to|failed to|failure|missing|error)[^\r\n]{0,80}' + $engine
+    $negAfter = '(?im)' + $engine + '[^\r\n]{0,80}(?:not (?:found|installed|detected|available|running)|could not be (?:found|located|started|launched)|failed to (?:start|launch)|is missing|unavailable|cannot be|can''t be|unable to)'
+    return (($Text -match $negBefore) -or ($Text -match $negAfter))
+}
+
+function Get-IQReportGeneratedBimFile {
+    <#
+    .SYNOPSIS
+    The non-empty .bim files pbi-tools generate-bim produced for an extract folder, in preference order (private).
+    .DESCRIPTION
+    pbi-tools writes "<extractFolder>.bim" NEXT TO the extract folder ("BIM file written to: ..." in its output), not
+    inside it (run assessment 2026-09-15, bug A). Order: the path named in the tool output, then "<folder>.bim" beside the
+    folder (also for a subst drive-letter target), then any .bim inside the folder for tool versions that write there.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$ExtractFolder,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Target,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$ToolOutput
+    )
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace($ToolOutput) -and $ToolOutput -match '(?im)^[^\r\n]*BIM file written to:\s*(.+?)\s*$') {
+        $candidates.Add(([string]$Matches[1]).Trim().Trim('"'))
+    }
+    $trimmed = $ExtractFolder.TrimEnd('\', '/')
+    $candidates.Add($trimmed + '.bim')
+    if (-not [string]::IsNullOrWhiteSpace($Target)) {
+        $targetTrimmed = $Target.TrimEnd('\', '/')
+        if ($targetTrimmed -ne $trimmed) { $candidates.Add($targetTrimmed + '.bim') }
+    }
+    $files = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        try {
+            if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+            $file = Get-Item -LiteralPath $candidate -ErrorAction Stop
+            if ($file.Length -le 0) { continue }
+            $key = $file.FullName.ToLowerInvariant()
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            $files.Add($file)
+        }
+        catch { $null = $_.Exception }
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $ExtractFolder -Filter '*.bim' -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 } | Sort-Object FullName)) {
+        $key = $file.FullName.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $files.Add($file)
+    }
+    return $files.ToArray()
 }
 
 function Reset-IQReportModelExtractFailureCount {
@@ -505,8 +571,8 @@ function Get-IQReportWorkList {
         $isPseudo = -not (Test-IQReportGuid -Value $workspaceId)
         $noAccess = ($workspaceId -eq 'Shared Reports (No Workspace Access)' -or $workspaceName -eq 'Shared Reports (No Workspace Access)')
         $dedicated = $null
-        if ($null -ne $ws) { $dedicated = ConvertTo-IQReportBool -Value (Get-IQReportMember -Object $ws -Name 'WorkspaceIsOnDedicatedCapacity') }
-        if ($null -eq $dedicated) { $dedicated = ConvertTo-IQReportBool -Value (Get-IQReportMember -Object $report -Name 'WorkspaceIsOnDedicatedCapacity') }
+        if ($null -ne $ws) { $dedicated = Test-IQDedicatedCapacity -Workspace $ws }
+        if ($null -eq $dedicated) { $dedicated = Test-IQDedicatedCapacity -Workspace $report }
         if ($null -eq $dedicated) {
             Write-IQLog -Level Debug -Item $reportName -Message "Capacity type of workspace '$workspaceName' unknown; treating as Pro"
             $dedicated = $false
@@ -619,6 +685,51 @@ function Get-IQReportWorkList {
 # Export API (monolith 2668-2691) and getDefinition fallback (monolith 2693-2859)
 # =====================================================================================================================
 
+function Set-IQReportExportError {
+    <#
+    .SYNOPSIS
+    Copies the Http module's last handled failure into $script:IQ.LastExportError with the Power BI error code parsed out (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][string]$DownloadType)
+    if (-not $script:IQ) { return }
+    $last = $null
+    if ($script:IQ.ContainsKey('LastHttpError')) { $last = $script:IQ['LastHttpError'] }
+    if ($null -eq $last) { return }
+    $code = ''
+    $body = [string](Get-IQReportMember -Object $last -Name 'Body')
+    if (-not [string]::IsNullOrWhiteSpace($body) -and $body -match '"code"\s*:\s*"([^"]+)"') { $code = [string]$Matches[1] }
+    $script:IQ['LastExportError'] = @{
+        StatusCode   = (Get-IQReportMember -Object $last -Name 'StatusCode')
+        Code         = $code
+        Message      = [string](Get-IQReportMember -Object $last -Name 'Message')
+        DownloadType = $DownloadType
+    }
+}
+
+function Get-IQReportUnsupportedExportReason {
+    <#
+    .SYNOPSIS
+    Maps the last export failure to a plain reason when the service will never export this item (Skipped, not Failed); $null otherwise (private).
+    .DESCRIPTION
+    ModelExportActionDenied (401): the service refuses the export - scorecards / metrics items, or downloads disabled
+    for the report; a token refresh cannot help. ExportPBIX_ModelessWorkbookNotFound (404): no PBIX exists behind the
+    item. PremiumFiles (400): a large-semantic-model-format model cannot be downloaded as a PBIX (only Fabric
+    getDefinition can export it). Run assessment 2026-09-15, finding 1 and fix 4.
+    #>
+    [CmdletBinding()]
+    param()
+    if (-not $script:IQ -or -not $script:IQ.ContainsKey('LastExportError') -or $null -eq $script:IQ['LastExportError']) { return $null }
+    $e = $script:IQ['LastExportError']
+    $code = [string](Get-IQReportMember -Object $e -Name 'Code')
+    $message = [string](Get-IQReportMember -Object $e -Name 'Message')
+    $text = $code + ' ' + $message
+    if ($text -match '(?i)ModelExportActionDenied|ExportActionDenied') { return @{ Code = $code; Reason = 'the service refuses to export this item (a scorecard / metrics item, or downloads are disabled for it)' } }
+    if ($text -match '(?i)ModelessWorkbookNotFound') { return @{ Code = $code; Reason = 'no PBIX exists behind this item' } }
+    if ($text -match '(?i)PremiumFiles') { return @{ Code = $code; Reason = 'the model uses the large semantic model storage format, which cannot be downloaded as a PBIX (only Fabric getDefinition can export it)' } }
+    return $null
+}
+
 function Export-IQReportUsingApi {
     <#
     .SYNOPSIS
@@ -642,6 +753,7 @@ function Export-IQReportUsingApi {
     if (Test-IQReportGuid -Value $WorkspaceId) { $path = 'groups/' + $WorkspaceId + '/reports/' + $ReportId + '/Export?downloadType=' + $DownloadType }
     else { $path = 'reports/' + $ReportId + '/Export?downloadType=' + $DownloadType }
     $partial = $OutFilePath + '.partial'
+    if ($script:IQ) { $script:IQ['LastExportError'] = $null }
     try {
         Remove-IQReportPath -Path $partial
         $timeout = 600
@@ -654,6 +766,7 @@ function Export-IQReportUsingApi {
             Write-IQLog -Level Debug -Stage $Stage -Item $Item -Message ("Export ({0}) wrote {1:N0} bytes" -f $DownloadType, (Get-IQReportFileSize -Path $OutFilePath))
             return $true
         }
+        Set-IQReportExportError -DownloadType $DownloadType
         Write-IQLog -Level Debug -Stage $Stage -Item $Item -Message ("Export ({0}) produced no file" -f $DownloadType)
         Remove-IQReportPath -Path $partial
         return $false
@@ -694,6 +807,16 @@ function Export-IQReportDefinitionAsPbix {
     if ($lroTimeout -lt 1) { $lroTimeout = 1 }
     $definitionPath = 'workspaces/' + $WorkspaceId + '/reports/' + $ReportId + '/getDefinition'
 
+    # Say plainly when the Fabric API cannot be used at all (not offered in this cloud, unreachable, no token) instead
+    # of "returned no definition" after a call that was never made (run assessment 2026-09-15, finding 1).
+    $fabricState = $null
+    try { if (Get-Command -Name Get-IQHttpFabricState -ErrorAction SilentlyContinue) { $fabricState = Get-IQHttpFabricState } } catch { $fabricState = $null }
+    if ($null -ne $fabricState -and $fabricState.Unreachable) {
+        $result.Message = 'Fabric API unavailable in this run (' + [string]$fabricState.Reason + '); getDefinition not attempted'
+        Write-IQLog -Level Debug -Stage $Stage -Item $Item -Message $result.Message
+        return $result
+    }
+
     # Optional explicit format (audit C7-15): Options.ReportDefinitionFormat = PBIR | PBIR-Legacy. Default = monolith
     # behaviour (no format parameter; the service returns the stored format). A rejected format falls back to no format.
     $definition = $null
@@ -714,6 +837,13 @@ function Export-IQReportDefinitionAsPbix {
     }
     if ($null -eq $definition) {
         $result.Message = 'getDefinition returned no definition (see previous warnings)'
+        try {
+            $last = $null
+            if ($script:IQ -and $script:IQ.ContainsKey('LastHttpError')) { $last = $script:IQ['LastHttpError'] }
+            $lastMessage = [string](Get-IQReportMember -Object $last -Name 'Message')
+            if ($lastMessage -match '(?i)Fabric') { $result.Message = 'getDefinition unavailable: ' + $lastMessage }
+        }
+        catch { $null = $_.Exception }
         return $result
     }
     $parts = @()
@@ -1089,7 +1219,7 @@ function Invoke-IQReportModelExtract {
         if ($r2.TimedOut -or $r2.StartError -or [int]$r2.ExitCode -ne 0) {
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ('pbi-tools generate-bim reported: ' + (Get-IQReportProcessSummary -Result $r2))
         }
-        $bimFiles = @(Get-ChildItem -LiteralPath $extractFolder -Filter '*.bim' -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 0 } | Sort-Object FullName)
+        $bimFiles = @(Get-IQReportGeneratedBimFile -ExtractFolder $extractFolder -Target $target -ToolOutput ([string]$r2.StdOut + "`n" + [string]$r2.StdErr))
         if ($bimFiles.Count -eq 0) {
             $out.Message = 'pbi-tools produced no .bim (the PBIX has no embedded model, or generate-bim failed: ' + (Get-IQReportProcessSummary -Result $r2) + ')'
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message $out.Message
@@ -1141,6 +1271,8 @@ function Invoke-IQReportModelExtract {
             $out.Message = 'the extracted .bim could not be moved to ' + $destination
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message $out.Message
         }
+        # generate-bim writes beside the extract folder (Config\Temp): never leave the source copy behind.
+        if (-not [string]::IsNullOrWhiteSpace($sourceBim) -and (Test-Path -LiteralPath $sourceBim)) { Remove-IQReportPath -Path $sourceBim }
     }
     catch {
         $out.Success = $false
@@ -1521,6 +1653,18 @@ function Invoke-IQReportBackupStage {
                 $message = 'Export failed'
                 if ($notes.Count -gt 0) { $message = $notes -join '; ' }
                 $baseData.DurationSec = [math]::Round(([datetime]::UtcNow - $started).TotalSeconds, 1)
+                # An item the service will never export (scorecard, no PBIX, large-format model without Fabric) is
+                # Skipped with the reason, not Failed: it cannot succeed on a retry and does not belong in Failures.
+                $unsupported = Get-IQReportUnsupportedExportReason
+                if ($null -ne $unsupported) {
+                    $message = 'Not exportable: ' + [string]$unsupported.Reason + ' [' + [string]$unsupported.Code + ']'
+                    if ($notes.Count -gt 0) { $message += ' (' + ($notes -join '; ') + ')' }
+                    $baseData.Status = 'Skipped'
+                    Write-IQLog -Level Warn -Stage $stage -Item $item -Message $message
+                    Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $item -Status Skipped -Method $method -Message $message -Data $baseData | Out-Null
+                    try { $summary.Skipped++ } catch { $null = $_.Exception }
+                    continue
+                }
                 Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $item -Status Failed -Method $method -Message $message -Data $baseData | Out-Null
                 $summary.Failed++
                 continue

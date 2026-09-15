@@ -172,7 +172,7 @@ function Get-IQModelWorkList {
             if ($null -eq $ws) { continue }
             $id = [string](Get-IQModelMember -Object $ws -Name 'WorkspaceId')
             if ($id -eq '') { continue }
-            $workspaceDedicated[$id] = ConvertTo-IQModelBool -Value (Get-IQModelMember -Object $ws -Name 'WorkspaceIsOnDedicatedCapacity')
+            $workspaceDedicated[$id] = Test-IQDedicatedCapacity -Workspace $ws
         }
     }
     catch { Write-IQLog -Level Debug -Message ("Get-IQSelectedWorkspaces failed; using dataset-level capacity flags: " + $_.Exception.Message) }
@@ -192,7 +192,13 @@ function Get-IQModelWorkList {
         $noAccess = ($workspaceId -eq 'Shared Reports (No Workspace Access)' -or $workspaceName -eq 'Shared Reports (No Workspace Access)')
         $dedicated = $null
         if ($workspaceDedicated.ContainsKey($workspaceId)) { $dedicated = $workspaceDedicated[$workspaceId] }
-        if ($null -eq $dedicated) { $dedicated = ConvertTo-IQModelBool -Value (Get-IQModelMember -Object $ds -Name 'WorkspaceIsOnDedicatedCapacity') }
+        # The dataset row can prove a capacity the workspace listing did not (large-format model = capacity only).
+        $fromDataset = Test-IQDedicatedCapacity -Dataset $ds
+        if ($fromDataset -eq $true -and $dedicated -ne $true) {
+            if ($dedicated -eq $false) { Write-IQLog -Level Info -Item $datasetName -Message "Workspace '$workspaceName' is listed without dedicated capacity, but this model uses the large semantic model storage format (capacity only); treating it as dedicated so it is exported over XMLA." }
+            $dedicated = $true
+        }
+        if ($null -eq $dedicated) { $dedicated = $fromDataset }
         if ($null -eq $dedicated) {
             Write-IQLog -Level Debug -Item $datasetName -Message "Capacity type of workspace '$workspaceName' unknown; treating as Pro (no XMLA export)"
             $dedicated = $false

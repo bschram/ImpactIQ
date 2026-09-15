@@ -400,3 +400,21 @@ Describe 'Get-IQExitCode (brief section 5.1)' {
         Get-IQExitCode -Manifest $null | Should -Be 1
     }
 }
+
+Describe 'Test-IQDedicatedCapacity (run assessment 2026-09-15, fix 5)' {
+    It 'trusts an explicit isOnDedicatedCapacity flag' {
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceIsOnDedicatedCapacity = $true }) | Should -BeTrue
+        Test-IQDedicatedCapacity -Workspace @{ isOnDedicatedCapacity = 'True' } | Should -BeTrue
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceIsOnDedicatedCapacity = $false }) | Should -BeFalse
+    }
+    It 'a capacity id or a large-format (PremiumFiles) model proves a capacity even when the flag says no' {
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceIsOnDedicatedCapacity = $false; WorkspaceCapacityId = '3f2504e0-4f89-41d3-9a0c-0305e82c3301' }) | Should -BeTrue
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceIsOnDedicatedCapacity = $false }) -Dataset ([pscustomobject]@{ DatasetTargetStorageMode = 'PremiumFiles' }) | Should -BeTrue
+        Test-IQDedicatedCapacity -Dataset @{ targetStorageMode = 'Abf' } | Should -BeNullOrEmpty
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceCapacityId = '' }) | Should -BeNullOrEmpty
+    }
+    It 'returns $null when nothing is known' {
+        Test-IQDedicatedCapacity | Should -BeNullOrEmpty
+        Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceName = 'x' }) | Should -BeNullOrEmpty
+    }
+}

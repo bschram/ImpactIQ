@@ -207,3 +207,62 @@ Describe 'ReportDetail clears the append-only csx files before a re-run (R-06)' 
         [System.IO.File]::ReadAllText($visuals) | Should -Not -Match 'stale'
     }
 }
+
+Describe 'pbi-tools model extraction and export classification (run assessment 2026-09-15)' {
+    BeforeAll {
+        $script:FixBase = Initialize-IQTestContext -NoRun -Prefix 'rep-fix'
+        $script:SuccessOutput = @(
+            'Using Power BI Desktop install: 2.157.1354.0 (26.08)+abc at C:\Program Files\Microsoft Power BI Desktop\bin',
+            'MSMDSRV.EXE found at C:\Program Files\Microsoft Power BI Desktop\bin\msmdsrv.exe',
+            'Extracting to C:\ImpactIQ\Config\Temp\x-e75ab356'
+        ) -join "`r`n"
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:FixBase }
+    BeforeEach { $script:IQ.Tools = @{ PbiDesktopFound = $true; PbiToolsPath = 'C:\Tools\pbi-tools.exe'; PbiToolsWorks = $true } }
+    It 'Test-IQReportDesktopFailureText ignores the normal pbi-tools start-up lines and matches real failures' {
+        Test-IQReportDesktopFailureText -Text $script:SuccessOutput | Should -BeFalse
+        Test-IQReportDesktopFailureText -Text 'No Power BI Desktop installation found on this machine.' | Should -BeTrue
+        Test-IQReportDesktopFailureText -Text 'Could not start msmdsrv.exe (exit code 1)' | Should -BeTrue
+        Test-IQReportDesktopFailureText -Text 'Error: PBIDesktop installation not found' | Should -BeTrue
+        Test-IQReportDesktopFailureText -Text 'Analysis Services instance could not be started' | Should -BeTrue
+        Test-IQReportDesktopFailureText -Text '' | Should -BeFalse
+    }
+    It 'a per-file "no .bim" outcome with normal tool output never disables extraction for the rest of the run (bug B)' {
+        Disable-IQReportModelExtract -Output $script:SuccessOutput -Reason 'pbi-tools produced no .bim' -Item 'Alzheimer''s Report' | Should -BeFalse
+        $script:IQ.Tools.ContainsKey('PbiToolsExtractDisabled') | Should -BeFalse
+        Disable-IQReportModelExtract -Output ($script:SuccessOutput + "`r`nNo Power BI Desktop installation found") -Reason 'x' -Item 'r' | Should -BeTrue
+        $script:IQ.Tools.PbiToolsExtractDisabled | Should -Match 'mentions Power BI Desktop'
+    }
+    It 'Get-IQReportGeneratedBimFile finds the .bim pbi-tools writes NEXT TO the extract folder, then inside it (bug A)' {
+        $temp = Join-Path $script:FixBase 'Temp'
+        $folder = Join-Path $temp 'x-e75ab356'
+        New-Item -ItemType Directory -Path $folder -Force | Out-Null
+        @(Get-IQReportGeneratedBimFile -ExtractFolder $folder).Count | Should -Be 0
+        [System.IO.File]::WriteAllText(($folder + '.bim'), '{"name":"m"}')
+        $found = @(Get-IQReportGeneratedBimFile -ExtractFolder $folder -Target $folder -ToolOutput ("Compiling`r`nBIM file written to: " + $folder + '.bim' + "`r`n"))
+        $found.Count | Should -Be 1
+        $found[0].FullName | Should -Be ($folder + '.bim')
+        # without the tool output the sibling file is still found; an inside-folder .bim is added after it; empty files are ignored
+        [System.IO.File]::WriteAllText((Join-Path $folder 'inner.bim'), '{"name":"inner"}')
+        [System.IO.File]::WriteAllText((Join-Path $folder 'empty.bim'), '')
+        $found = @(Get-IQReportGeneratedBimFile -ExtractFolder $folder)
+        $found.Count | Should -Be 2
+        $found[0].FullName | Should -Be ($folder + '.bim')
+        $found[1].Name | Should -Be 'inner.bim'
+    }
+    It 'Set-IQReportExportError parses the Power BI error code and Get-IQReportUnsupportedExportReason classifies it' {
+        $script:IQ['LastHttpError'] = @{ StatusCode = 401; Body = '{"error":{"code":"ModelExportActionDenied","pbi.error":{"code":"ModelExportActionDenied","parameters":{}}}}'; Message = 'HTTP 401'; Url = 'x'; Method = 'GET' }
+        Set-IQReportExportError -DownloadType 'IncludeModel'
+        $script:IQ.LastExportError.Code | Should -Be 'ModelExportActionDenied'
+        $script:IQ.LastExportError.StatusCode | Should -Be 401
+        (Get-IQReportUnsupportedExportReason).Reason | Should -Match 'scorecard'
+        $script:IQ['LastExportError'] = @{ StatusCode = 404; Code = 'ExportPBIX_ModelessWorkbookNotFound'; Message = 'HTTP 404' }
+        (Get-IQReportUnsupportedExportReason).Reason | Should -Match 'no PBIX'
+        $script:IQ['LastExportError'] = @{ StatusCode = 400; Code = 'ServerError_PremiumFilesErrors_OperationIsNotSupportedForPremiumFilesModel'; Message = 'HTTP 400' }
+        (Get-IQReportUnsupportedExportReason).Reason | Should -Match 'large semantic model'
+        $script:IQ['LastExportError'] = @{ StatusCode = 500; Code = 'InternalServerError'; Message = 'HTTP 500' }
+        Get-IQReportUnsupportedExportReason | Should -BeNullOrEmpty
+        $script:IQ['LastExportError'] = $null
+        Get-IQReportUnsupportedExportReason | Should -BeNullOrEmpty
+    }
+}
