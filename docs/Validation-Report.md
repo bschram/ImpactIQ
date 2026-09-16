@@ -118,3 +118,18 @@ assessment surfaced six defects that the mocked tests could not see. All are fix
 
 Still to confirm on the next Windows run: model backups appear for the Pro workspace (`Outputs\Model Backups\<date>\*.bim`),
 the large-format models export over XMLA, and the three scorecard / metrics items show as Skipped in `ReportExports`.
+
+## 7. Second and third real runs (GCC, 2026-09-15 16:45 and 2026-09-16 09:21)
+
+Both runs confirmed the section 6 fixes (14 reports exported, 13 models extracted from PBIX, 8 items Skipped as not
+exportable, no DirectQuery-schedule warnings) and left three failures plus one new finding:
+
+| # | Finding | Change |
+|---|---|---|
+| 1 | The three large-storage-format models failed over XMLA with "Authentication failed for all authenticators" while every REST call succeeded | The MSOLAP connection string now uses the access-token form with an explicit empty user: `User ID=;Password=<token>` |
+| 2 | The same workspace is listed without dedicated capacity and without a capacity id: it may have left a capacity while its models kept the large-format flag, in which case no XMLA endpoint exists | Such an export failure is recorded as **Skipped** with both possibilities spelled out (and the License-info check to make), not as a failure; the run then ends with exit code 0 |
+| 3 | Every Fabric call answered `403 FeatureNotAvailable`: the Fabric REST API is not offered to this tenant, so no `getDefinition` fallback exists for large-format reports or models | The first `FeatureNotAvailable` marks the Fabric API unavailable for the run (one Warn line); the token warnings became Info lines that name the Power BI token stand-in; ModelBackup reports the real reason instead of "Fabric token unavailable for this sign-in mode" |
+
+If the workspace really is on a capacity, fix 1 recovers the three models on the next run; if it is not, they stay
+Skipped with the reason in `Model Detail` / the run summary, and their measure expressions stay blank in the DAX path
+(a Viewer cannot read them).

@@ -194,9 +194,11 @@ function Get-IQModelWorkList {
         if ($workspaceDedicated.ContainsKey($workspaceId)) { $dedicated = $workspaceDedicated[$workspaceId] }
         # The dataset row can prove a capacity the workspace listing did not (large-format model = capacity only).
         $fromDataset = Test-IQDedicatedCapacity -Dataset $ds
+        $capacityInferred = $false
         if ($fromDataset -eq $true -and $dedicated -ne $true) {
             if ($dedicated -eq $false) { Write-IQLog -Level Info -Item $datasetName -Message "Workspace '$workspaceName' is listed without dedicated capacity, but this model uses the large semantic model storage format (capacity only); treating it as dedicated so it is exported over XMLA." }
             $dedicated = $true
+            $capacityInferred = $true
         }
         if ($null -eq $dedicated) { $dedicated = $fromDataset }
         if ($null -eq $dedicated) {
@@ -224,6 +226,7 @@ function Get-IQModelWorkList {
                 WorkspaceId       = $workspaceId
                 WorkspaceName     = $workspaceName
                 IsDedicated       = [bool]$dedicated
+                CapacityInferred  = [bool]$capacityInferred
                 IsPseudoWorkspace = $isPseudo
                 NoAccess          = $noAccess
                 BaseName          = $baseName
@@ -450,8 +453,35 @@ function Complete-IQModelBackupJob {
         Write-IQLog -Level Warn -Stage 'ModelBackup' -Item $w.Item -Message ($message + '; trying the Fabric getDefinition fallback')
         return
     }
-    Set-IQItemDone -Stage 'ModelBackup' -ItemKey $key -Item $w.Item -Status Failed -Method 'XMLA' -Message $message -Data @{ BaseName = $w.BaseName; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
-    $w['Checkpointed'] = 'Failed'
+    Set-IQModelXmlaFailure -Work $w -Key $key -Message $message
+}
+
+function Set-IQModelXmlaFailure {
+    <#
+    .SYNOPSIS
+    Records a final XMLA export failure: Skipped with the reason when the capacity was only inferred from the model, else Failed (private).
+    .DESCRIPTION
+    A workspace the listing reports without dedicated capacity (no capacity id) may have left a capacity while its
+    models kept the large-storage-format flag; such a workspace has no XMLA endpoint, so the export cannot succeed on
+    any retry and is recorded as Skipped with both possibilities spelled out (run assessment 2026-09-16, step 3).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Work,
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+    $inferred = $false
+    try { if ($Work.ContainsKey('CapacityInferred')) { $inferred = [bool]$Work.CapacityInferred } } catch { $inferred = $false }
+    if ($inferred) {
+        $why = $Message + '. The workspace is listed without dedicated capacity (no capacity id), so it may have no XMLA endpoint even though this model keeps the large semantic model storage format; if Workspace settings > License info shows Premium, PPU or Fabric, re-run with -Stages ModelBackup.'
+        Write-IQLog -Level Warn -Stage 'ModelBackup' -Item $Work.Item -Message ('Skipped: ' + $why)
+        Set-IQItemDone -Stage 'ModelBackup' -ItemKey $Key -Item $Work.Item -Status Skipped -Method 'XMLA' -Message $why -Data @{ BaseName = $Work.BaseName; WorkspaceId = $Work.WorkspaceId; DatasetId = $Work.DatasetId; CapacityInferred = $true } | Out-Null
+        $Work['Checkpointed'] = 'Skipped'
+        return
+    }
+    Set-IQItemDone -Stage 'ModelBackup' -ItemKey $Key -Item $Work.Item -Status Failed -Method 'XMLA' -Message $Message -Data @{ BaseName = $Work.BaseName; WorkspaceId = $Work.WorkspaceId; DatasetId = $Work.DatasetId } | Out-Null
+    $Work['Checkpointed'] = 'Failed'
 }
 
 function New-IQModelFabricState {
@@ -476,10 +506,21 @@ function New-IQModelFabricState {
         Enabled = $false; Reason = ''; ConsecutiveFailures = 0; MaxConsecutiveFailures = 3
         BestEffortEnabled = $true; BestEffortReason = ''; BestEffortConsecutiveFailures = 0; MaxBestEffortConsecutiveFailures = 3
     }
+    try {
+        if (Get-Command -Name Get-IQHttpFabricState -ErrorAction SilentlyContinue) {
+            $http = Get-IQHttpFabricState
+            if ($http.Unreachable) { $state.Reason = 'Fabric API unavailable in this run (' + [string]$http.Reason + ')'; return $state }
+        }
+    }
+    catch { $null = $null }
     $token = $null
-    try { $token = Get-IQToken -Resource Fabric }
-    catch { $state.Reason = 'Fabric token unavailable: ' + $_.Exception.Message; return $state }
-    if ([string]::IsNullOrWhiteSpace([string]$token)) { $state.Reason = 'Fabric token unavailable for this sign-in mode'; return $state }
+    try {
+        # The Http module stands the Power BI token in for a missing Fabric token (the Fabric REST API accepts it).
+        if (Get-Command -Name Get-IQHttpFabricBearerToken -ErrorAction SilentlyContinue) { $token = Get-IQHttpFabricBearerToken }
+        else { $token = Get-IQToken -Resource Fabric }
+    }
+    catch { $state.Reason = 'no token available for the Fabric API: ' + $_.Exception.Message; return $state }
+    if ([string]::IsNullOrWhiteSpace([string]$token)) { $state.Reason = 'no token available for the Fabric API (neither a Fabric nor a Power BI token)'; return $state }
     try {
         if ($script:IQ.Endpoints -and $script:IQ.Endpoints.ContainsKey('FabricVerified') -and -not [bool]$script:IQ.Endpoints.FabricVerified) {
             Write-IQLog -Level Debug -Stage 'ModelBackup' -Message ("Fabric endpoint {0} is unverified for environment {1}; getDefinition will be attempted and disabled after {2} consecutive failures" -f $script:IQ.Endpoints.FabricApiPrefix, $script:IQ.Environment, $state.MaxConsecutiveFailures)
@@ -768,7 +809,10 @@ function Invoke-IQModelBackupStage {
             if (Test-Path -LiteralPath $w.BimPath) { Remove-Item -LiteralPath $w.BimPath -Force -ErrorAction SilentlyContinue }
             $encodedWorkspace = [System.Uri]::EscapeDataString([string]$w.WorkspaceName)
             $dataSource = ('{0}/v1.0/myorg/{1}' -f $xmlaPrefix.TrimEnd('/'), $encodedWorkspace)
-            $arguments = ('"Provider=MSOLAP;Data Source={0};Password={1}" "{2}" -S "{3}" -B "{4}"' -f $dataSource, $token, $w.DatasetName, $scriptPath, $w.BimPath)
+            # Access-token form of the MSOLAP connection string: an explicit empty User ID with the token as Password.
+            # Without "User ID=" the client library can fall through its authenticator chain and report
+            # "Authentication failed for all authenticators" (run assessment 2026-09-16, section 1).
+            $arguments = ('"Provider=MSOLAP;Data Source={0};User ID=;Password={1}" "{2}" -S "{3}" -B "{4}"' -f $dataSource, $token, $w.DatasetName, $scriptPath, $w.BimPath)
             Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Exporting ' + $w.BaseName)
             $jobs += @{ ItemKey = $w.Key; Item = $w.Item; FilePath = $tePath; ArgumentList = $arguments; WorkingDirectory = [string]$script:IQ.BaseFolder; LogName = ('xmla-' + (Get-IQSafeKey -Value $w.Key)) }
         }
@@ -789,8 +833,15 @@ function Invoke-IQModelBackupStage {
                 $status = $null
                 $method = 'XMLA'
                 if ($w.ContainsKey('XmlaFailure') -and $w.XmlaFailure) {
-                    # Deferred XMLA failure: Fabric getDefinition fallback, then one combined checkpoint.
-                    $status = Complete-IQModelBackupViaFabric -Work $w -FabricState $fabricState -FallbackStatus Failed -FallbackMessage ([string]$w.XmlaFailure) -FallbackMethod 'XMLA' -Prefix ([string]$w.XmlaFailure)
+                    # Deferred XMLA failure: Fabric getDefinition fallback, then one combined checkpoint. A model whose
+                    # capacity was only inferred ends Skipped (see Set-IQModelXmlaFailure) when the fallback fails too.
+                    $fallbackStatus = 'Failed'
+                    $fallbackMessage = [string]$w.XmlaFailure
+                    if ($w.ContainsKey('CapacityInferred') -and [bool]$w.CapacityInferred) {
+                        $fallbackStatus = 'Skipped'
+                        $fallbackMessage += '. The workspace is listed without dedicated capacity (no capacity id), so it may have no XMLA endpoint even though this model keeps the large semantic model storage format; if Workspace settings > License info shows Premium, PPU or Fabric, re-run with -Stages ModelBackup'
+                    }
+                    $status = Complete-IQModelBackupViaFabric -Work $w -FabricState $fabricState -FallbackStatus $fallbackStatus -FallbackMessage $fallbackMessage -FallbackMethod 'XMLA' -Prefix ([string]$w.XmlaFailure)
                     $method = 'FabricDefinition'
                 }
                 elseif ($w.ContainsKey('Checkpointed')) { $status = [string]$w.Checkpointed }
@@ -798,6 +849,7 @@ function Invoke-IQModelBackupStage {
                     $summary.Done++
                     if ($method -eq 'XMLA') { $summary.ViaXmla++ } else { $summary.ViaFabric++ }
                 }
+                elseif ($status -eq 'Skipped') { $summary.Skipped++ }
                 else { $summary.Failed++ }
             }
         }

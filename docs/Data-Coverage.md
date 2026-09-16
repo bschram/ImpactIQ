@@ -10,9 +10,10 @@ Permission legend (workspace roles unless stated): **V** Viewer, **C** Contribut
 record the error in `InventoryErrors` and the workspace is re-collected on resume.
 
 GCC note: Fabric REST is not offered in GCC (moderate). Sheets marked **Fabric** are empty there; everything else is
-the same route on `api.powerbigov.us`. Nothing has to be configured for that: the first Fabric token request that
-Entra rejects, or the first Fabric host that does not resolve, marks Fabric unavailable for the rest of the run (one
-Warn line in the log) and every later Fabric call returns empty without a request or a retry wait. Tenants that do have
+the same route on `api.powerbigov.us`. Nothing has to be configured for that: a Fabric token that cannot be minted is
+replaced by the Power BI token (the Fabric REST API accepts it), and the first Fabric answer of `403 FeatureNotAvailable`
+(what GCC returns), a refused token, or a host that does not resolve marks Fabric unavailable for the rest of the run
+(one Warn line in the log); every later Fabric call returns empty without a request or a retry wait. Tenants that do have
 Fabric but block its host on the network behave the same way after three consecutive transport failures. The
 `-FabricApiPrefixOverride` parameter changes the host if Microsoft publishes one for your cloud.
 

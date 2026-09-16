@@ -428,6 +428,18 @@ Describe 'Permission refusals and expected 400s (run assessment 2026-09-15)' {
         Invoke-IQApi -Method GET -Path 'connections' -Api Fabric | Should -BeNullOrEmpty
         $script:Requests.Count | Should -Be 1
     }
+    It 'a Fabric 403 FeatureNotAvailable marks the Fabric API unavailable for the run and Power BI 403s are unaffected' {
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 403 -Body '{ "requestId": "x", "errorCode": "FeatureNotAvailable", "message": "The feature is not available", "isRetriable": false }')
+        Invoke-IQApi -Method GET -Path 'connections' -Api Fabric | Should -BeNullOrEmpty
+        (Get-IQHttpFabricState).Unreachable | Should -BeTrue
+        (Get-IQHttpFabricState).Reason | Should -Match 'not offered to this tenant'
+        Invoke-IQApi -Method GET -Path 'gateways' -Api Fabric | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 1
+        Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 403 -Body '{"error":{"code":"PowerBIEntityNotFound"}}')
+        Invoke-IQApi -Method GET -Path 'groups/w/users' | Should -BeNullOrEmpty
+        $script:Requests.Count | Should -Be 2
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match '\[WARN\].*Fabric REST API.*unreachable \(the service answered FeatureNotAvailable'
+    }
     It 'a 400 on an optional collector (-AllowNotFound) is logged at Debug, not Warn' {
         Add-HttpResponse (New-IQTestHttpErrorRecord -StatusCode 400 -Body '{"error":{"code":"InvalidRequest","message":"This API can only be called on a DirectQuery or Live Connection dataset."}}')
         Invoke-IQApi -Method GET -Path 'groups/w/datasets/d/directQueryRefreshSchedule' -AllowNotFound | Should -BeNullOrEmpty
