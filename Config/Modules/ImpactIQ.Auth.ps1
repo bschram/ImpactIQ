@@ -1454,11 +1454,11 @@ function Initialize-IQAuthInteractive {
             Write-IQLog -Level Success -Stage Auth -Message 'Connected to Microsoft Fabric.'
         }
         catch {
-            Write-IQLog -Level Warn -Stage Auth -Message ('Fabric token unavailable (Fabric collections will be skipped): ' + $_.Exception.Message)
+            Write-IQLog -Level Info -Stage Auth -Message ('No Fabric token from the Az sign-in (' + $_.Exception.Message + '); Fabric calls use the Power BI token where the Fabric API exists.')
         }
     }
     else {
-        Write-IQLog -Level Warn -Stage Auth -Message 'Az.Accounts is not available or the Fabric sign-in was skipped; Fabric collections will be skipped.'
+        Write-IQLog -Level Info -Stage Auth -Message 'Az.Accounts is not available or the Fabric sign-in was skipped; Fabric calls use the Power BI token where the Fabric API exists.'
     }
 }
 
@@ -1665,7 +1665,7 @@ function Update-IQAuthToken {
                 $level = 'Debug'
                 if ($failures -eq 1) { $level = 'Warn' }
                 $suffix = ''
-                if ($permanent) { $suffix = ' Fabric collections will be skipped for the rest of the run.' }
+                if ($permanent) { $suffix = ' Fabric calls use the Power BI token from now on (skipped where the Fabric API is not offered).' }
                 Write-IQLog -Level $level -Stage Auth -Message ('Fabric token refresh via Az.Accounts failed: ' + $message + $suffix)
                 return (Set-IQAuthFabricUnavailable -Reason $message -Permanent:$permanent)
             }

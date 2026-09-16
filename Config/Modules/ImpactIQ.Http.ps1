@@ -718,6 +718,13 @@ function Invoke-IQHttpRequest {
                 $fatalInner = $_.Exception
                 break
             }
+            if ($status -eq 403 -and $null -ne $fabricState -and [string]$info.Body -match '(?i)FeatureNotAvailable') {
+                # GCC and other clouds without Fabric answer every Fabric call with 403 FeatureNotAvailable: say it
+                # once and stop calling (run assessment 2026-09-16, section 2).
+                Set-IQHttpFabricUnreachable -Reason 'the service answered FeatureNotAvailable: the Fabric REST API is not offered to this tenant' -Stage $Stage
+                Set-IQHttpLastError -StatusCode $status -Body $info.Body -Message ('Fabric API not offered to this tenant (FeatureNotAvailable)') -Url $displayPath -Method $Method
+                return $null
+            }
             if ($status -eq 403 -or $status -eq 404) {
                 $level = 'Warn'
                 if ($AllowNotFound) { $level = 'Debug' }

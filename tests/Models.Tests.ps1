@@ -295,3 +295,43 @@ Describe 'Get-IQModelReportBackupBimIndex / Get-IQModelBimPath (M-07: one checkp
         Get-IQModelBimPath -Work $script:W4 -ReportBackupIndex @{} | Should -BeNullOrEmpty
     }
 }
+
+Describe 'XMLA export outcomes for inferred-capacity models and the Fabric API state (run assessment 2026-09-16)' {
+    BeforeEach {
+        $script:W = New-TestWork -Key 'inf-1' -BaseName 'WS ~ Large' -WorkspaceId $script:Ids.ws1
+        $script:W.CapacityInferred = $true
+        $script:Map = @{ 'inf-1' = $script:W }
+        if (Test-Path -LiteralPath $script:W.BimPath) { Remove-Item -LiteralPath $script:W.BimPath -Force }
+        if ($script:IQ.ContainsKey('FabricApi')) { $script:IQ.Remove('FabricApi') }
+    }
+    AfterAll { if ($script:IQ.ContainsKey('FabricApi')) { $script:IQ.Remove('FabricApi') } }
+    It 'the MSOLAP connection string uses the access-token form with an explicit empty User ID' {
+        $source = Get-Content -LiteralPath (Join-Path (Join-Path (Join-Path (Get-IQTestRepoRoot) 'Config') 'Modules') 'ImpactIQ.Models.ps1') -Raw
+        $source | Should -Match 'Provider=MSOLAP;Data Source=\{0\};User ID=;Password=\{1\}'
+    }
+    It 'an XMLA failure of a model whose capacity was only inferred from its storage format is Skipped with the reason' {
+        Complete-IQModelBackupJob -Entry @{ ItemKey = 'inf-1'; Result = (New-TestProcessResult -ExitCode 1) } -WorkMap $script:Map
+        $cp = Get-Checkpoint -Stage ModelBackup -Key 'inf-1'
+        $cp.status | Should -Be 'Skipped'
+        $cp.message | Should -Match 'no complete \.bim'
+        $cp.message | Should -Match 'License info'
+        $script:W.Checkpointed | Should -Be 'Skipped'
+    }
+    It 'the same failure on a model in a listed capacity workspace stays Failed' {
+        $script:W.CapacityInferred = $false
+        Complete-IQModelBackupJob -Entry @{ ItemKey = 'inf-1'; Result = (New-TestProcessResult -ExitCode 1) } -WorkMap $script:Map
+        (Get-Checkpoint -Stage ModelBackup -Key 'inf-1').status | Should -Be 'Failed'
+        $script:W.Checkpointed | Should -Be 'Failed'
+    }
+    It 'New-IQModelFabricState is disabled with the real reason once the Fabric API was found unavailable' {
+        $script:IQ['FabricApi'] = @{ Unreachable = $true; Reason = 'the service answered FeatureNotAvailable: the Fabric REST API is not offered to this tenant'; ConsecutiveTransportFailures = 0; MaxConsecutiveTransportFailures = 3; Warned = $true; UsingPowerBIToken = $true; PowerBITokenNoticeShown = $true }
+        $state = New-IQModelFabricState
+        $state.Enabled | Should -BeFalse
+        $state.Reason | Should -Match 'Fabric API unavailable in this run \(the service answered FeatureNotAvailable'
+    }
+    It 'New-IQModelFabricState stays enabled when only the Power BI token stands in for a Fabric token' {
+        Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'pbi-token' }
+        $state = New-IQModelFabricState
+        $state.Enabled | Should -BeTrue
+    }
+}
