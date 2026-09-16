@@ -329,6 +329,30 @@ function Get-IQInventoryStatusCode {
     return $null
 }
 
+function Get-IQInventoryMetadataTimeoutSec {
+    <#
+    .SYNOPSIS
+        Per-request timeout (seconds) for the Inventory metadata GETs: Options.MetadataTimeoutSec, default 90.
+    .DESCRIPTION
+        Every Inventory call is a small metadata GET that normally answers in 0.5-4 s. The generic 300 s HttpClient
+        timeout made one service-side hang (run 2026-09-16 12:31: GET .../datasets/{id}/parameters, no response for
+        300 s, then 200 in 1.5 s on the retry) cost five minutes; with 90 s the same hang costs a minute and a half
+        before the same retry. Values below 10 or non-numeric fall back to the default; the admin scanner, downloads
+        and executeQueries keep their own longer timeouts.
+    #>
+    [CmdletBinding()]
+    [OutputType([int])]
+    param()
+    $default = 90
+    $value = $null
+    try { $value = Get-IQInventoryOption -Name 'MetadataTimeoutSec' } catch { $value = $null }
+    if ($null -eq $value) { return $default }
+    $seconds = 0
+    if (-not [int]::TryParse([string]$value, [ref]$seconds)) { return $default }
+    if ($seconds -lt 10) { return $default }
+    return $seconds
+}
+
 function Invoke-IQInventoryGet {
     <#
     .SYNOPSIS
@@ -355,7 +379,7 @@ function Invoke-IQInventoryGet {
     )
     $desc = $Description
     if ([string]::IsNullOrEmpty($desc)) { $desc = "GET $Path" }
-    $params = @{ Method = 'GET'; Path = $Path; Api = $Api; Stage = 'Inventory' }
+    $params = @{ Method = 'GET'; Path = $Path; Api = $Api; Stage = 'Inventory'; TimeoutSec = (Get-IQInventoryMetadataTimeoutSec) }
     if ($Query) { $params.Query = $Query }
     if ($Optional) { $params.AllowNotFound = $true }
     if ($null -ne $Result) { $Result['Failed'] = $false; $Result['Threw'] = $false; $Result['StatusCode'] = $null; $Result['Message'] = $null }
@@ -503,7 +527,7 @@ function Get-IQWorkspaceList {
     $skip = 0
     $raw = New-Object System.Collections.Generic.List[object]
     do {
-        $page = Invoke-IQApi -Method GET -Path 'groups' -Query @{ '$top' = $top; '$skip' = $skip } -Stage Inventory
+        $page = Invoke-IQApi -Method GET -Path 'groups' -Query @{ '$top' = $top; '$skip' = $skip } -Stage Inventory -TimeoutSec (Get-IQInventoryMetadataTimeoutSec)
         if ($skip -eq 0 -and $null -eq $page) {
             # Invoke-IQApi returns $null for a handled 400/403/404 (or a token problem): the listing itself failed, so no
             # scope can be resolved - fail with the true cause instead of a misleading 'workspace not found' later.

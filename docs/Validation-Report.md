@@ -133,3 +133,21 @@ exportable, no DirectQuery-schedule warnings) and left three failures plus one n
 If the workspace really is on a capacity, fix 1 recovers the three models on the next run; if it is not, they stay
 Skipped with the reason in `Model Detail` / the run summary, and their measure expressions stay blank in the DAX path
 (a Viewer cannot read them).
+
+## 8. Fourth real run (GCC, 2026-09-16 12:31): clean
+
+Status `Completed`, exit code 0, 12 min 25 s, one workspace: 19 models in scope (13 extracted from PBIX, 3 large-format
+models Skipped with the License-info reason, 3 not exportable), 14 reports exported, 8 Skipped as not exportable,
+13 models detailed with Tabular Editor and 6 over DAX. The section 7 changes behaved as intended:
+
+| # | Observation | Outcome |
+|---|---|---|
+| 1 | `403 FeatureNotAvailable` was detected once in Inventory; every later Fabric call was skipped with the "unreachable earlier in this run" line and ModelBackup names `FeatureNotAvailable` as the reason | fixed, no change |
+| 2 | The three large-format models still fail over XMLA with "Authentication failed for all authenticators" (4.5 s each) **with** the `User ID=;` form, so the connection string was not the cause | the workspace almost certainly has no XMLA endpoint (listed without a capacity id, `PremiumFiles` storage mode left over from a capacity). They stay Skipped, the run exits 0. Confirm in the portal: **Workspace settings > License info**. Pro = nothing more can be done in this tenant (Fabric `getDefinition` is not offered, PBIX export refuses large-format models). Premium/PPU/Fabric = check the tenant setting *Allow XMLA endpoints and Analyze in Excel*, the capacity's *XMLA Endpoint* (Read or Read Write) and Build permission on the three models, then re-run with `-Stages ModelBackup` |
+| 3 | One metadata GET (`datasets/{id}/parameters`) hung for the full 300 s HttpClient timeout, then answered in 1.5 s on the retry; Inventory took 7 minutes instead of 2 | new `-MetadataTimeoutSec` (default 90) applies to every Inventory metadata GET, so the same hang now costs a minute and a half before the same retry |
+| 4 | `Scorecards BI` PBIX yields no model (`pbi-tools generate-bim` exits -8), one duplicate report name, blank measure expressions for the three DAX-path models a Viewer cannot read | known limits, logged, no change |
+
+Remaining gaps in this tenant, none closable in code: no `.bim` for the three large-format models (no XMLA endpoint,
+no Fabric API), no PBIX for the three scorecard/metrics items (the service refuses the export), empty Fabric-only
+sheets (connections, gateways, Fabric items, dataflow metadata), and blank measure expressions for models the account
+can only view.

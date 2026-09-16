@@ -99,6 +99,10 @@
     Timeout per external process (default 20; ReportDetail uses three times this).
 .PARAMETER MaxRetries
     HTTP retries for 5xx / network errors (default 5).
+.PARAMETER MetadataTimeoutSec
+    Per-request timeout for the Inventory metadata GETs (default 90; minimum 10). These calls normally answer in a few
+    seconds, so a shorter timeout makes a service-side hang fail fast and retry instead of waiting the generic 300 s.
+    Downloads, executeQueries and the admin scanner keep their own longer timeouts.
 .PARAMETER DefinitionTimeoutMinutes
     Timeout for Fabric getDefinition long-running operations (report / dataflow / semantic-model definitions; default 10).
 .PARAMETER TimeBudgetMinutes
@@ -172,6 +176,7 @@ param(
     [Parameter(Mandatory = $false)][int]$MaxParallelExtracts = 2,
     [Parameter(Mandatory = $false)][int]$ToolTimeoutMinutes = 20,
     [Parameter(Mandatory = $false)][int]$MaxRetries = 5,
+    [Parameter(Mandatory = $false)][ValidateRange(10, 3600)][int]$MetadataTimeoutSec = 90,
     [Parameter(Mandatory = $false)][int]$DefinitionTimeoutMinutes = 10,
     [Parameter(Mandatory = $false)][int]$TimeBudgetMinutes = 0,
     [Parameter(Mandatory = $false)][switch]$SkipToolUpdate,
@@ -720,6 +725,7 @@ try {
         MaxParallelExtracts     = $MaxParallelExtracts
         ToolTimeoutMinutes      = $ToolTimeoutMinutes
         MaxRetries              = $MaxRetries
+        MetadataTimeoutSec      = $MetadataTimeoutSec
         DefinitionTimeoutMinutes = $DefinitionTimeoutMinutes
         TimeBudgetMinutes       = $TimeBudgetMinutes
         SkipToolUpdate          = [bool]$SkipToolUpdate
