@@ -36,6 +36,7 @@ Contents: 1 parameters - 2 examples - 3 state layout and manifest - 4 resume rul
 | `-MaxParallelExtracts <int>` | `2` | concurrent Tabular Editor / pbi-tools processes |
 | `-ToolTimeoutMinutes <int>` | `20` | per external process (ReportDetail uses 3x) |
 | `-MaxRetries <int>` | `5` | HTTP retries for 5xx/network errors (429 has its own 8-retry budget honouring `Retry-After`) |
+| `-MetadataTimeoutSec <int>` | `90` | per-request timeout for the Inventory metadata GETs (minimum 10). They normally answer in a few seconds, so a service-side hang fails fast and is retried instead of waiting the generic 300 s; downloads, `executeQueries` and the admin scanner keep their own longer timeouts |
 | `-DefinitionTimeoutMinutes <int>` | `10` | timeout for Fabric `getDefinition` long-running operations (report, dataflow and semantic-model definitions) |
 | `-TimeBudgetMinutes <int>` | `0` (unlimited) | stop cleanly after this many minutes: every stage checks the elapsed time of the current process between items; when the budget minus a 2-minute grace is reached the stage stops, later stages are deferred, `Assemble` still builds the (partial) workbooks, the manifest is `Paused` and the exit code is `3`. The next start resumes the run (section 10) |
 | `-SkipToolUpdate` | off (`IMPACTIQ_OFFLINE=1`) | do not download Tabular Editor 2 / pbi-tools updates |

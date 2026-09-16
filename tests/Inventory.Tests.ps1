@@ -555,3 +555,29 @@ Describe 'Time-budget stop is logged as paused, not complete (INV-09)' {
         $script:LogText | Should -Not -Match 'Inventory complete:'
     }
 }
+
+Describe 'Inventory metadata GETs use the short MetadataTimeoutSec (run assessment 2026-09-16 12:31)' {
+    AfterAll { Remove-IQTestFolder -Path $script:Base }
+    It 'defaults to 90 s, honours Options.MetadataTimeoutSec and ignores values below 10 or non-numeric' {
+        $script:Base = Initialize-IQTestContext -Prefix 'inv-timeout'
+        Get-IQInventoryMetadataTimeoutSec | Should -Be 90
+        $script:IQ.Options['MetadataTimeoutSec'] = 45
+        Get-IQInventoryMetadataTimeoutSec | Should -Be 45
+        $script:IQ.Options['MetadataTimeoutSec'] = 3
+        Get-IQInventoryMetadataTimeoutSec | Should -Be 90
+        $script:IQ.Options['MetadataTimeoutSec'] = 'soon'
+        Get-IQInventoryMetadataTimeoutSec | Should -Be 90
+        Remove-IQTestFolder -Path $script:Base
+    }
+    It 'every Invoke-IQApi call made by the Inventory stage carries the configured TimeoutSec' {
+        $script:IQTestTimeouts = New-Object System.Collections.Generic.List[object]
+        Mock Invoke-IQApi {
+            $script:IQTestTimeouts.Add($TimeoutSec)
+            Invoke-IQTestApiFixture -Method $Method -Path $Path -Body $Body -Query $Query -Api $Api -Raw:$Raw
+        }
+        Start-InventoryRun -Options @{ RunMode = 'Workspaces'; WorkspaceId = @($script:Ids.ws1); MetadataTimeoutSec = 45 }
+        $script:StageStatus | Should -Be 'Completed'
+        $script:IQTestTimeouts.Count | Should -BeGreaterThan 5
+        @($script:IQTestTimeouts | Where-Object { $_ -ne 45 }).Count | Should -Be 0 -Because 'the generic 300 s timeout must not apply to small metadata calls'
+    }
+}
