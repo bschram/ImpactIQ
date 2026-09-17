@@ -1,0 +1,67 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.0.0/schema.json",
+  "name": "5ba3f1109305278d1045",
+  "displayName": "Measure Lineage",
+  "displayOption": "FitToWidth",
+  "height": 720,
+  "width": 1000,
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "e9e659874a01ecd307ad",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Models"
+              }
+            },
+            "Property": "Model Object Distinct Count - Measure"
+          }
+        },
+        "type": "Categorical",
+        "howCreated": "Drillthrough"
+      }
+    ]
+  },
+  "pageBinding": {
+    "name": "9e9964c21942703a9b6d",
+    "type": "Drillthrough",
+    "parameters": [
+      {
+        "name": "17a6f2a16b61862fe253",
+        "boundFilter": "e9e659874a01ecd307ad",
+        "fieldExpr": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Models"
+              }
+            },
+            "Property": "Model Object Distinct Count - Measure"
+          }
+        }
+      }
+    ]
+  },
+  "objects": {
+    "outspacePane": [
+      {
+        "properties": {
+          "backgroundColor": {
+            "solid": {
+              "color": {
+                "expr": {
+                  "ThemeDataColor": {
+                    "ColorId": 2,
+                    "Percent": 0.6
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

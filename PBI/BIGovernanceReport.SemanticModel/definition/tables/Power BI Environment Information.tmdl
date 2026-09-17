@@ -1,0 +1,687 @@
+table 'Power BI Environment Information'
+	lineageTag: 182ae03e-5210-4b84-b3cc-afedd6783395
+
+	measure 'Workspace Distinct Count (Environment)' = DISTINCTCOUNTNOBLANK('Power BI Environment Information'[WorkspaceName])
+		formatString: #,0
+		lineageTag: aa9172dd-f463-4700-8d84-cdfdc3e3b0fd
+
+	measure 'Model Distinct Count (Environment)' = DISTINCTCOUNTNOBLANK('Power BI Environment Information'[Workspace Name - Model Name])
+		formatString: #,0
+		lineageTag: c933cee7-d072-4cf1-8ebd-c6d6437af9d4
+
+	measure 'Dataflow Distinct Count (Environment)' =
+			VAR A = DISTINCTCOUNTNOBLANK('Power BI Environment Information'[Workspace Name - Dataflow Name])
+			VAR B = CALCULATE(DISTINCTCOUNTNOBLANK('Fabric Item Information'[Fabric Item ID]), KEEPFILTERS('Fabric Item Information'[Fabric Item Type] IN {"Dataflow"}))
+			RETURN
+			A + B
+		formatString: #,0
+		lineageTag: 04bacd96-6329-4025-8e04-c1f52243d780
+
+	measure 'Org App Distinct Count (Environment)' = DISTINCTCOUNTNOBLANK('Power BI Environment Information'[App ID])
+		formatString: #,0
+		lineageTag: 2167cae4-eadc-44a8-b384-e0fe88982440
+
+	measure 'Report Distinct Count (Environment)' = DISTINCTCOUNTNOBLANK('Power BI Environment Information'[Workspace - Report Name])
+		formatString: #,0
+		lineageTag: bf3c075d-7010-4f44-adab-6cd48a13cd19
+
+	column 'App Description'
+		dataType: string
+		lineageTag: d00feae0-5ce7-44ab-af67-a5b9c1fcf117
+		summarizeBy: none
+		sourceColumn: App Description
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App ID'
+		dataType: string
+		lineageTag: a8be9b32-d1c4-4c90-a655-24709e4da162
+		summarizeBy: none
+		sourceColumn: App ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Last Update'
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 7eb33afa-4c6a-4124-9697-783f6b9751db
+		summarizeBy: none
+		sourceColumn: App Last Update
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Name'
+		dataType: string
+		lineageTag: 68f442a1-da0a-4226-a214-2c36de3f5cdd
+		summarizeBy: none
+		sourceColumn: App Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Page URL'
+		dataType: string
+		isHidden
+		lineageTag: 8e2d9b35-c502-4426-93ae-94b9293e7e6d
+		summarizeBy: none
+		sourceColumn: App Page URL
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Published By'
+		dataType: string
+		lineageTag: 8efa5a08-93a9-4eba-a43e-82a8e804a760
+		summarizeBy: none
+		sourceColumn: App Published By
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Report URL'
+		dataType: string
+		isHidden
+		lineageTag: ec85536b-afae-4fed-9466-574c53576669
+		summarizeBy: none
+		sourceColumn: App Report URL
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Sort Order'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: c2c48a3f-ae3e-40a1-82e3-92754bb70851
+		summarizeBy: sum
+		sourceColumn: App Sort Order
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App URL'
+		dataType: string
+		isHidden
+		lineageTag: 9aed9128-1298-4a6e-9a1b-0a3f0eedf89e
+		dataCategory: WebUrl
+		summarizeBy: none
+		sourceColumn: App URL
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Workspace ID'
+		dataType: string
+		lineageTag: 370aff20-e715-4cc1-ab2b-644369f3e6b1
+		summarizeBy: none
+		sourceColumn: App Workspace ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Add Rows API Enabled'
+		dataType: string
+		lineageTag: 2ead14ff-d9f9-4955-a18f-cc9c2837e1cc
+		summarizeBy: none
+		sourceColumn: Dataset Add Rows API Enabled
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Configured By'
+		dataType: string
+		lineageTag: 5ac68f86-fdf9-4916-a63b-d882297fe392
+		summarizeBy: none
+		sourceColumn: Dataset Configured By
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Created Date'
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 099f6634-faa2-4446-86f8-ab07d57ec5b3
+		summarizeBy: none
+		sourceColumn: Dataset Created Date
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Index'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 659ee035-96ab-4705-8aab-ae8a3c162e2f
+		summarizeBy: sum
+		sourceColumn: Dataset Index
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Is Effective Identity Required'
+		dataType: string
+		lineageTag: 6104ce46-d8d5-4ea3-8989-7cca159487f3
+		summarizeBy: none
+		sourceColumn: Dataset Is Effective Identity Required
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Is Effective Identity Roles Required'
+		dataType: string
+		lineageTag: f359bfb5-399c-470a-98bd-d75125a3d111
+		summarizeBy: none
+		sourceColumn: Dataset Is Effective Identity Roles Required
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Is On Prem Gateway Required'
+		dataType: string
+		lineageTag: e0d5cd05-49f4-4b80-8da8-968df1ac82f8
+		summarizeBy: none
+		sourceColumn: Dataset Is On Prem Gateway Required
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Is Refreshable'
+		dataType: string
+		lineageTag: 11e703f8-213b-4275-9461-85875a7e8e64
+		summarizeBy: none
+		sourceColumn: Dataset Is Refreshable
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Query Scale Out Settings'
+		dataType: string
+		lineageTag: 2772ac8d-53bb-4c3c-852e-0fa23b3976ca
+		summarizeBy: none
+		sourceColumn: Dataset Query Scale Out Settings
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Target Storage Mode'
+		dataType: string
+		lineageTag: ec9107f1-93ea-436d-985d-1388e6885d8b
+		summarizeBy: none
+		sourceColumn: Dataset Target Storage Mode
+
+		annotation SummarizationSetBy = Automatic
+
+	column DatasetId
+		dataType: string
+		isHidden
+		lineageTag: 0e159721-e356-42c5-8887-77a190f17d48
+		summarizeBy: none
+		sourceColumn: DatasetId
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column DatasetName
+		dataType: string
+		isHidden
+		lineageTag: d5a8f0a8-5fbe-49a1-a36a-fc32adb86078
+		summarizeBy: none
+		sourceColumn: DatasetName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Page Order Index'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: ce558058-f9b4-4bcb-a11f-9f74433be587
+		summarizeBy: sum
+		sourceColumn: Page Order Index
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column PageDisplayName
+		dataType: string
+		isHidden
+		lineageTag: 51c062d8-55bd-49b8-82a6-785093c87f1e
+		summarizeBy: none
+		sourceColumn: PageDisplayName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column PageId
+		dataType: string
+		isHidden
+		lineageTag: d090f52d-331b-4362-8dbf-1664c2586002
+		summarizeBy: none
+		sourceColumn: PageId
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column PageOrder
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: d3af1811-5e70-4a65-b9c5-7e5931a0bd8f
+		summarizeBy: sum
+		sourceColumn: PageOrder
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Index'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: a31c1be4-f98c-45d8-8f95-d75053b5d0e0
+		summarizeBy: sum
+		sourceColumn: Report Index
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Is From PBIX'
+		dataType: string
+		lineageTag: c72b368c-f847-4032-9b02-e64d0413b797
+		summarizeBy: none
+		sourceColumn: Report Is From PBIX
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Is Owned By Me'
+		dataType: string
+		lineageTag: ec7a75ad-a78e-4adc-bfa3-b7bbd62d331a
+		summarizeBy: none
+		sourceColumn: Report Is Owned By Me
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Name - Page ID'
+		dataType: string
+		isHidden
+		lineageTag: db1c4bbf-094d-4685-980e-af863cabb77e
+		summarizeBy: none
+		sourceColumn: Report Name - Page ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Name - Page Name'
+		dataType: string
+		isHidden
+		lineageTag: a34e6a5b-a0f1-415f-a6be-02a47e914b02
+		summarizeBy: none
+		sourceColumn: Report Name - Page Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Type'
+		dataType: string
+		lineageTag: ca4a016f-9119-47ec-a11b-6f4f52eb05ce
+		summarizeBy: none
+		sourceColumn: Report Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReportId
+		dataType: string
+		isHidden
+		lineageTag: 82dc54e7-4532-4f75-85f4-340b93d1e6e0
+		summarizeBy: none
+		sourceColumn: ReportId
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReportName
+		dataType: string
+		isHidden
+		lineageTag: 78ddd9ca-7b81-49c6-85f1-9a65121f13ff
+		summarizeBy: none
+		sourceColumn: ReportName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Index'
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 58b0f384-129f-4b93-8563-c94ded4ea65e
+		summarizeBy: sum
+		sourceColumn: Workspace Index
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Is On Dedicated Capacity'
+		dataType: string
+		lineageTag: 333bf90f-c52c-4a2a-a226-55a0968523c3
+		summarizeBy: none
+		sourceColumn: Workspace Is On Dedicated Capacity
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Is Read Only'
+		dataType: string
+		lineageTag: 52364501-bb50-4203-bbdd-4ba7938b9740
+		summarizeBy: none
+		sourceColumn: Workspace Is Read Only
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name'
+		dataType: string
+		isHidden
+		lineageTag: 37ab9242-9bd9-47e1-91a8-fafad8c01aaf
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Report Name - Page Name'
+		dataType: string
+		isHidden
+		lineageTag: 3eab17dd-0e03-4df9-9318-3e6f3bc08845
+		summarizeBy: none
+		sourceColumn: Workspace Name - Report Name - Page Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Page URL'
+		dataType: string
+		isHidden
+		lineageTag: e8db2bfe-6293-4343-9130-df5c5fd4e584
+		summarizeBy: none
+		sourceColumn: Workspace Page URL
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Report URL'
+		dataType: string
+		isHidden
+		lineageTag: 7a2bc9fb-6108-41a5-bec2-aaf563aad867
+		summarizeBy: none
+		sourceColumn: Workspace Report URL
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Type'
+		dataType: string
+		lineageTag: 2d58423f-6823-4954-9765-a01f8b743398
+		summarizeBy: none
+		sourceColumn: Workspace Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace URL'
+		dataType: string
+		isHidden
+		lineageTag: eab1d8ba-28d9-4b5d-8192-9a4659a9224f
+		dataCategory: WebUrl
+		summarizeBy: none
+		sourceColumn: Workspace URL
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceId
+		dataType: string
+		isHidden
+		lineageTag: cf637de3-8511-424e-80e3-5f75393f26c8
+		summarizeBy: none
+		sourceColumn: WorkspaceId
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceName
+		dataType: string
+		isHidden
+		lineageTag: a01e3328-ef68-46c6-9bb8-e701518be67b
+		summarizeBy: none
+		sourceColumn: WorkspaceName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceCapacityId
+		dataType: string
+		lineageTag: 2c0aa72f-625b-497d-98d6-464f6767ec21
+		summarizeBy: none
+		sourceColumn: WorkspaceCapacityId
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceDefaultDatasetStorageFormat
+		dataType: string
+		lineageTag: 746b43a1-3389-42a1-ac90-aa7cf25ab16f
+		summarizeBy: none
+		sourceColumn: WorkspaceDefaultDatasetStorageFormat
+
+		annotation SummarizationSetBy = Automatic
+
+	column DatasetWorkspaceId
+		dataType: string
+		lineageTag: bba5cbb6-7148-45b2-bfb2-eafb821391e2
+		summarizeBy: none
+		sourceColumn: DatasetWorkspaceId
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataflowId
+		dataType: string
+		lineageTag: a709f487-b1c0-4ac8-beb8-576a7f79e4ed
+		summarizeBy: none
+		sourceColumn: DataflowId
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataflowName
+		dataType: string
+		lineageTag: beecb387-e598-46ad-b4a1-5d294ecdada5
+		summarizeBy: none
+		sourceColumn: DataflowName
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataflowConfiguredBy
+		dataType: string
+		lineageTag: 2722d4e3-8d04-4271-b5e2-df54b6212951
+		summarizeBy: none
+		sourceColumn: DataflowConfiguredBy
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataflowDescription
+		dataType: string
+		lineageTag: b8788474-d20c-4de0-a27b-5646a256c9ad
+		summarizeBy: none
+		sourceColumn: DataflowDescription
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataflowModifiedDateTime
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: adafc0a8-f0b2-40ef-8893-ddaeb98f060f
+		summarizeBy: none
+		sourceColumn: DataflowModifiedDateTime
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataflowModifiedBy
+		dataType: string
+		lineageTag: 3b9522d2-2125-453e-9536-773c95770d90
+		summarizeBy: none
+		sourceColumn: DataflowModifiedBy
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataflowGeneration
+		dataType: string
+		lineageTag: dc3cf492-e38b-4458-8e77-e8d8d8f1c686
+		summarizeBy: none
+		sourceColumn: DataflowGeneration
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: b47f9eba-f3f7-4434-ab88-cba42163cf6e
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace - Report Name'
+		dataType: string
+		isHidden
+		lineageTag: 39923352-d291-4143-a4a7-72a3a712a47c
+		summarizeBy: none
+		sourceColumn: Workspace - Report Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column DatasetDescription
+		dataType: string
+		lineageTag: a991784a-fb47-433a-8d82-0d1c1783f3bc
+		summarizeBy: none
+		sourceColumn: DatasetDescription
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReportDescription
+		dataType: string
+		lineageTag: 639872d8-b6b8-4c2b-91ce-53d98f042c9e
+		summarizeBy: none
+		sourceColumn: ReportDescription
+
+		annotation SummarizationSetBy = Automatic
+
+	column UniquePageID
+		dataType: string
+		lineageTag: 42d5aaea-f3ff-41a8-83a9-b3ad3d9b26eb
+		summarizeBy: none
+		sourceColumn: UniquePageID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Report ID - Page ID'
+		dataType: string
+		isHidden
+		lineageTag: 0eaed5fe-e6ce-4b7f-b2c2-fbdcbb4a6393
+		summarizeBy: none
+		sourceColumn: Workspace Name - Report ID - Page ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReportFormat
+		dataType: string
+		lineageTag: 547827c4-a1ac-4bf1-8a98-a0fcfab891c7
+		summarizeBy: none
+		sourceColumn: ReportFormat
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'Power BI Environment Information' = m
+		mode: import
+		queryGroup: 'Environment Information'
+		source =
+				let
+				    // Load workspace data from the Power BI Workspaces query
+				    Source = #"Power BI Workspaces",
+				    // Join with Power BI Datasets to bring in model (dataset) information per workspace
+				    #"Merged Queries" = Table.NestedJoin(Source, {"WorkspaceId"}, #"Power BI Datasets", {"WorkspaceId"}, "Power BI Datasets", JoinKind.LeftOuter),
+				    // Expand all dataset columns: IDs, names, configuration, storage, and composite keys
+				    #"Expanded Power BI Datasets" = Table.ExpandTableColumn(#"Merged Queries", "Power BI Datasets", {"DatasetId", "DatasetName", "DatasetDescription", "DatasetAddRowsAPIEnabled", "DatasetConfiguredBy", "DatasetIsRefreshable", "DatasetIsEffectiveIdentityRequired", "DatasetIsEffectiveIdentityRolesRequired", "DatasetIsOnPremGatewayRequired", "DatasetTargetStorageMode", "DatasetCreatedDate", "DatasetQueryScaleOutSettings", "Dataset Index", "Workspace Name - Model Name"}, {"DatasetId", "DatasetName", "DatasetDescription", "DatasetAddRowsAPIEnabled", "DatasetConfiguredBy", "DatasetIsRefreshable", "DatasetIsEffectiveIdentityRequired", "DatasetIsEffectiveIdentityRolesRequired", "DatasetIsOnPremGatewayRequired", "DatasetTargetStorageMode", "DatasetCreatedDate", "DatasetQueryScaleOutSettings", "Dataset Index", "Workspace Name - Model Name"}),
+				    // Join with Power BI Reports to bring in report information per dataset
+				    #"Merged Queries1" = Table.NestedJoin(#"Expanded Power BI Datasets", {"DatasetId"}, #"Power BI Reports", {"DatasetId"}, "Power BI Reports", JoinKind.LeftOuter),
+				    // Expand report columns: IDs, names, types, ownership, and composite keys
+				    #"Expanded Power BI Reports" = Table.ExpandTableColumn(#"Merged Queries1", "Power BI Reports", {"DatasetWorkspaceId", "ReportId", "ReportName", "ReportDescription", "ReportType", "ReportFormat", "ReportIsFromPbix", "ReportIsOwnedByMe", "Workspace - Report Name", "Report Index"}, {"DatasetWorkspaceId", "ReportId", "ReportName", "ReportDescription", "ReportType", "ReportFormat", "ReportIsFromPbix", "ReportIsOwnedByMe", "Workspace - Report Name", "Report Index"}),
+				    // Join with Power BI Pages to bring in page-level information per report
+				    #"Merged Queries2" = Table.NestedJoin(#"Expanded Power BI Reports", {"ReportId"}, #"Power BI Pages", {"ReportId"}, "Power BI Workspaces", JoinKind.LeftOuter),
+				    // Expand page columns: page ID, display name, and order
+				    #"Expanded Power BI Pages" = Table.ExpandTableColumn(#"Merged Queries2", "Power BI Workspaces", {"PageId", "PageDisplayName", "PageOrder"}, {"PageId", "PageDisplayName", "PageOrder"}),
+				    // Create a 1-based page order index from the 0-based PageOrder value
+				    #"Added Custom" = Table.AddColumn(#"Expanded Power BI Pages", "Page Order Index", each [PageOrder]+1, Int64.Type),
+				    // Sort by workspace index, then report index, then page order for logical hierarchy
+				    #"Sorted Rows" = Table.Sort(#"Added Custom",{{"Workspace Index", Order.Ascending}, {"Report Index", Order.Ascending}, {"Page Order Index", Order.Ascending}}),
+				    // Add a sequential index for app sort ordering
+				    #"Added Index" = Table.AddIndexColumn(#"Sorted Rows", "App Sort Order", 1, 1, Int64.Type),
+				    // Join with Power BI Apps to bring in app information per workspace
+				    #"Merged Queries3" = Table.NestedJoin(#"Added Index", {"WorkspaceId"}, #"Power BI Apps", {"AppWorkspaceId"}, "Power BI Apps", JoinKind.LeftOuter),
+				    // Expand app columns: description, ID, last update, name, published by, workspace ID
+				    #"Expanded Power BI Apps" = Table.ExpandTableColumn(#"Merged Queries3", "Power BI Apps", {"AppDescription", "AppId", "AppLastUpdate", "AppName", "AppPublishedBy", "AppWorkspaceId"}, {"AppDescription", "AppId", "AppLastUpdate", "AppName", "AppPublishedBy", "AppWorkspaceId"}),
+				    // Join with Power BI Dataflows to bring in dataflow information per workspace
+				    #"Merged Queries4" = Table.NestedJoin(#"Expanded Power BI Apps", {"WorkspaceId"}, #"Power BI Dataflows", {"WorkspaceId"}, "Power BI Dataflows", JoinKind.LeftOuter),
+				    // Expand dataflow columns: ID, name, configuration, modification details, and composite key
+				    #"Expanded Power BI Dataflows" = Table.ExpandTableColumn(#"Merged Queries4", "Power BI Dataflows", {"DataflowId", "DataflowName", "DataflowConfiguredBy", "DataflowDescription", "DataflowModifiedDateTime", "DataflowModifiedBy", "DataflowGeneration", "Workspace Name - Dataflow Name"}, {"DataflowId", "DataflowName", "DataflowConfiguredBy", "DataflowDescription", "DataflowModifiedDateTime", "DataflowModifiedBy", "DataflowGeneration", "Workspace Name - Dataflow Name"}),
+				    // Create a composite key combining report name and page name
+				    #"Added Custom1" = Table.AddColumn(#"Expanded Power BI Dataflows", "Report Name - Page Name", each [ReportName]&" - "&[PageDisplayName], type text),
+				    // Create a composite key combining workspace, report name, and page name
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Workspace Name - Report Name - Page Name", each [WorkspaceName]&" - "&[ReportName]&" - "&[PageDisplayName], type text),
+				    // Create a composite key combining report name and page ID
+				    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Report Name - Page ID", each [ReportName]&" - "&[PageId], type text),
+				    // Generate the App Page URL for navigating to a specific page in the published app
+				    #"Added Custom4" = Table.AddColumn(#"Added Custom3", "App Page URL", each "https://app.powerbi.com/groups/me/apps/"&[AppId]&"/reports/"&[ReportId]&"/"&[PageId], type text),
+				    // Generate the Workspace Page URL for navigating to a specific page in the workspace
+				    #"Added Custom5" = Table.AddColumn(#"Added Custom4", "Workspace Page URL", each "https://app.powerbi.com/groups/"&[WorkspaceId]&"/reports/"&[ReportId]&"/"&[PageId], type text),
+				    // Generate the App Report URL for navigating to the report in the published app
+				    #"Added Custom6" = Table.AddColumn(#"Added Custom5", "App Report URL", each "https://app.powerbi.com/groups/me/apps/"&[AppId]&"/reports/"&[ReportId], type text),
+				    // Generate the Workspace Report URL for navigating to the report in the workspace
+				    #"Added Custom7" = Table.AddColumn(#"Added Custom6", "Workspace Report URL", each "https://app.powerbi.com/groups/"&[WorkspaceId]&"/reports/"&[ReportId], type text),
+				    // Generate the Workspace URL for navigating to the workspace
+				    #"Added Custom8" = Table.AddColumn(#"Added Custom7", "Workspace URL", each "https://app.powerbi.com/groups/"&[WorkspaceId], type text),
+				    // Generate the App URL for navigating to the published app
+				    #"Added Custom9" = Table.AddColumn(#"Added Custom8", "App URL", each "https://app.powerbi.com/groups/me/apps/"&[AppId], type text),
+				    // Create a unique page ID combining workspace, report, dataset, and page IDs
+				    #"Added Custom10" = Table.AddColumn(#"Added Custom9", "UniquePageID", each [WorkspaceName]&" - "&[ReportId]&" - "&[DatasetId]&" - "&[PageId], type text),
+				    // Create a composite key combining workspace name, report ID, and page ID
+				    #"Added Custom11" = Table.AddColumn(#"Added Custom10", "Workspace Name - Report ID - Page ID", each [WorkspaceName]&" - "&[ReportId]&" - "&[PageId], type text),
+				    // Rename columns to user-friendly display names with spaces and proper casing
+				    #"Renamed Columns" = Table.RenameColumns(#"Added Custom11",{{"WorkspaceIsReadOnly", "Workspace Is Read Only"}, {"WorkspaceIsOnDedicatedCapacity", "Workspace Is On Dedicated Capacity"}, {"WorkspaceType", "Workspace Type"}, {"ReportType", "Report Type"}, {"ReportIsFromPbix", "Report Is From PBIX"}, {"ReportIsOwnedByMe", "Report Is Owned By Me"}, {"DatasetAddRowsAPIEnabled", "Dataset Add Rows API Enabled"}, {"DatasetConfiguredBy", "Dataset Configured By"}, {"DatasetIsRefreshable", "Dataset Is Refreshable"}, {"DatasetIsEffectiveIdentityRequired", "Dataset Is Effective Identity Required"}, {"DatasetIsEffectiveIdentityRolesRequired", "Dataset Is Effective Identity Roles Required"}, {"DatasetIsOnPremGatewayRequired", "Dataset Is On Prem Gateway Required"}, {"DatasetTargetStorageMode", "Dataset Target Storage Mode"}, {"DatasetQueryScaleOutSettings", "Dataset Query Scale Out Settings"}, {"AppDescription", "App Description"}, {"AppLastUpdate", "App Last Update"}, {"AppPublishedBy", "App Published By"}, {"DatasetCreatedDate", "Dataset Created Date"}, {"AppWorkspaceId", "App Workspace ID"}, {"AppName", "App Name"}, {"AppId", "App ID"}})
+				in
+				    #"Renamed Columns"
+
+	changedProperty = IsHidden
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

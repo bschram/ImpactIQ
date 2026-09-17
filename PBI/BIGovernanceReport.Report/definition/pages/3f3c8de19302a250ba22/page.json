@@ -1,0 +1,96 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.0.0/schema.json",
+  "name": "3f3c8de19302a250ba22",
+  "displayName": "Calculated Column DAX",
+  "displayOption": "FitToWidth",
+  "height": 720,
+  "width": 1280,
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "c01ec55f8ba76026c645",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Models"
+              }
+            },
+            "Property": "Model Object Distinct Count - Calculated Column"
+          }
+        },
+        "type": "Categorical",
+        "howCreated": "Drillthrough"
+      },
+      {
+        "name": "be5c5c48af1e77aad945",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Model Object Hierarchy"
+              }
+            },
+            "Property": "Model Name"
+          }
+        },
+        "type": "Categorical",
+        "howCreated": "Drillthrough"
+      }
+    ]
+  },
+  "pageBinding": {
+    "name": "b5fc7ed0d06b1cac522a",
+    "type": "Drillthrough",
+    "parameters": [
+      {
+        "name": "cbaa2f37e86ca0552453",
+        "boundFilter": "c01ec55f8ba76026c645",
+        "fieldExpr": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Models"
+              }
+            },
+            "Property": "Model Object Distinct Count - Calculated Column"
+          }
+        }
+      },
+      {
+        "name": "c43a352a49ac87eff6a4",
+        "boundFilter": "be5c5c48af1e77aad945",
+        "fieldExpr": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Model Object Hierarchy"
+              }
+            },
+            "Property": "Model Name"
+          }
+        }
+      }
+    ]
+  },
+  "objects": {
+    "outspacePane": [
+      {
+        "properties": {
+          "backgroundColor": {
+            "solid": {
+              "color": {
+                "expr": {
+                  "ThemeDataColor": {
+                    "ColorId": 2,
+                    "Percent": 0.6
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

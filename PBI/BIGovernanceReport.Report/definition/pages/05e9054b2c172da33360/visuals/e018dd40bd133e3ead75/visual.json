@@ -1,0 +1,324 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "e018dd40bd133e3ead75",
+  "position": {
+    "x": 447.41639262300197,
+    "y": 390.67880660196909,
+    "z": 6000,
+    "height": 329.07799892199057,
+    "width": 832.42144062286775,
+    "tabOrder": 6000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Workspace Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Workspace Name",
+              "nativeQueryRef": "Workspace Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Model Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Model Name",
+              "nativeQueryRef": "Model Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh Schedule"
+                    }
+                  },
+                  "Property": "Dataset Refresh Schedule Day"
+                }
+              },
+              "queryRef": "All Model Refresh Schedule.Dataset Refresh Schedule Day",
+              "nativeQueryRef": "Dataset Refresh Schedule Day"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh Schedule"
+                    }
+                  },
+                  "Property": "Dataset Refresh Schedule Enabled"
+                }
+              },
+              "queryRef": "All Model Refresh Schedule.Dataset Refresh Schedule Enabled",
+              "nativeQueryRef": "Dataset Refresh Schedule Enabled"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh Schedule"
+                    }
+                  },
+                  "Property": "Dataset Refresh Schedule Local Time Zone"
+                }
+              },
+              "queryRef": "All Model Refresh Schedule.Dataset Refresh Schedule Local Time Zone",
+              "nativeQueryRef": "Scheduled Time Zone ",
+              "displayName": "Scheduled Time Zone "
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh Schedule"
+                    }
+                  },
+                  "Property": "Dataset Refresh Schedule Time"
+                }
+              },
+              "queryRef": "All Model Refresh Schedule.Dataset Refresh Schedule Time",
+              "nativeQueryRef": "Dataset Refresh Schedule Time"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh Schedule"
+                    }
+                  },
+                  "Property": "UTC Scheduled Time"
+                }
+              },
+              "queryRef": "All Model Refresh Schedule.UTC Scheduled Time",
+              "nativeQueryRef": "UTC Scheduled Time"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Report Hierarchy"
+                  }
+                },
+                "Property": "Workspace Name"
+              }
+            },
+            "direction": "Ascending"
+          },
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Report Hierarchy"
+                  }
+                },
+                "Property": "Model Name"
+              }
+            },
+            "direction": "Ascending"
+          }
+        ]
+      }
+    },
+    "objects": {
+      "values": [
+        {
+          "properties": {
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "backColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#5A82AA'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 0,
+                      "Percent": 0
+                    }
+                  }
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "autoSizeColumnWidth": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "total": [
+        {
+          "properties": {
+            "totals": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnWidth": [
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "140.22043930368585D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Report Hierarchy.Workspace Name"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "168.96285828315138D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Report Hierarchy.Model Name"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "96.01345528239598D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh Schedule.Dataset Refresh Schedule Day"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "104.23180720284508D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh Schedule.Dataset Refresh Schedule Enabled"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "111.44597910620828D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh Schedule.Dataset Refresh Schedule Local Time Zone"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "93.46632811690112D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh Schedule.Dataset Refresh Schedule Time"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "84.31735223406723D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh Schedule.UTC Scheduled Time"
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

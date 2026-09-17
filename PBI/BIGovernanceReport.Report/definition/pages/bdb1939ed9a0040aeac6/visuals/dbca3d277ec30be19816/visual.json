@@ -1,0 +1,340 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "dbca3d277ec30be19816",
+  "position": {
+    "x": 447.81338934612234,
+    "y": 62.761725021994415,
+    "z": 6000,
+    "height": 656.453718473293,
+    "width": 832.01692225103409,
+    "tabOrder": 6000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Workspace Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Workspace Name",
+              "nativeQueryRef": "Workspace Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Model Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Model Name",
+              "nativeQueryRef": "Model Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh History"
+                    }
+                  },
+                  "Property": "Refresh Start Time"
+                }
+              },
+              "queryRef": "All Model Refresh History.Refresh Start Time",
+              "nativeQueryRef": "Refresh Start Time"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh History"
+                    }
+                  },
+                  "Property": "Refresh End Time"
+                }
+              },
+              "queryRef": "All Model Refresh History.Refresh End Time",
+              "nativeQueryRef": "Refresh End Time"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh History"
+                    }
+                  },
+                  "Property": "Refresh Type"
+                }
+              },
+              "queryRef": "All Model Refresh History.Refresh Type",
+              "nativeQueryRef": "Refresh Type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh History"
+                    }
+                  },
+                  "Property": "Refresh Status"
+                }
+              },
+              "queryRef": "All Model Refresh History.Refresh Status",
+              "nativeQueryRef": "Refresh Status"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Model Refresh History"
+                    }
+                  },
+                  "Property": "Refresh Duration (HH:MM:SS)"
+                }
+              },
+              "queryRef": "All Model Refresh History.Refresh Duration (HH:MM:SS)",
+              "nativeQueryRef": "Refresh Duration (HH:MM:SS)"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "All Model Refresh History"
+                  }
+                },
+                "Property": "Refresh Start Time"
+              }
+            },
+            "direction": "Descending"
+          }
+        ]
+      }
+    },
+    "objects": {
+      "values": [
+        {
+          "properties": {
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "backColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#5A82AA'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 0,
+                      "Percent": 0
+                    }
+                  }
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "autoSizeColumnWidth": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "total": [
+        {
+          "properties": {
+            "totals": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnWidth": [
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "159.165635342586D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Report Hierarchy.Workspace Name"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "166.0609397588967D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Report Hierarchy.Model Name"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "120D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh History.Refresh Start Time"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "120D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh History.Refresh End Time"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "71D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh History.Refresh Type"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "77D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh History.Refresh Status"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "90.69652405959113D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh History.Refresh Duration (HH:MM:SS)"
+          }
+        }
+      ],
+      "columnFormatting": [
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Left'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh History.Refresh Status"
+          }
+        },
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Model Refresh History.Refresh Duration (HH:MM:SS)"
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

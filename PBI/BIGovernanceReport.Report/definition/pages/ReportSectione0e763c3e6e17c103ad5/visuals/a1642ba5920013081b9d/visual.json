@@ -1,0 +1,426 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.9.0/schema.json",
+  "name": "a1642ba5920013081b9d",
+  "position": {
+    "x": 1.0279576369020731,
+    "y": 62.705415851026451,
+    "z": 5000,
+    "height": 656.86492998042468,
+    "width": 1278.7793003061788,
+    "tabOrder": 5000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "PBI Snapshot Date"
+                    }
+                  },
+                  "Property": "PBI Snapshot Date"
+                }
+              },
+              "queryRef": "Report Date.Report Date",
+              "nativeQueryRef": "Report Date"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Workspace Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Workspace Name",
+              "nativeQueryRef": "Workspace Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Report Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Report Name",
+              "nativeQueryRef": "Report Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Page Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Page Name",
+              "nativeQueryRef": "Page Name"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Workspace Page URL Link"
+                }
+              },
+              "queryRef": "Report Hierarchy.Workspace Page URL Link",
+              "nativeQueryRef": "Page Link",
+              "displayName": "Page Link"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Visual Object Category"
+                }
+              },
+              "queryRef": "All Visual Objects.Visual Object Category",
+              "nativeQueryRef": "Visual Object Category"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Visual Name"
+                }
+              },
+              "queryRef": "All Visual Objects.Visual Name",
+              "nativeQueryRef": "Visual Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Model Object Hierarchy"
+                    }
+                  },
+                  "Property": "Object Name"
+                }
+              },
+              "queryRef": "Object Name.Object Name",
+              "nativeQueryRef": "Object Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Model Object Hierarchy"
+                    }
+                  },
+                  "Property": "Object Type"
+                }
+              },
+              "queryRef": "Object Hierarchy.Object Type",
+              "nativeQueryRef": "Object Type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Display Name"
+                }
+              },
+              "queryRef": "All Visual Objects.Display Name",
+              "nativeQueryRef": "Display Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Filter Type"
+                }
+              },
+              "queryRef": "All Visual Objects.Filter Type",
+              "nativeQueryRef": "Filter Type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Filter Type Group"
+                }
+              },
+              "queryRef": "All Visual Objects.Filter Type Group",
+              "nativeQueryRef": "Filter Type Group1"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Locked Filter"
+                }
+              },
+              "queryRef": "All Visual Objects.Locked Filter",
+              "nativeQueryRef": "Locked Filter"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Hidden Filter"
+                }
+              },
+              "queryRef": "All Visual Objects.Hidden Filter",
+              "nativeQueryRef": "Hidden Filter"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Applied Filter"
+                }
+              },
+              "queryRef": "All Visual Objects.Applied Filter",
+              "nativeQueryRef": "Applied Filter"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Model Object Hierarchy"
+                    }
+                  },
+                  "Property": "Is Hidden"
+                }
+              },
+              "queryRef": "Object Hierarchy.Is Hidden",
+              "nativeQueryRef": "Is Hidden"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Visual Type"
+                }
+              },
+              "queryRef": "All Visual Objects.Visual Type",
+              "nativeQueryRef": "Visual Type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Listing Page?"
+                }
+              },
+              "queryRef": "Report Hierarchy.Listing Page?",
+              "nativeQueryRef": "Listing Page?1"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Listing Visual on Non-Listing Page?"
+                }
+              },
+              "queryRef": "All Visual Objects.Listing Visual on Non-Listing Page?",
+              "nativeQueryRef": "Listing Visual on Non-Listing Page?"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "WorkspaceName - ModelName - ObjectType - TableName - ObjectName"
+                }
+              },
+              "queryRef": "All Reports.WorkspaceName - ModelName - ObjectType - TableName - ObjectName",
+              "nativeQueryRef": "WorkspaceName - ModelName - ObjectType - TableName - ObjectName"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Model Object Hierarchy"
+                    }
+                  },
+                  "Property": "WorkspaceName - ModelName - ObjectType - TableName - ObjectName"
+                }
+              },
+              "queryRef": "Model Object Hierarchy.WorkspaceName - ModelName - ObjectType - TableName - ObjectName",
+              "nativeQueryRef": "WorkspaceName - ModelName - ObjectType - TableName - ObjectName1"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "isDefaultSort": true
+      }
+    },
+    "objects": {
+      "values": [
+        {
+          "properties": {
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            },
+            "urlIcon": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "backColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#5A82AA'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 0,
+                      "Percent": 0
+                    }
+                  }
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnWidth": [
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "97.71955440662316D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Listing Visual on Non-Listing Page?"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "75.06093729339736D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Report Date.Report Date"
+          }
+        }
+      ],
+      "columnFormatting": [
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Listing Visual on Non-Listing Page?"
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

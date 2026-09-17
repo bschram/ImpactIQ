@@ -1,0 +1,552 @@
+table 'Model Object Hierarchy'
+	lineageTag: 577b944f-fd4d-4383-ba91-cd70e869ac92
+
+	/// Counts model objects (measures, columns, hierarchy levels) that are referenced in at least one report. An object is 'Used' if it appears in any visual, filter, or other report element. Filter by 'Model Object Hierarchy'[Object Name] to check if a specific object is used.
+	measure 'Used Model Objects' =
+			CALCULATE(
+			    COUNT(
+			        'Model Object Hierarchy'[WorkspaceName - ModelName - ObjectType - TableName - ObjectName]
+			    ),
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Object Used Flag] IN { "Used" }
+			    ),
+			    KEEPFILTERS( 'All Models' )
+			)
+		formatString: 0
+		lineageTag: 6499d632-9a8b-4842-b4c7-5280369caa9e
+
+	/// Counts model objects that are NOT referenced in any report. These objects exist in the model but no report uses them in any visual, filter, or other element. Good candidates for cleanup or deprecation.
+	measure 'Unused Model Objects' =
+			CALCULATE(
+			    COUNT(
+			        'Model Object Hierarchy'[WorkspaceName - ModelName - ObjectType - TableName - ObjectName]
+			    ),
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Object Used Flag] IN { "Unused" }
+			    ),
+			    KEEPFILTERS( 'All Models' )
+			)
+		lineageTag: 5266c82a-361c-4f02-8e42-04fb012135ec
+
+	/// Percentage of model objects that are used in at least one report. Higher is better — 100% means every object in the model is referenced somewhere in reports.
+	measure 'Used Model Objects %' =
+			DIVIDE(
+			    [Used Model Objects],
+			    [Unused Model Objects] + [Used Model Objects]
+			)
+		formatString: #,##0.0 %
+		lineageTag: c7450e30-3156-49ec-a4dc-355819190085
+
+	/// Percentage of model objects that are NOT used in any report. A high percentage suggests the model has many unnecessary objects that could be cleaned up.
+	measure 'Unused Model Objects %' =
+			DIVIDE(
+			    [Unused Model Objects],
+			    [Unused Model Objects] + [Used Model Objects]
+			)
+		formatString: #,##0.0 %
+		lineageTag: 87678837-23c7-4f65-969c-5e561bfcaf6d
+
+	column 'Dataflow ID used in Partition'
+		dataType: string
+		lineageTag: 674094c3-8165-41d5-9349-c260e26ccc61
+		summarizeBy: none
+		sourceColumn: Dataflow ID used in Partition
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Description
+		dataType: string
+		lineageTag: e2f1a980-e4f8-497e-a74d-cfe7dfe93636
+		summarizeBy: none
+		sourceColumn: Description
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Display Folder'
+		dataType: string
+		lineageTag: 33442683-2051-4847-ad88-53f410c2c00e
+		summarizeBy: none
+		sourceColumn: Display Folder
+
+		annotation SummarizationSetBy = Automatic
+
+	column Expression
+		dataType: string
+		lineageTag: ee4094a4-77a1-46d6-bae6-481240f10ee2
+		summarizeBy: none
+		sourceColumn: Expression
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Format String'
+		dataType: string
+		lineageTag: 2b9da598-7958-48d5-87a1-db3d24ed95ef
+		summarizeBy: none
+		sourceColumn: Format String
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Is Hidden'
+		dataType: string
+		lineageTag: 1ead16ed-52f9-4f1c-afea-bc1d88e5950e
+		summarizeBy: none
+		sourceColumn: Is Hidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Name'
+		dataType: string
+		lineageTag: 9002ad4c-d36b-4c97-88a8-7f726712317d
+		summarizeBy: none
+		sourceColumn: Model Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column ModelAsOfDate
+		dataType: dateTime
+		isHidden
+		formatString: Long Date
+		lineageTag: 33997e6a-f282-4d9e-a492-874c4b4c69e0
+		summarizeBy: none
+		sourceColumn: ModelAsOfDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column 'ModelName - ObjectType - TableName - ObjectName'
+		dataType: string
+		isHidden
+		lineageTag: 8fb56730-9ace-49d0-997f-bb72b4b8b452
+		summarizeBy: none
+		sourceColumn: ModelName - ObjectType - TableName - ObjectName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Object Name'
+		dataType: string
+		lineageTag: 788d6819-6e3d-49ed-b544-1096bf77f681
+		summarizeBy: none
+		sourceColumn: Object Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Object Type Sort Order'
+		dataType: double
+		isHidden
+		lineageTag: 9ca440f4-470f-4bb2-8ab9-8eb56ca1db28
+		summarizeBy: sum
+		sourceColumn: Object Type Sort Order
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column 'Object Type'
+		dataType: string
+		lineageTag: 65f42b5e-f966-4ade-bbbc-ac8a2485e876
+		summarizeBy: none
+		sourceColumn: Object Type
+		sortByColumn: 'Object Type Sort Order'
+
+		changedProperty = IsHidden
+
+		changedProperty = SortByColumn
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship Cross Filtering Behavior'
+		dataType: string
+		isHidden
+		lineageTag: b8b545f6-5119-4398-8dda-142d9a90d00f
+		summarizeBy: none
+		sourceColumn: Relationship Cross Filtering Behavior
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship From Cardinality'
+		dataType: string
+		isHidden
+		lineageTag: 8fb31482-e22f-4943-988e-8af391e3af35
+		summarizeBy: none
+		sourceColumn: Relationship From Cardinality
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship From Column'
+		dataType: string
+		isHidden
+		lineageTag: 43fba15e-a042-4170-9abd-dafa8ad2fd5e
+		summarizeBy: none
+		sourceColumn: Relationship From Column
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship From Table'
+		dataType: string
+		isHidden
+		lineageTag: 6b515a6c-bd85-4fdf-9198-b34345dab16b
+		summarizeBy: none
+		sourceColumn: Relationship From Table
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship Status'
+		dataType: string
+		isHidden
+		lineageTag: bcc580cd-8826-474c-adb2-6886ff8e3369
+		summarizeBy: none
+		sourceColumn: Relationship Status
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship To Cardinality'
+		dataType: string
+		isHidden
+		lineageTag: 9364aaff-f78b-455a-9701-cd710141305a
+		summarizeBy: none
+		sourceColumn: Relationship To Cardinality
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship To Column'
+		dataType: string
+		isHidden
+		lineageTag: 7539f512-ace9-443c-ba46-f6fd952efa22
+		summarizeBy: none
+		sourceColumn: Relationship To Column
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship To Table'
+		dataType: string
+		isHidden
+		lineageTag: b0ad6cd3-1fa0-42e8-817a-c16bf34dbff3
+		summarizeBy: none
+		sourceColumn: Relationship To Table
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Table Name'
+		dataType: string
+		lineageTag: 3d6936dd-6bca-4cac-a8b2-63040b461d60
+		summarizeBy: none
+		sourceColumn: Table Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID'
+		dataType: string
+		isHidden
+		lineageTag: 474aacc9-fa11-4a49-9c1d-d877966c3f8e
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name'
+		dataType: string
+		isHidden
+		lineageTag: aeb58812-3a55-43f2-a182-2201d37651d4
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		lineageTag: 09b7cabe-424d-43be-9ed3-4d2797ad73d0
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+		dataType: string
+		isHidden
+		lineageTag: d483c58c-6ed7-45d3-8a82-910e8772bd29
+		summarizeBy: none
+		sourceColumn: WorkspaceName - ModelName - ObjectType - TableName - ObjectName
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model ID'
+		dataType: string
+		lineageTag: 5413cc1f-5c8c-4b42-be6a-1fb31fce5695
+		summarizeBy: none
+		sourceColumn: Model ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow ID - Query Name'
+		dataType: string
+		isHidden
+		lineageTag: 87f9b446-11c8-4ad6-9dad-a08a3815da0b
+		summarizeBy: none
+		sourceColumn: Dataflow ID - Query Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Name'
+		dataType: string
+		lineageTag: fdd874c1-b5db-4e44-b6be-1befacdd23ee
+		summarizeBy: none
+		sourceColumn: Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Query Name'
+		dataType: string
+		lineageTag: 1ea8d1be-38ec-4e6f-9ec1-3a300b13ff7a
+		summarizeBy: none
+		sourceColumn: Dataflow Query Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Query Expression'
+		dataType: string
+		lineageTag: 24d2762a-47ed-467d-a798-4ae90a9bde9e
+		summarizeBy: none
+		sourceColumn: Dataflow Query Expression
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: 2588296d-fe1e-4353-8b16-552ca333b978
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Description'
+		dataType: string
+		lineageTag: 3e62a823-0ba1-4ee2-826a-bff626915b5d
+		summarizeBy: none
+		sourceColumn: Model Description
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Calculated Column Flag'
+		dataType: string
+		lineageTag: c2e1d28e-4dc9-4082-b532-b8aae3b8d2e3
+		summarizeBy: none
+		sourceColumn: Calculated Column Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Object Used Flag'
+		dataType: string
+		lineageTag: 775e1fcb-ac43-402f-8aad-c09c6a2d501e
+		summarizeBy: none
+		sourceColumn: Object Used Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID - Table Name'
+		dataType: string
+		isHidden
+		lineageTag: 8cec37bf-6132-4dd3-b6fe-b6c34f3fcd00
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID - Table Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID - Object Type - Table Name - Object Name'
+		dataType: string
+		isHidden
+		lineageTag: 3cd05d45-b128-4a38-a409-9e2860c50bf0
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID - Object Type - Table Name - Object Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Object Used In'
+		dataType: string
+		lineageTag: 4b2ace71-e36f-475a-8aa1-2db9bc14c19c
+		summarizeBy: none
+		sourceColumn: Object Used In
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Table Storage Mode'
+		dataType: string
+		lineageTag: ebcb9933-8c5e-4d86-9661-0425f6a2962f
+		summarizeBy: none
+		sourceColumn: Table Storage Mode
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Type' =
+			VAR DistinctModes =
+			    CALCULATE(
+			        DISTINCTCOUNT(
+			            'Model Object Hierarchy'[Table Storage Mode]
+			        ),
+			        KEEPFILTERS(
+			            'Model Object Hierarchy'[Table Storage Mode] <> ""
+			        ),
+			        ALLEXCEPT(
+			            'Model Object Hierarchy',
+			            'Model Object Hierarchy'[Workspace Name - Model Name]
+			        )
+			    )
+			RETURN
+			    IF( DistinctModes >= 2, "Composite Model", "Standard Model" )
+		lineageTag: 35205fbd-bbb2-4b66-add2-d20dbbfc0953
+		summarizeBy: none
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Level Measure Flag'
+		dataType: string
+		lineageTag: dddbcb3b-ad71-415c-a042-c7a7945c5b73
+		summarizeBy: none
+		sourceColumn: Report Level Measure Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Object Used In Reports Flag'
+		dataType: string
+		lineageTag: 4b14e93b-a910-44fe-9a6c-46685da5dbda
+		summarizeBy: none
+		sourceColumn: Object Used In Reports Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: c7d4de48-12e7-43a7-9a51-15c83946bd69
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Home Workspace Name'
+		dataType: string
+		lineageTag: e5f6a7b8-c9d0-1234-5678-9abcdef01234
+		summarizeBy: none
+		sourceColumn: Model Home Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Workspace Name - Model ID - Report ID'
+		dataType: string
+		isHidden
+		lineageTag: 0e55dd10-3167-4922-b16e-1a0708d96cd9
+		summarizeBy: none
+		sourceColumn: Report Workspace Name - Model ID - Report ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Name - Model ID'
+		dataType: string
+		lineageTag: 00d81c53-0db8-443b-b567-9a71969ed066
+		summarizeBy: none
+		sourceColumn: Model Name - Model ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model in Workspace Flag'
+		dataType: string
+		lineageTag: 6f65d902-ca6c-4862-afcc-52751b25e2d2
+		summarizeBy: none
+		sourceColumn: Model in Workspace Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Detail Available?'
+		dataType: string
+		lineageTag: 4630cfe2-6cb0-4b88-b940-ba6b26819c6a
+		summarizeBy: none
+		sourceColumn: Model Detail Available?
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'Model Object Hierarchy' = m
+		mode: import
+		queryGroup: Dimensions
+		source = ```
+				let
+				    // Load all model objects from the All Models table
+				    Source = #"All Models",
+				    // Keep only the columns needed for the model object hierarchy dimension
+				    #"Removed Other Columns" = Table.SelectColumns(Source,{"Object Type", "Table Name", "Object Name", "Format String", "Display Folder", "Description", "Is Hidden", "Table Storage Mode", "Calculated Column Flag", "Expression", "ModelAsOfDate", "Relationship From Table", "Relationship From Column", "Relationship To Table", "Relationship To Column", "Relationship Status", "Relationship From Cardinality", "Relationship To Cardinality", "Relationship Cross Filtering Behavior", "Dataflow Name", "Dataflow Query Name", "Dataflow Query Expression", "Dataflow ID - Query Name", "Dataflow ID used in Partition", "ModelName - ObjectType - TableName - ObjectName", "Object Type Sort Order", "Model ID", "Workspace Name - Model Name", "Workspace Name - Model ID", "Workspace Name - Dataflow Name", "Model in Workspace Flag", "Model Home Workspace Name", "Workspace Name", "Model Name", "Model Description", "Workspace ID", "Workspace Name - Model ID - Table Name", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", "Workspace Name - Model ID - Object Type - Table Name - Object Name", "Model Detail Available?", "Report Level Measure Flag", "Report Workspace Name - Model ID - Report ID"}),
+				    // Rename Workspace Name column (identity rename for schema consistency)
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Other Columns",{{"Workspace Name", "Workspace Name"}}),
+				    // Sort by Calculated Column Flag descending so calculated columns appear first
+				    #"Sorted Rows" = Table.Sort(#"Renamed Columns",{{"Calculated Column Flag", Order.Descending}}),
+				    // Add a sequential index column for row ordering
+				    #"Added Index" = Table.AddIndexColumn(#"Sorted Rows", "Index", 1, 1, Int64.Type),
+				    // We merge Usage at the Model level, not Workspace & Model. Model ID ensures it's still unique to a specific Model but doesn't incorrectly filter out usage based on Workspace. At the Model level, if an object is used anywhere, regardless of workspace, it is used and will affect reports. Exact usage location is via Report detail.
+				    #"Merged Queries" = Table.NestedJoin(#"Added Index", {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"}, UsedObjects, {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"}, "UsedObjects", JoinKind.LeftOuter),
+				    // Expand the usage type from the UsedObjects join
+				    #"Expanded UsedObjects" = Table.ExpandTableColumn(#"Merged Queries", "UsedObjects", {"UsageType"}, {"UsageType"}),
+				    // Determine the "Object Used In" value based on object type (Relationships, Measures, Columns, Levels show usage; others show "N/A")
+				    #"Added Conditional Column" = Table.AddColumn(#"Expanded UsedObjects", "Object Used In", each if [Object Type] = "Relationship" then [UsageType] else if [Object Type] = "Measure" then [UsageType] else if [Object Type] = "Column" then [UsageType] else if [Object Type] = "Level" then [UsageType] else "N/A", type text),
+				    // Replace null usage with "Unused" to indicate the object is not referenced anywhere
+				    #"Replaced Value" = Table.ReplaceValue(#"Added Conditional Column",null,"Unused",Replacer.ReplaceValue,{"Object Used In"}),
+				    // Create a simplified Used/Unused/N/A flag for the object
+				    #"Added Conditional Column1" = Table.AddColumn(#"Replaced Value", "Object Used Flag", each if [Object Used In] = "N/A" then [Object Used In] else if [Object Used In] = "Unused" then [Object Used In] else "Used", type text),
+				    // Flag whether the object is specifically used in reports
+				    #"Added Custom1" = Table.AddColumn(#"Added Conditional Column1", "Object Used In Reports Flag", each if [Object Used In] <> null 
+				            and Text.Contains([Object Used In], "Reports")
+				        then "True"
+				        else "False", type text),
+				    // Restore null values for objects where usage tracking is not applicable
+				    #"Replaced Value1" = Table.ReplaceValue(#"Added Custom1","N/A",null,Replacer.ReplaceValue,{"Object Used In", "Object Used Flag"}),
+				    // Remove the temporary UsageType and Index columns
+				    #"Removed Columns1" = Table.RemoveColumns(#"Replaced Value1",{"UsageType", "Index"}),
+				    #"Added Custom2" = Table.AddColumn(#"Removed Columns1", "Model Name - Model ID", each [Model Name]&" - "&[Model ID], type text),
+				    // Trim whitespace from the duplicated key for consistent matching
+				    #"Trimmed Text" = Table.TransformColumns(#"Added Custom2",{{"WorkspaceName - ModelName - ObjectType - TableName - ObjectName", Text.Trim, type text}}),
+				    // Apply proper casing to the duplicated key for standardized comparison
+				    #"Cleaned Text" = Table.TransformColumns(#"Trimmed Text",{{"WorkspaceName - ModelName - ObjectType - TableName - ObjectName", Text.Proper, type text}}),
+				    // Remove duplicate rows based on the standardized composite key copy
+				    #"Removed Duplicates" = Table.Distinct(#"Cleaned Text", {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"})
+				in
+				    #"Removed Duplicates"
+				```
+
+	annotation PBI_ResultType = Exception
+
+	annotation PBI_NavigationStepName = Navigation
+

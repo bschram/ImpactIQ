@@ -1,0 +1,162 @@
+relationship e6b7807b-40a3-fa81-53ea-84f08eee3901
+	toCardinality: many
+	fromColumn: 'All Dataflow Refresh History'.'Workspace Name - Dataflow Name'
+	toColumn: 'Dataflow Hierarchy'.'Workspace Name - Dataflow Name'
+
+relationship 47792b8a-0f33-b316-2347-16d25e329bf4
+	toCardinality: many
+	fromColumn: 'All Dataflow Refresh History'.'Workspace Name - Dataflow Name'
+	toColumn: 'Model Object Hierarchy'.'Workspace Name - Dataflow Name'
+
+relationship 8c6cf77c-320d-ee1a-fd7b-b2e1057933fe
+	toCardinality: many
+	fromColumn: 'All Dataflow Sources'.'Workspace Name - Dataflow Name'
+	toColumn: 'Dataflow Hierarchy'.'Workspace Name - Dataflow Name'
+
+relationship b160999f-b388-d135-30d0-982ecdb4740f
+	toCardinality: many
+	fromColumn: 'All Dataflow Sources'.'Workspace Name'
+	toColumn: 'Report Hierarchy'.'Workspace Name'
+
+relationship 9fce6d37-ff1a-6696-d6f7-03530a5d6a45
+	toCardinality: many
+	fromColumn: 'All Dataflows'.'Dataflow ID - Query Name'
+	toColumn: 'Model Object Hierarchy'.'Dataflow ID - Query Name'
+
+relationship a1939de1-5e6b-7a86-8ee8-d213c61ea662
+	fromColumn: 'All Dataflows'.'Report Date'
+	toColumn: 'PBI Snapshot Date'.'PBI Snapshot Date'
+
+relationship 9dc67658-5069-8c82-428b-9efb1dce5f6f
+	fromColumn: 'All Dataflows'.'Workspace Name - Dataflow Name - Query Name'
+	toColumn: 'Dataflow Hierarchy'.'Workspace Name - Dataflow Name - Query Name'
+
+relationship b70accd0-ff27-3865-e005-eb788dc4cd5e
+	toCardinality: many
+	fromColumn: 'All Dataflows'.'Workspace Name'
+	toColumn: 'Report Hierarchy'.'Workspace Name'
+
+relationship b6e038ca-83d3-0f75-41c9-4d56066c79f9
+	fromColumn: 'All Measure Dependencies'.ModelAsOfDate
+	toColumn: 'PBI Snapshot Date'.'PBI Snapshot Date'
+
+relationship e6931c94-f16a-415b-9384-633487face99
+	toCardinality: many
+	fromColumn: 'All Measure Dependencies'.'Workspace Name - Model ID'
+	toColumn: 'Report Hierarchy'.'Workspace Name - Model ID'
+
+relationship 5aa238bb-7aa9-2b52-8645-3d39a947c10d
+	fromColumn: 'All Measure Dependencies'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+	toColumn: 'Model Object Hierarchy'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+
+relationship e84cfa26-d3a2-c108-c6cd-dc3ea948a7a0
+	toCardinality: many
+	fromColumn: 'All Model Refresh History'.'Workspace Name - Model ID'
+	toColumn: 'Report Hierarchy'.'Workspace Name - Model ID'
+
+relationship 7d0310b1-e166-8582-a5b0-13f54550ee94
+	toCardinality: many
+	fromColumn: 'All Model Refresh History'.'Workspace Name - Model Name'
+	toColumn: 'Model Object Hierarchy'.'Workspace Name - Model Name'
+
+relationship 1162a547-b266-fe22-5913-2ef48ad873ad
+	toCardinality: many
+	fromColumn: 'All Model Sources'.'Workspace Name - Model ID'
+	toColumn: 'Report Hierarchy'.'Workspace Name - Model ID'
+
+relationship 4dadfa4a-7264-9c46-86e5-6bec2145d249
+	toCardinality: many
+	fromColumn: 'All Model Sources'.'Workspace Name - Model Name'
+	toColumn: 'Model Object Hierarchy'.'Workspace Name - Model Name'
+
+relationship 244f2bfa-a6f8-da7a-e411-5e6cf026e590
+	fromColumn: 'All Models'.ModelAsOfDate
+	toColumn: 'PBI Snapshot Date'.'PBI Snapshot Date'
+
+relationship ec68d873-155e-e01c-ffce-72c31268b0bf
+	toCardinality: many
+	fromColumn: 'All Models'.'Workspace Name - Dataflow Name'
+	toColumn: 'Dataflow Hierarchy'.'Workspace Name - Dataflow Name'
+
+relationship 7e1de328-5db5-8118-aa49-5c4b7c99dbaa
+	fromColumn: 'All Models'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+	toColumn: 'Model Object Hierarchy'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+
+relationship 0a0d5909-4155-af7b-b955-7c47032147a4
+	fromColumn: 'All Reports'.ReportDate
+	toColumn: 'PBI Snapshot Date'.'PBI Snapshot Date'
+
+relationship f029dbc1-895e-1a50-fe3a-6b83ac352832
+	fromColumn: 'All Reports'.UniquePageID
+	toColumn: 'Report Hierarchy'.UniquePageID
+
+relationship 6fabf865-721f-cfad-0afc-c1fe5e6e365a
+	fromColumn: 'All Reports'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+	toColumn: 'Model Object Hierarchy'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+
+relationship d50af660-39c7-7af3-0694-44c8b77b5782
+	toCardinality: many
+	fromColumn: 'All Reports'.WorkspaceName
+	toColumn: 'Dataflow Hierarchy'.'Workspace Name'
+
+relationship 20b75f04-a530-dd1e-3f4d-dacd082a2f4b
+	crossFilteringBehavior: bothDirections
+	fromColumn: 'Measure Lineage - Dependents'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+	toColumn: 'Measure Lineage'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+
+relationship f82230d4-caa4-39cb-0e3b-406def1d2a44
+	crossFilteringBehavior: bothDirections
+	fromColumn: 'Measure Lineage - Parents'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+	toColumn: 'Measure Lineage'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+
+relationship 3f0159e6-7dfb-8198-4c94-2408838d0c9b
+	toCardinality: many
+	fromColumn: 'Measure Lineage'.'Workspace Name - Model ID'
+	toColumn: 'Report Hierarchy'.'Workspace Name - Model ID'
+
+relationship 26519b2f-702b-25e4-6fac-67c137b67f11
+	crossFilteringBehavior: bothDirections
+	fromColumn: 'Measure Lineage'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+	toColumn: 'Model Object Hierarchy'.'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+
+relationship 32ba441b-1a87-6637-da4a-d1b51f593b5b
+	toCardinality: many
+	fromColumn: 'Power BI Environment Information'.'Workspace Name - Model Name'
+	toColumn: 'Model Object Hierarchy'.'Workspace Name - Model Name'
+
+relationship 9eb9abec-6469-a744-3a81-ea0aedeb80a0
+	toCardinality: many
+	fromColumn: 'Power BI Environment Information'.WorkspaceName
+	toColumn: 'Report Hierarchy'.'Workspace Name'
+
+relationship 2b76ed26-735a-920c-ab4e-7bcfa3a4e9f6
+	toCardinality: many
+	fromColumn: 'All Dataflow Refresh History'.'Workspace Name'
+	toColumn: 'Report Hierarchy'.'Workspace Name'
+
+relationship fc62fba3-629b-3798-757a-32d33e2a9468
+	toCardinality: many
+	fromColumn: 'All Dataflow Sources'.'Workspace Name - Dataflow Name'
+	toColumn: 'Model Object Hierarchy'.'Workspace Name - Dataflow Name'
+
+relationship 619f6884-731f-a0c1-c73d-7f949fc5730e
+	toCardinality: many
+	fromColumn: 'All Model Refresh Schedule'.'Workspace Name - Model ID'
+	toColumn: 'Model Object Hierarchy'.'Workspace Name - Model ID'
+
+relationship 5d9abe8f-9c20-788c-9436-02a633b04115
+	toCardinality: many
+	fromColumn: 'All Model Refresh Schedule'.'Workspace Name - Model ID'
+	toColumn: 'Report Hierarchy'.'Workspace Name - Model ID'
+
+relationship 4a54d048-eafc-0929-7120-c8c72a6a27df
+	isActive: false
+	toCardinality: many
+	fromColumn: 'All Models'.'Report Workspace Name - Model ID - Report ID'
+	toColumn: 'Report Hierarchy'.'Workspace Name - Model ID - Report ID'
+
+relationship 9b46a931-d8d1-be7e-8d27-be575731ffc3
+	toCardinality: many
+	fromColumn: 'All Models'.'Workspace Name - Model ID'
+	toColumn: 'Report Hierarchy'.'Workspace Name - Model ID'
+

@@ -1,0 +1,193 @@
+table 'All Dataflows'
+	lineageTag: 55d1e4e3-c9be-4bea-bf72-5ff51093c1f6
+
+	measure 'Dataflow Related Models Concatenate' = ```
+			VAR CurrentDataflow = SELECTEDVALUE('All Dataflows'[Dataflow ID])
+			RETURN 
+			CONCATENATEX(
+			    DISTINCT(
+			        SELECTCOLUMNS(
+			            FILTER(
+			                'All Models',
+			                'All Models'[Dataflow ID used in Partition] = CurrentDataflow
+			            ),
+			            "Model", 'All Models'[Workspace Name - Model Name]
+			        )
+			    ),
+			    [Model], 
+			            UNICHAR(10),  // New line delimiter
+			[Model],  // Order by Object Name alphabetically
+			            ASC  // Sort in ascending order
+			)
+			```
+		lineageTag: 538dcc3b-ce6f-4985-9579-632d62236347
+
+	measure 'Dataflow Related Models Distinct Count' = ```
+			VAR CurrentDataflow = SELECTEDVALUE('All Dataflows'[Dataflow ID])
+			VAR Presln = 
+			COUNTROWS(
+			    DISTINCT(
+			        SELECTCOLUMNS(
+			            FILTER(
+			                'All Models',
+			                'All Models'[Dataflow ID used in Partition] = CurrentDataflow
+			            ),
+			            "Model", 'All Models'[Workspace Name - Model ID]
+			        )
+			    )
+			)
+			RETURN
+			Presln
+			```
+		formatString: 0
+		lineageTag: ba22bca7-96e9-41d6-856c-fb09c534d1d5
+
+	measure 'Dataflow Query Count - All Rows' = COUNT('All Dataflows'[Workspace Name - Dataflow Name - Query Name])
+		formatString: #,0
+		lineageTag: 433fd378-71e2-43c6-9283-e145f8af4724
+
+	column 'Dataflow ID - Query Name'
+		dataType: string
+		isHidden
+		lineageTag: 0bfe4dfa-dc66-4018-a7bc-1fcf119587a6
+		summarizeBy: none
+		sourceColumn: Dataflow ID - Query Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow ID'
+		dataType: string
+		isHidden
+		lineageTag: fc4695ce-6ebc-4f71-85a2-123b9813def4
+		summarizeBy: none
+		sourceColumn: Dataflow ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: 55866010-b711-4bee-8698-065555609dcd
+		summarizeBy: none
+		sourceColumn: Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Query Name'
+		dataType: string
+		isHidden
+		lineageTag: ba1fea6a-b3c3-4f2b-bfb8-0e57bf81d106
+		summarizeBy: none
+		sourceColumn: Dataflow Query Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Query Expression'
+		dataType: string
+		lineageTag: 41d3149c-491d-4734-8c91-6adbbf8ec838
+		summarizeBy: none
+		sourceColumn: Dataflow Query Expression
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Date'
+		dataType: dateTime
+		isHidden
+		formatString: Long Date
+		lineageTag: 71493bb6-e001-4c1b-a5f1-d9b7901a65cb
+		summarizeBy: none
+		sourceColumn: Report Date
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column 'Workspace Name - Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: cafef5ae-7ac3-41c9-95a7-5f0c5c561298
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		isHidden
+		lineageTag: 60f0ed31-1367-4eeb-a876-87aa79309a02
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name - Query Name'
+		dataType: string
+		isHidden
+		lineageTag: 5d46106f-f54d-41a0-a1b5-e5c3c63a4972
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name - Query Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID'
+		dataType: string
+		lineageTag: 7cb7b348-2af1-4864-adfe-d4f3620cdd2c
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'All Dataflows' = m
+		mode: import
+		queryGroup: 'Dataflow Layer'
+		source =
+				let
+				    // Load all dataflow data from the base query
+				    Source = #"Base Dataflows",
+				    // Filter out system-generated queries (DataDestination, Transform, Staging, etc.)
+				    #"Filtered Rows" = Table.SelectRows(Source, each not Text.Contains([Query Name], "_DataDestination") and not Text.Contains([Query Name], "_TransformForWriteToDataDestination") and not Text.Contains([Query Name], "_WriteToDataDestination") and [Query Name] <> "DefaultDestination" and [Query Name] <> "DefaultStaging"),
+				    // Keep only the essential dataflow identification columns
+				    #"Removed Other Columns" = Table.SelectColumns(#"Filtered Rows",{"Dataflow ID", "Dataflow Name", "Query Name", "Query", "Report Date", "Workspace Name - Dataflow Name"}),
+				    // Rename query columns to dataflow-specific names
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Other Columns",{{"Query Name", "Dataflow Query Name"}, {"Query", "Dataflow Query Expression"}}),
+				    // Create a composite key combining Dataflow ID and query name
+				    #"Added Custom" = Table.AddColumn(#"Renamed Columns", "Dataflow ID - Query Name", each [Dataflow ID]&" - "&[Dataflow Query Name], type text),
+				    // Split the tilde-delimited workspace~dataflow name into separate columns
+				    #"Split Column by Delimiter" = Table.SplitColumn(#"Added Custom", "Workspace Name - Dataflow Name", Splitter.SplitTextByEachDelimiter({"~"}, QuoteStyle.Csv, false), {"Workspace Name - Dataflow Name.1", "Workspace Name - Dataflow Name.2"}),
+				    // Trim whitespace from the split workspace and dataflow name values
+				    #"Trimmed Text" = Table.TransformColumns(#"Split Column by Delimiter",{{"Workspace Name - Dataflow Name.1", Text.Trim, type text}, {"Workspace Name - Dataflow Name.2", Text.Trim, type text}}),
+				    // Rename the split columns to Workspace Name and DataflowName
+				    #"Renamed Columns1" = Table.RenameColumns(#"Trimmed Text",{{"Workspace Name - Dataflow Name.1", "Workspace Name"}, {"Workspace Name - Dataflow Name.2", "DataflowName"}}),
+				    // Recreate the workspace-dataflow composite key with cleaned values
+				    #"Added Custom1" = Table.AddColumn(#"Renamed Columns1", "Workspace Name - Dataflow Name", each [Workspace Name]&" - "&[DataflowName], type text),
+				    // Remove the temporary DataflowName column (already captured in composite key and Dataflow Name)
+				    #"Removed Columns" = Table.RemoveColumns(#"Added Custom1",{"DataflowName"}),
+				    // Join with Power BI Workspaces to resolve the Workspace ID
+				    #"Merged Queries" = Table.NestedJoin(#"Removed Columns", {"Workspace Name"}, #"Power BI Workspaces", {"WorkspaceName"}, "Power BI Workspaces", JoinKind.LeftOuter),
+				    // Expand the Workspace ID from the joined workspaces table
+				    #"Expanded Power BI Workspaces" = Table.ExpandTableColumn(#"Merged Queries", "Power BI Workspaces", {"WorkspaceId"}, {"Workspace ID"}),
+				    // Create a composite key combining workspace, dataflow name, and query name
+				    #"Added Custom2" = Table.AddColumn(#"Expanded Power BI Workspaces", "Workspace Name - Dataflow Name - Query Name", each [Workspace Name]&" - "&[Dataflow Name]&" - "&[Dataflow Query Name], type text)
+				in
+				    #"Added Custom2"
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

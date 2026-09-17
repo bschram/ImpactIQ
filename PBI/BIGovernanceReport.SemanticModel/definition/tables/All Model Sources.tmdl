@@ -1,0 +1,178 @@
+table 'All Model Sources'
+	lineageTag: ffaddcc3-4123-4243-8f8f-0b609cb9b924
+
+	/// Counts the distinct semantic models that have data source connection information. Filter by 'Model Object Hierarchy'[Object Name] is not applicable here — this counts models in the data source inventory, not object usage.
+	measure 'Model Distinct Count (Model Sources)' = DISTINCTCOUNT('All Model Sources'[Workspace Name - Model ID])
+		formatString: 0
+		lineageTag: 56adf808-cb56-4e3e-ac8b-5594221d91a7
+
+	/// Total row count of data source connections across all models. Each row represents one data source connection for a model. Not related to object usage — this is for understanding the data source landscape.
+	measure 'Model Source Count - All Rows' = COUNT('All Model Sources'[Workspace Name - Model Name - Connection Detail])
+		formatString: #,0
+		lineageTag: c2080ec3-0882-4e6c-b00e-db60d5394d75
+
+	column ModelID
+		dataType: string
+		isHidden
+		lineageTag: fd966083-17d2-4300-97e0-72b6cb50a4f1
+		summarizeBy: none
+		sourceColumn: ModelID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Datasource Type - Connection Detail'
+		dataType: string
+		lineageTag: 075f7190-6add-4a5b-bd28-44bc2162ecb3
+		summarizeBy: none
+		sourceColumn: Datasource Type - Connection Detail
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Datasource Type'
+		dataType: string
+		lineageTag: 8fb3f7c8-4faf-4267-b754-bc4fd7f1b225
+		summarizeBy: none
+		sourceColumn: Datasource Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name'
+		dataType: string
+		isHidden
+		lineageTag: 59f8ee1d-7078-4da1-b72d-342289cd5dcd
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'DatasetDatasource Gateway ID'
+		dataType: string
+		lineageTag: 80b98b7f-29b4-4b34-b730-736be5f8ceda
+		summarizeBy: none
+		sourceColumn: DatasetDatasource Gateway ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Datasource Connection Details'
+		dataType: string
+		lineageTag: 4ae10c4f-90f5-42a9-adfa-495b14c679bb
+		summarizeBy: none
+		sourceColumn: Datasource Connection Details
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Datasource ID'
+		dataType: string
+		lineageTag: 9ad0cdf7-a3d7-42b4-8fa2-620619e9ff98
+		summarizeBy: none
+		sourceColumn: Datasource ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name - Connection Detail'
+		dataType: string
+		isHidden
+		lineageTag: c86563c7-8bef-44aa-8ce6-d3ff4f61fdde
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name - Connection Detail
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: 02b5ddec-fb57-4b1a-8fe7-8c8bf7f8cf0d
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column ModelName
+		dataType: string
+		lineageTag: cfd2b522-f786-45a8-8604-1cc87367f9e1
+		summarizeBy: none
+		sourceColumn: ModelName
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model in Workspace Flag'
+		dataType: string
+		lineageTag: b49a328a-b775-40e4-9731-fd602a43b5b8
+		summarizeBy: none
+		sourceColumn: Model in Workspace Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceName
+		dataType: string
+		lineageTag: 4b61b427-c86c-40c2-b1cc-24b3fda065ed
+		summarizeBy: none
+		sourceColumn: WorkspaceName
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID'
+		dataType: string
+		lineageTag: 42d268fe-9f38-4352-94de-a2c99d4e19e9
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Home Workspace Name'
+		dataType: string
+		lineageTag: 0d00064a-b3d0-4307-8654-03735ad642e2
+		summarizeBy: none
+		sourceColumn: Model Home Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'All Model Sources' = m
+		mode: import
+		queryGroup: 'Model Layer'
+		source =
+				let
+				    // Load model data source information from the base query
+				    Source = #"Base Power BI Model Sources",
+				    // Sanitize workspace name using the Clean Name function
+				    #"Invoked Custom Function" = Table.AddColumn(Source, "Clean Name", each #"Clean Name"([WorkspaceName]), type text),
+				    // Sanitize model (dataset) name using the Clean Name function
+				    #"Invoked Custom Function1" = Table.AddColumn(#"Invoked Custom Function", "Clean Name.1", each #"Clean Name"([DatasetName]), type text),
+				    // Remove the original unsanitized workspace and dataset name columns
+				    #"Removed Columns" = Table.RemoveColumns(#"Invoked Custom Function1",{"WorkspaceName", "DatasetName"}),
+				    // Rename the sanitized columns back to their original names
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns",{{"Clean Name", "WorkspaceName"}, {"Clean Name.1", "DatasetName"}}),
+				    // Remove the original workspace columns (will be resolved via Workspace & Model Mapping)
+				    #"Removed Columns1" = Table.RemoveColumns(#"Renamed Columns",{"WorkspaceId", "WorkspaceName"}),
+				    // Pre-filter Workspace & Model Mapping to home workspace only (prevents fan-out duplication and memory explosion)
+				    #"Merged Queries" = Table.NestedJoin(#"Removed Columns1", {"DatasetId"}, Table.SelectRows(#"Workspace & Model Mapping", each [Model in Workspace Flag] = "TRUE"), {"Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    // Expand workspace name, ID, and model home workspace from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Merged Queries", "Workspace & Model Mapping", {"Model in Workspace Flag", "Workspace Name", "Workspace ID", "Model Home Workspace Name"}, {"Model in Workspace Flag", "WorkspaceName", "Workspace ID", "Model Home Workspace Name"}),
+				    // Reclassify "Extension" datasource types based on connection details (UsageMetrics, Dataflows Legacy, Dataflows, DocumentDB)
+				    #"Added Conditional Column" = Table.AddColumn(#"Expanded Workspace & Model Mapping", "Custom", each if [DatasetDatasourceType] <> "Extension" then [DatasetDatasourceType] else if Text.Contains([DatasetDatasourceConnectionDetails], "Usage") then "UsageMetricsConnector" else if Text.Contains([DatasetDatasourceConnectionDetails], "PowerBI") then "Dataflows (Legacy)" else if Text.Contains([DatasetDatasourceConnectionDetails], "Dataflows") then "Dataflows" else if Text.Contains([DatasetDatasourceConnectionDetails], "DocumentDB") then "DocumentDB" else [DatasetDatasourceType], type text),
+				    // Remove the original datasource type column (replaced by the reclassified version)
+				    #"Removed Columns2" = Table.RemoveColumns(#"Added Conditional Column",{"DatasetDatasourceType"}),
+				    // Rename all columns to user-friendly display names
+				    #"Renamed Columns1" = Table.RenameColumns(#"Removed Columns2",{{"Custom", "Datasource Type"}, {"DatasetDatasourceId", "Datasource ID"}, {"DatasetDatasourceGatewayId", "DatasetDatasource Gateway ID"}, {"DatasetDatasourceConnectionDetails", "Datasource Connection Details"}, {"DatasetId", "ModelID"}, {"DatasetName", "ModelName"}}),
+				    // Create a composite key combining datasource type and connection details
+				    #"Added Custom" = Table.AddColumn(#"Renamed Columns1", "Datasource Type - Connection Detail", each [Datasource Type]&" - "&[Datasource Connection Details], type text),
+				    // Create a composite key combining workspace and model names
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Workspace Name - Model Name", each [WorkspaceName]&" - "&[ModelName], type text),
+				    // Create a composite key combining workspace, model, and connection details
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Workspace Name - Model Name - Connection Detail", each [WorkspaceName]&" - "&[ModelName]&" - "&[Datasource Connection Details], type text),
+				    // Create a composite key combining workspace name and model ID
+				    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Workspace Name - Model ID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    #"Replaced Value" = Table.ReplaceValue(#"Added Custom3",null,"TRUE",Replacer.ReplaceValue,{"Model in Workspace Flag"})
+				in
+				    #"Replaced Value"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

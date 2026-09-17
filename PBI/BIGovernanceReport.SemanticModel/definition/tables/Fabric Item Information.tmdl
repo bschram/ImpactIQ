@@ -1,0 +1,101 @@
+table 'Fabric Item Information'
+	lineageTag: ed0bf72c-0c33-4be6-b21a-7042387c5d49
+
+	column 'Fabric Item Description'
+		dataType: string
+		lineageTag: 6fa4362e-8cec-4523-8dbe-ceb6b97c6cc9
+		summarizeBy: none
+		sourceColumn: Fabric Item Description
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Fabric Item ID'
+		dataType: string
+		lineageTag: d701f1fc-5549-4acc-a063-ce7fad84373e
+		summarizeBy: none
+		sourceColumn: Fabric Item ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Fabric Item Type'
+		dataType: string
+		lineageTag: 277904ae-2746-4080-bdcc-7993f32c4a1b
+		summarizeBy: none
+		sourceColumn: Fabric Item Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceId
+		dataType: string
+		lineageTag: 85cc299b-2f9d-455d-b9e4-81a76fcc57d1
+		summarizeBy: none
+		sourceColumn: WorkspaceId
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Fabric Item Type'
+		dataType: string
+		isHidden
+		lineageTag: e07ed8f3-2fa9-4e75-8b2f-3862c2be7f81
+		summarizeBy: none
+		sourceColumn: Workspace Name - Fabric Item Type
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Fabric Item Type - Fabric Item Name'
+		dataType: string
+		isHidden
+		lineageTag: 72f6adeb-b242-439c-880b-715dcb330116
+		summarizeBy: none
+		sourceColumn: Workspace Name - Fabric Item Type - Fabric Item Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceName
+		dataType: string
+		lineageTag: f0094f1c-10e3-4ce1-9dc3-2c742c90f7dc
+		summarizeBy: none
+		sourceColumn: WorkspaceName
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Fabric Item Name'
+		dataType: string
+		lineageTag: 078a70ec-4919-4efa-bb3a-c169e3866611
+		summarizeBy: none
+		sourceColumn: Fabric Item Name
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'Fabric Item Information' = m
+		mode: import
+		queryGroup: 'Environment Information'
+		source =
+				let
+				    // Load Fabric item information from the base query
+				  Source = #"Base Fabric Item Info",
+				    // Sanitize workspace name using the Clean Name function
+				    #"Invoked Custom Function" = Table.AddColumn(Source, "Clean Name", each #"Clean Name"([WorkspaceName]), type text),
+				    // Sanitize Fabric item name using the Clean Name function
+				    #"Invoked Custom Function1" = Table.AddColumn(#"Invoked Custom Function", "Clean Name.1", each #"Clean Name"([FabricItemName]), type text),
+				    // Remove the original unsanitized name columns
+				    #"Removed Columns" = Table.RemoveColumns(#"Invoked Custom Function1",{"FabricItemName", "WorkspaceName"}),
+				    // Rename the sanitized columns back to their original names
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns",{{"Clean Name", "WorkspaceName"}, {"Clean Name.1", "FabricItemName"}}),
+				    // Create a composite key combining workspace name and Fabric item type
+				    #"Added Custom" = Table.AddColumn(#"Renamed Columns", "Workspace Name - Fabric Item Type", each [WorkspaceName]&" - "&[FabricItemType], type text),
+				    // Create a composite key combining workspace name, item type, and item name
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Workspace Name - Fabric Item Type - Fabric Item Name", each [WorkspaceName]&" - "&[FabricItemType]&" - "&[FabricItemName], type text),
+				    // Rename columns to user-friendly display names with spaces
+				    #"Renamed Columns1" = Table.RenameColumns(#"Added Custom1",{{"FabricItemDescription", "Fabric Item Description"}, {"FabricItemName", "Fabric Item Name"}, {"FabricItemID", "Fabric Item ID"}, {"FabricItemType", "Fabric Item Type"}})
+				in
+				    #"Renamed Columns1"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

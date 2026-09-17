@@ -1,0 +1,145 @@
+table 'All Dataflow Sources'
+	lineageTag: 884e8b03-192c-4b9e-ac97-f17a4812684f
+
+	measure 'Dataflow Distinct Count' = DISTINCTCOUNT('All Dataflow Sources'[Workspace Name - Dataflow Name])
+		formatString: 0
+		lineageTag: 96a789bc-6cf9-4ca8-a846-eb97a762c586
+
+	measure 'Dataflow Source Count - All Rows' = COUNT('All Dataflow Sources'[Workspace Name - Dataflow Name - Connection Detail])
+		formatString: #,0
+		lineageTag: 2c139599-5f30-4ba7-9dd0-6af1aa2baf06
+
+	column 'Datasource Gateway ID'
+		dataType: string
+		lineageTag: bd8f8b20-b19d-46a1-aba7-c002e4f2225d
+		summarizeBy: none
+		sourceColumn: Datasource Gateway ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Datasource Connection Details'
+		dataType: string
+		lineageTag: 86cff9a8-04ef-45a9-b3ad-31cae24db319
+		summarizeBy: none
+		sourceColumn: Datasource Connection Details
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Datasource ID'
+		dataType: string
+		lineageTag: 92582a1e-a699-4df1-95be-e508a436356d
+		summarizeBy: none
+		sourceColumn: Datasource ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID'
+		dataType: string
+		isHidden
+		lineageTag: 3ddc5309-e1ce-4afb-ae15-c1477c0c56e2
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow ID'
+		dataType: string
+		isHidden
+		lineageTag: bef1ee88-d704-40d1-9724-772196bdc1f0
+		summarizeBy: none
+		sourceColumn: Dataflow ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: 10502f15-fa68-46e5-82a1-812517b868cf
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Datasource Type'
+		dataType: string
+		lineageTag: 6d839959-1a25-40d0-887b-c0e5046eeecf
+		summarizeBy: none
+		sourceColumn: Datasource Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Datasource Type - Connection Detail'
+		dataType: string
+		lineageTag: 1893890f-5b9b-40a5-a0e2-d72235c88df7
+		summarizeBy: none
+		sourceColumn: Datasource Type - Connection Detail
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name - Connection Detail'
+		dataType: string
+		isHidden
+		lineageTag: 68696309-66f6-400a-ac3d-9f1bb0d6c349
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name - Connection Detail
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		lineageTag: cbc76834-3278-4623-8d26-96f885215869
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Name'
+		dataType: string
+		lineageTag: 1c2a0fe0-871f-49fe-a96f-44ab8e6dcfa2
+		summarizeBy: none
+		sourceColumn: Dataflow Name
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'All Dataflow Sources' = m
+		mode: import
+		queryGroup: 'Dataflow Layer'
+		source =
+				let
+				    // Load dataflow data source information from the base query
+				    Source = #"Base Dataflow Source Info",
+				    // Sanitize workspace name using the Clean Name function
+				    #"Invoked Custom Function" = Table.AddColumn(Source, "Clean Name", each #"Clean Name"([WorkspaceName]), type text),
+				    // Sanitize dataflow name using the Clean Name function
+				    #"Invoked Custom Function1" = Table.AddColumn(#"Invoked Custom Function", "Clean Name.1", each #"Clean Name"([DataflowName]), type text),
+				    // Remove the original unsanitized workspace and dataflow name columns
+				    #"Removed Columns" = Table.RemoveColumns(#"Invoked Custom Function1",{"WorkspaceName", "DataflowName"}),
+				    // Rename the sanitized columns back to their original names
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns",{{"Clean Name", "WorkspaceName"}, {"Clean Name.1", "DataflowName"}}),
+				    // Create a composite key combining workspace and dataflow names
+				  #"Added Custom" = Table.TransformColumnTypes(Table.AddColumn(#"Renamed Columns", "Workspace Name - Dataflow Name", each [WorkspaceName] & " - " & [DataflowName]), {{"Workspace Name - Dataflow Name", type text}}),
+				    // Reclassify "Extension" datasource types based on connection details (UsageMetrics, Dataflows Legacy, Dataflows, DocumentDB)
+				      #"Added Conditional Column" = Table.AddColumn(#"Added Custom", "Custom", each if [DataflowDatasourceType] <> "Extension" then [DataflowDatasourceType] else if Text.Contains([DataflowDatasourceConnectionDetails], "Usage") then "UsageMetricsConnector" else if Text.Contains([DataflowDatasourceConnectionDetails], "PowerBI") then "Dataflows (Legacy)" else if Text.Contains([DataflowDatasourceConnectionDetails], "Dataflows") then "Dataflows" else if Text.Contains([DataflowDatasourceConnectionDetails], "DocumentDB") then "DocumentDB" else [DataflowDatasourceType], type text),
+				    // Remove the original datasource type column (replaced by the reclassified version)
+				    #"Removed Columns1" = Table.RemoveColumns(#"Added Conditional Column",{"DataflowDatasourceType"}),
+				    // Rename all columns to user-friendly display names
+				  #"Renamed Columns1" = Table.RenameColumns(#"Removed Columns1", {{"DataflowDatasourceGatewayId", "Datasource Gateway ID"}, {"Custom", "Datasource Type"}, {"DataflowDatasourceConnectionDetails", "Datasource Connection Details"}, {"DataflowDatasourceId", "Datasource ID"}, {"DataflowName", "Dataflow Name"}, {"WorkspaceName", "Workspace Name"}, {"DataflowId", "Dataflow ID"}, {"WorkspaceId", "Workspace ID"}}),
+				    // Create a composite key combining datasource type and connection details
+				    #"Added Custom1" = Table.AddColumn(#"Renamed Columns1", "Datasource Type - Connection Detail", each [Datasource Type]&" - "&[Datasource Connection Details], type text),
+				    // Create a composite key combining workspace, dataflow, and connection details
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Workspace Name - Dataflow Name - Connection Detail", each [Workspace Name]&" - "&[Dataflow Name]&" - "&[Datasource Connection Details], type text)
+				in
+				    #"Added Custom2"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

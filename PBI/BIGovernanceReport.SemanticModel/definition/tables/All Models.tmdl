@@ -1,0 +1,823 @@
+table 'All Models'
+	lineageTag: 34cff100-e172-4927-b6ee-c95708c6992f
+
+	/// Percentage difference between the number of columns defined in a model versus the number of columns actually used in reports. A high percentage means many columns exist in the model but are never referenced in any report. Helps identify unused columns that could be removed.
+	measure 'Count Variance % - Column' = DIVIDE([Count Variance], [Model Object Distinct Count])
+		formatString: 0.0%;-0.0%;0.0%
+		lineageTag: b6db3dfe-7182-40a3-9cb0-8a4244184b41
+
+	/// Percentage difference between the number of measures defined in a model versus the number of measures actually used in reports. A high percentage means many measures exist in the model but are never referenced in any report. Helps identify unused measures that could be removed.
+	measure 'Count Variance % - Measure' = DIVIDE([Count Variance], [Model Object Distinct Count])
+		formatString: 0.0%;-0.0%;0.0%
+		lineageTag: a99c61e5-9c2d-432d-988c-c6723e60f445
+
+	/// Percentage difference between total model objects defined versus total model objects actually used in reports. A high percentage indicates significant unused model objects. Combines all object types (measures, columns, hierarchies, etc.).
+	measure 'Count Variance %' = DIVIDE([Count Variance], [Model Object Distinct Count])
+		formatString: 0.0%;-0.0%;0.0%
+		lineageTag: bbda47eb-c836-4d73-8f2c-c2f50b4d8188
+
+	/// Numeric difference between columns defined in the model and columns used in reports. A positive number means that many columns exist but are not referenced in any report visual, filter, or other report element.
+	measure 'Count Variance - Column' =
+			[Model Object Distinct Count - Column]
+			    - [Report Objects Distinct Count - Column]
+		formatString: #,0
+		lineageTag: ca7ea167-4378-4e30-9269-ca8e51d817a0
+
+	/// Numeric difference between measures defined in the model and measures used in reports. A positive number means that many measures exist but are not referenced in any report visual, filter, or other report element.
+	measure 'Count Variance - Measure' =
+			[Model Object Distinct Count - Measure]
+			    - [Report Objects Distinct Count - Measure]
+		formatString: #,0
+		lineageTag: 93699acd-80e1-40e5-b128-a26b5455e70e
+
+	/// Numeric difference between total model objects defined and total objects used in reports. A positive number means that many objects exist but are not referenced in any report. Combines all object types.
+	measure 'Count Variance' = [Model Object Distinct Count]-[Report Objects Distinct Count]
+		formatString: #,0
+		lineageTag: 536e0f1f-6d53-48ad-9899-9c90e8d7a207
+
+	measure 'Model Dataflow Distinct Count' =
+			CALCULATE(
+			    DISTINCTCOUNTNOBLANK( 'All Models'[Dataflow Name] ),
+			    KEEPFILTERS( 'All Models'[Dataflow Name] <> "N/A" )
+			)
+		formatString: #,0
+		lineageTag: 0e4866db-d078-416d-98dd-d512cbec34dd
+
+	measure 'Model Dataflow Query Distinct Count' =
+			CALCULATE(
+			    DISTINCTCOUNTNOBLANK( 'All Models'[Dataflow Name - Query Name] ),
+			    KEEPFILTERS(
+			        'All Models'[Dataflow Name - Query Name] <> "N/A - N/A"
+			    )
+			)
+		formatString: #,0
+		lineageTag: 603136df-c444-4f81-963c-a9786bee7063
+
+	/// Counts distinct calculated columns across all models in the current filter context. Calculated columns are DAX expressions that add a column to a table at refresh time. Filter by 'Model Object Hierarchy'[Object Name] to find a specific calculated column.
+	measure 'Model Object Distinct Count - Calculated Column' =
+			CALCULATE(
+			    [Model Object Distinct Count],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Calculated Column Flag] IN { "True" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: 61941b1f-6cc1-4c43-99b3-fa861b6e4346
+
+	/// Counts distinct calculation groups across all models. Calculation groups are special tables that apply reusable DAX logic to measures (e.g. time intelligence patterns).
+	measure 'Model Object Distinct Count - Calculation Group' =
+			CALCULATE(
+			    [Model Object Distinct Count],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Object Type] IN { "CalculationGroup" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: 278cd8b9-c2c5-43cb-95d7-5aab8a355023
+
+	/// Counts distinct columns defined across all models in the current filter context. These are the data columns available in the model. Compare with 'Report Objects Distinct Count - Column' to see how many are actually used in reports.
+	measure 'Model Object Distinct Count - Column' =
+			CALCULATE(
+			    [Model Object Distinct Count],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Object Type] IN { "Column" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: 73dd75f2-6527-4996-b233-6398532134a3
+
+	/// Counts distinct hierarchy levels defined across all models. Hierarchy levels are the individual tiers within a user-defined hierarchy (e.g. Year > Quarter > Month).
+	measure 'Model Object Distinct Count - Hierarchy Level' =
+			CALCULATE(
+			    [Model Object Distinct Count],
+			    KEEPFILTERS( 'Model Object Hierarchy'[Object Type] IN { "Level" } )
+			)
+		formatString: #,0
+		lineageTag: bee042fc-9035-4198-943d-a5d3dbe36e3b
+
+	/// Counts distinct user-defined hierarchies across all models. Hierarchies group related columns for drill-down navigation (e.g. a Date hierarchy with Year, Quarter, Month levels).
+	measure 'Model Object Distinct Count - Hierarchy' =
+			CALCULATE(
+			    [Model Object Distinct Count],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Object Type] IN { "Hierarchy" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: 59e57d1a-509d-4994-a3c9-c28b02924295
+
+	/// Counts distinct measures (DAX calculations) defined across all models in the current filter context. Compare with 'Report Objects Distinct Count - Measure' to see how many are actually used in reports.
+	measure 'Model Object Distinct Count - Measure' =
+			CALCULATE(
+			    [Model Object Distinct Count],
+			    KEEPFILTERS( 'Model Object Hierarchy'[Object Type] IN { "Measure" } )
+			)
+		formatString: #,0
+		lineageTag: 5ab3a6d9-84c9-46dc-81cd-1fe6f89c402b
+
+	/// Counts distinct partitions (Power Query queries/data sources) across all models. Each partition represents a data loading query that populates a table.
+	measure 'Model Object Distinct Count - Query' =
+			CALCULATE(
+			    [Model Object Distinct Count],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Object Type] IN { "Partition" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: a849f5bc-f233-4dff-b4cf-8a7a06e6a782
+
+	/// Counts distinct relationships defined across all models. Relationships connect tables in the model and determine how filters propagate between tables.
+	measure 'Model Object Distinct Count - Relationship' =
+			CALCULATE(
+			    [Model Object Distinct Count],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Object Type] IN { "Relationship" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: b9959174-c1d8-4d68-9f03-67a81e1667f7
+
+	/// Counts distinct tables across all models in the current filter context. When the 'Object Used Flag' slicer is applied, counts tables that have at least one used (or unused) object. Answers: 'How many tables are in this model?' or 'How many tables have objects that are actually used in reports?'
+	measure 'Model Object Distinct Count - Table' =
+			VAR SelectedFlag =
+			    SELECTEDVALUE( 'Model Object Hierarchy'[Object Used Flag] )
+			VAR TableFlagSummary =
+			    ADDCOLUMNS(
+			        SUMMARIZE(
+			            'All Models',
+			            'All Models'[Workspace Name - Model ID - Table Name]
+			        ),
+			        "HasUsed",
+			            CALCULATE(
+			                COUNTROWS( 'All Models' ),
+			                'Model Object Hierarchy'[Object Used Flag] = "Used"
+			            ),
+			        "HasUnused",
+			            CALCULATE(
+			                COUNTROWS( 'All Models' ),
+			                'Model Object Hierarchy'[Object Used Flag] = "Unused"
+			            )
+			    )
+			VAR FilteredUsedOnly =
+			    FILTER( TableFlagSummary, [HasUsed] > 0 )
+			VAR FilteredUnusedOnly =
+			    FILTER( TableFlagSummary, [HasUsed] = 0 && [HasUnused] > 0 )
+			RETURN
+			    SWITCH(
+			        TRUE( ),
+			        SelectedFlag = "Used", COUNTROWS( FilteredUsedOnly ),
+			        SelectedFlag = "Unused", COUNTROWS( FilteredUnusedOnly ),
+			        -- Fallback: no flag selected or multiple selected
+			        DISTINCTCOUNTNOBLANK(
+			            'All Models'[Workspace Name - Model ID - Table Name]
+			        )
+			    )
+		formatString: #,0
+		lineageTag: dde0e4c0-cb22-42b2-becf-51f8fda99721
+
+	/// Counts all distinct model objects (columns, measures, hierarchies, etc.) defined across models, excluding report-level measures. This is the total inventory of objects available in the model. Compare with 'Report Objects Distinct Count' to see the gap between what exists and what is actually used.
+	measure 'Model Object Distinct Count' =
+			CALCULATE(
+			    [Model Object Distinct Count - Base],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Report Level Measure Flag] IN { "False" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: 7691c61e-a26a-4cf0-b563-c6e92367f087
+
+	/// Total row count from the All Models fact table. Each row represents one model object instance. Unlike distinct counts, this may include duplicates when the same object appears in multiple contexts.
+	measure 'Model Objects Count - All Rows' =
+			COUNT(
+			    'All Models'[WorkspaceName - ModelName - ObjectType - TableName - ObjectName]
+			)
+		formatString: #,0
+		lineageTag: 6a26a929-3745-483c-bc55-7f8355b12fe6
+
+	/// Counts distinct composite models (models with mixed storage modes like Import + DirectQuery). Composite models connect to multiple data sources with different storage strategies.
+	measure 'Composite Model Distinct Count' =
+			CALCULATE(
+			    [Model Distinct Count],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Model Type] IN { "Composite Model" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: c96f9f89-28c9-4136-8aff-64d374128646
+
+	/// Counts distinct standard models (single storage mode, typically all Import). As opposed to composite models which mix storage modes.
+	measure 'Standard Model Distinct Count' =
+			CALCULATE(
+			    [Model Distinct Count],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Model Type] IN { "Standard Model" }
+			    )
+			)
+		formatString: #,0
+		lineageTag: f15dbd07-25c3-4637-b4f1-cd4b3a73129d
+
+	/// Counts the total distinct semantic models in the current filter context. Each model is identified by its workspace and model ID combination. Use this to answer: 'How many models are in scope?'
+	measure 'Model Distinct Count' = DISTINCTCOUNTNOBLANK('All Models'[Workspace Name - Model ID])
+		formatString: 0
+		lineageTag: d55d29a5-22f6-4fad-85c0-c5916c4dbba9
+
+	/// Counts measures that are defined at the report level (report-level measures live inside a .pbix report, not in the shared semantic model). These measures are only available in that specific report and are not shared across other reports connected to the same model.
+	measure 'Report Level Measure Count' =
+			CALCULATE(
+			    [Model Object Distinct Count - Base],
+			    KEEPFILTERS(
+			        'Model Object Hierarchy'[Report Level Measure Flag] = "True"
+			    ),
+			    KEEPFILTERS('Report Hierarchy'[Workspace Name - Report Name] <> BLANK()),
+			    USERELATIONSHIP( 'Report Hierarchy'[Workspace Name - Model ID - Report ID], 'All Models'[Report Workspace Name - Model ID - Report ID] )
+			)
+		formatString: #,0
+		lineageTag: 0f02acce-ab16-4617-b34e-10f9c5f1e5ab
+
+	/// Base distinct count of all model objects without any report-level measure filtering. This is the foundation measure used by other 'Model Object Distinct Count' variants that apply additional filters for specific object types.
+	measure 'Model Object Distinct Count - Base' =
+			DISTINCTCOUNTNOBLANK(
+			    'All Models'[WorkspaceName - ModelName - ObjectType - TableName - ObjectName]
+			)
+		formatString: 0
+		lineageTag: 59874911-8d74-4ec9-9fc5-86ec26f8363e
+
+	/// Counts the distinct reports connected to a given model. Answers: 'How many reports use this model?' Filter by 'Model Object Hierarchy'[Model Name] or [Workspace Name] to scope to a specific model.
+	measure 'Connected Report Count' = CALCULATE([Report Distinct Count (Visual Impact)], KEEPFILTERS('Model Object Hierarchy'[WorkspaceName - ModelName - ObjectType - TableName - ObjectName] <> BLANK()))
+		formatString: 0
+		lineageTag: bf385070-62b7-40fd-84f0-d8b5c64cb3f8
+
+	column 'Dataflow ID used in Partition'
+		dataType: string
+		isHidden
+		lineageTag: ba6c88b3-b6f8-4a52-9e62-b583ece873e6
+		summarizeBy: none
+		sourceColumn: Dataflow ID used in Partition
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Name - Query Name'
+		dataType: string
+		isHidden
+		lineageTag: 1b374f66-7d5d-49e1-9aab-0a8da9c21b27
+		summarizeBy: none
+		sourceColumn: Dataflow Name - Query Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: 922c0851-fd3e-41dd-bf10-f455add07ffb
+		summarizeBy: none
+		sourceColumn: Dataflow Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Query Name'
+		dataType: string
+		isHidden
+		lineageTag: 6f4398ff-bd1a-4618-89cc-f4816bd4a75c
+		summarizeBy: none
+		sourceColumn: Dataflow Query Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column Description
+		dataType: string
+		isHidden
+		lineageTag: c8dbc8cf-299c-4885-a0b8-a40ff06f7507
+		summarizeBy: none
+		sourceColumn: Description
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Display Folder'
+		dataType: string
+		isHidden
+		lineageTag: 96a360ec-feb9-48fa-938d-7f6c738a5a2a
+		summarizeBy: none
+		sourceColumn: Display Folder
+
+		annotation SummarizationSetBy = Automatic
+
+	column Expression
+		dataType: string
+		isHidden
+		lineageTag: b9ff9151-4184-422f-af72-56052f9d0657
+		summarizeBy: none
+		sourceColumn: Expression
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Format String'
+		dataType: string
+		isHidden
+		lineageTag: 41beecf7-a9e9-4497-bb2e-5795e3774292
+		summarizeBy: none
+		sourceColumn: Format String
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Is Hidden'
+		dataType: string
+		isHidden
+		lineageTag: 38d55b88-6470-4350-819b-c0161b417813
+		summarizeBy: none
+		sourceColumn: Is Hidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model in Workspace Flag'
+		dataType: string
+		isHidden
+		lineageTag: 0fcb7347-9ef1-4669-b848-178f7805b1c4
+		summarizeBy: none
+		sourceColumn: Model in Workspace Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Name'
+		dataType: string
+		isHidden
+		lineageTag: f3a0e3fc-5308-47cc-9a72-e68b0de37c9b
+		summarizeBy: none
+		sourceColumn: Model Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column ModelAsOfDate
+		dataType: dateTime
+		isHidden
+		formatString: Short Date
+		lineageTag: 40bb5538-3b24-4973-81b6-feeddff1261a
+		summarizeBy: none
+		sourceColumn: ModelAsOfDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column 'ModelName - ObjectType - TableName - ObjectName'
+		dataType: string
+		isHidden
+		lineageTag: c1c9a332-0a82-497a-b42d-1021d733bcc2
+		summarizeBy: none
+		sourceColumn: ModelName - ObjectType - TableName - ObjectName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Object Name'
+		dataType: string
+		isHidden
+		lineageTag: 4a9a3c47-655e-4866-acd7-bf908458fb0d
+		summarizeBy: none
+		sourceColumn: Object Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Object Type Sort Order'
+		dataType: double
+		isHidden
+		lineageTag: 7d975ff0-5151-40c7-b0b4-cb6d2f007ead
+		summarizeBy: sum
+		sourceColumn: Object Type Sort Order
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column 'Object Type'
+		dataType: string
+		isHidden
+		lineageTag: 54fe5fd6-f5ab-45c8-b796-6dbf91c0a620
+		summarizeBy: none
+		sourceColumn: Object Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship Cross Filtering Behavior'
+		dataType: string
+		lineageTag: 288512e8-ce5c-4cc7-84d5-a1e73aeafb8e
+		summarizeBy: none
+		sourceColumn: Relationship Cross Filtering Behavior
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship From Cardinality'
+		dataType: string
+		lineageTag: 8ab2f33a-5019-406d-94fe-7b658fdda784
+		summarizeBy: none
+		sourceColumn: Relationship From Cardinality
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship From Column'
+		dataType: string
+		lineageTag: 74cd1879-93d3-456d-b88a-60f2080c88d1
+		summarizeBy: none
+		sourceColumn: Relationship From Column
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship From Table'
+		dataType: string
+		lineageTag: 845848bb-8f6a-489d-80eb-508cedb273d3
+		summarizeBy: none
+		sourceColumn: Relationship From Table
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship Status'
+		dataType: string
+		lineageTag: d7b92773-b774-4955-a9ed-bae07be9455e
+		summarizeBy: none
+		sourceColumn: Relationship Status
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship To Cardinality'
+		dataType: string
+		lineageTag: bea126fd-e7f0-416a-93e2-9d113210129a
+		summarizeBy: none
+		sourceColumn: Relationship To Cardinality
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship To Column'
+		dataType: string
+		lineageTag: f382782e-da26-4c7b-99a6-b51eae966a6d
+		summarizeBy: none
+		sourceColumn: Relationship To Column
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Relationship To Table'
+		dataType: string
+		lineageTag: 31869193-2128-4480-a508-fba54c7fa9af
+		summarizeBy: none
+		sourceColumn: Relationship To Table
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Table Name'
+		dataType: string
+		isHidden
+		lineageTag: 133ffee0-7c56-4ac3-8e49-5c1ef087a0e9
+		summarizeBy: none
+		sourceColumn: Table Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID'
+		dataType: string
+		isHidden
+		lineageTag: 38109d4a-5d29-435b-80e8-002607bcfb07
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		isHidden
+		lineageTag: d0370643-81a9-4dce-b367-4f6158fe7ea0
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+		dataType: string
+		isHidden
+		lineageTag: 8711a442-c298-44cf-9e9a-34e7a40a18ec
+		summarizeBy: none
+		sourceColumn: WorkspaceName - ModelName - ObjectType - TableName - ObjectName
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Query Expression'
+		dataType: string
+		isHidden
+		lineageTag: b2902318-9a3e-49f9-80e1-bfdd9446cd09
+		summarizeBy: none
+		sourceColumn: Dataflow Query Expression
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: 8592af4f-b564-4b6a-a378-aaf0f5639f32
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Detail Available?'
+		dataType: string
+		isHidden
+		lineageTag: fca30871-6bdb-49a7-b622-4f9fbd126997
+		summarizeBy: none
+		sourceColumn: Model Detail Available?
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Datafow Name - Model Name'
+		dataType: string
+		isHidden
+		lineageTag: 1b4b0cea-f2b0-4b79-9f73-6543f2f00d85
+		summarizeBy: none
+		sourceColumn: Workspace Name - Datafow Name - Model Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: 3587cd01-73d9-4b19-a26e-6f8782bbbb4f
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Calculated Column Flag'
+		dataType: string
+		isHidden
+		lineageTag: 15af30c9-7274-4547-b686-1ea8b70ec0a3
+		summarizeBy: none
+		sourceColumn: Calculated Column Flag
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID - Table Name'
+		dataType: string
+		isHidden
+		lineageTag: 34a6d75c-94d1-4693-a05e-374abffea1c1
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID - Table Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID - Object Type - Table Name - Object Name'
+		dataType: string
+		isHidden
+		lineageTag: 748afe18-07db-48bb-8990-ec0f39b3cb45
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID - Object Type - Table Name - Object Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Table Storage Mode'
+		dataType: string
+		isHidden
+		lineageTag: b72f60c4-afec-4cee-9a72-877f0d3546ad
+		summarizeBy: none
+		sourceColumn: Table Storage Mode
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Level Measure Flag'
+		dataType: string
+		isHidden
+		lineageTag: f2fa9126-a680-45c5-92a3-dd7998e64f4c
+		summarizeBy: none
+		sourceColumn: Report Level Measure Flag
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Description'
+		dataType: string
+		lineageTag: 44da2e25-dbc8-431f-814e-ced8a5639e7f
+		summarizeBy: none
+		sourceColumn: Model Description
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow ID - Query Name'
+		dataType: string
+		lineageTag: c8f157c7-75ce-41d9-8366-4f0afc881fa3
+		summarizeBy: none
+		sourceColumn: Dataflow ID - Query Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model ID'
+		dataType: string
+		lineageTag: 3ee4443f-ca63-45be-9f39-4a990e1a1db7
+		summarizeBy: none
+		sourceColumn: Model ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name'
+		dataType: string
+		lineageTag: f0ea8d06-340f-4e98-a0c7-865299573533
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column OriginalModelID
+		dataType: string
+		lineageTag: 504380e4-1506-4d9b-abbd-471e3f5d9f63
+		summarizeBy: none
+		sourceColumn: OriginalModelID
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataType
+		dataType: string
+		lineageTag: 7042398f-716e-4e8e-9410-09ef2fbe2dc0
+		summarizeBy: none
+		sourceColumn: DataType
+
+		annotation SummarizationSetBy = Automatic
+
+	column DataCategory
+		dataType: string
+		lineageTag: 3eda6b72-35b4-45f9-9c3a-dd0c8c898b8c
+		summarizeBy: none
+		sourceColumn: DataCategory
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Home Workspace Name'
+		dataType: string
+		lineageTag: d4e5f6a7-b8c9-0123-4567-89abcdef0123
+		summarizeBy: none
+		sourceColumn: Model Home Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Workspace Name - Model ID - Report ID'
+		dataType: string
+		lineageTag: 97adfac3-5fe5-4c58-94c8-0852fd1dbbba
+		summarizeBy: none
+		sourceColumn: Report Workspace Name - Model ID - Report ID
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'All Models' = m
+		mode: import
+		queryGroup: 'Model Layer'
+		source = ```
+				let
+				    // --- Inner Query: Build NoModelDetail rows for reports without model metadata ---
+				    NoModelDetail = let
+				    // Load all report-level objects from All Reports
+				    Source = #"All Reports",
+				    // Join with Report & Model Mapping to check if model detail is available
+				    #"Merged Queries" = Table.NestedJoin(Source, {"Model Home Workspace Name - Model ID"}, #"Report & Model Mapping", {"Workspace Name - Model ID"}, "Report & Model Mapping", JoinKind.LeftOuter),
+				    // Expand the Model Detail Available flag
+				    #"Expanded Report & Model Mapping" = Table.ExpandTableColumn(#"Merged Queries", "Report & Model Mapping", {"Model Detail Available?"}, {"Model Detail Available?"}),
+				    // Filter to only rows where model detail is NOT available (FALSE)
+				    #"Filtered Rows" = Table.SelectRows(#"Expanded Report & Model Mapping", each ([#"Model Detail Available?"] = "Model Unavailable, Model Details Derived from Report")),
+				    // Rename visual-layer columns to standard model-layer column names
+				    #"Renamed Columns" = Table.RenameColumns(#"Filtered Rows",{{"WorkspaceName", "Workspace Name"}, {"Object Name - Visual Layer", "Object Name"}, {"Table Name - Visual Layer", "Table Name"}, {"Object Type - Visual Layer", "Object Type"}, {"ModelID", "Model ID"}, {"ModelName", "Model Name"}}),
+				    // Select only the columns needed for model objects
+				    #"Removed Other Columns" = Table.SelectColumns(#"Renamed Columns",{"Workspace Name", "Table Name", "Object Type","Model Name", "Model ID", "Model Detail Available?", "Object Name", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", "Workspace Name - Model ID - Report ID"}),
+				    // Filter out rows with null or empty composite keys
+				    #"Filtered Rows1" = Table.SelectRows(#"Removed Other Columns", each [#"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"] <> null and [#"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"] <> ""),
+				    // Filter out rows with null or empty Object Type
+				    #"Filtered Rows2" = Table.SelectRows(#"Filtered Rows1", each [Object Type] <> null and [Object Type] <> ""),
+				    // Add Calculated Column Flag defaulting to False for report-level objects
+				    #"Added Custom" = Table.AddColumn(#"Filtered Rows2", "Calculated Column Flag", each "False", type text),
+				    // Rename report workspace key to match the column name used by Report Level Measures
+				    #"Renamed Custom" = Table.RenameColumns(#"Added Custom",{{"Workspace Name - Model ID - Report ID", "Report Workspace Name - Model ID - Report ID"}}),
+				    // Add Model in Workspace Flag defaulting to FALSE (no model detail available)
+				    #"Added Custom1" = Table.AddColumn(#"Renamed Custom", "Model in Workspace Flag", each "FALSE", type text),
+				    // Add Model Home Workspace Name defaulting to current Workspace Name (best guess for no-detail models)
+				    #"Added Custom1b" = Table.AddColumn(#"Added Custom1", "Model Home Workspace Name", each [#"Workspace Name"], type text),
+				    // Create composite key: Workspace Name - Model ID
+				    #"Added Custom3" = Table.AddColumn(#"Added Custom1b", "Workspace Name - Model ID", each [#"Workspace Name"]&" - "&[#"Model ID"], type text),
+				    // Deduplicate using the composite key to get unique model objects
+				    #"Removed Duplicates" = Table.Distinct(#"Added Custom3", {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"}),
+				    // Remove the composite key column used for deduplication
+				    #"Removed Columns" = Table.RemoveColumns(#"Removed Duplicates",{"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"})
+				in
+				    #"Removed Columns",
+				    // --- Outer Query: Build complete model object inventory ---
+				    // Load base semantic model metadata (tables, columns, measures, relationships, etc.)
+				    Source = #"Base Semantic Models",
+				    // Rename raw field names to user-friendly display names
+				    #"Renamed Columns" = Table.RenameColumns(Source,{{"Name", "Object Name"}, {"Type", "Object Type"}, {"Table", "Table Name"}, {"IsHidden", "Is Hidden"}, {"DisplayFolder", "Display Folder"}, {"FormatString", "Format String"}, {"RelationshipFromTable", "Relationship From Table"}, {"RelationshipFromColumn", "Relationship From Column"}, {"RelationshipToTable", "Relationship To Table"}, {"RelationshipToColumn", "Relationship To Column"}, {"RelationshipStatus", "Relationship Status"}, {"RelationshipFromCardinality", "Relationship From Cardinality"}, {"RelationshipToCardinality", "Relationship To Cardinality"}, {"RelationshipCrossFilteringBehavior", "Relationship Cross Filtering Behavior"}, {"TableStorageMode", "Table Storage Mode"}}),
+				    // Extract the Dataflow ID from the partition Expression using text parsing
+				    #"Added Custom" = Table.AddColumn(#"Renamed Columns", "Custom", each 
+				                let
+				                    text = try Text.From([Expression]) otherwise [Expression],
+				                    searchString = "dataflowId=",
+				                    startPos = Text.PositionOf(text, searchString),
+				                    extractedText = if startPos <> -1 then 
+				                        Text.BetweenDelimiters(Text.Middle(text, startPos), "dataflowId=""", """")
+				                    else 
+				                        null
+				                in
+				                    extractedText, type text),
+				    // Extract the Dataflow entity (query) name from the partition Expression
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Custom.1", each 
+				    let
+				        text = try Text.From([Expression]) otherwise [Expression],
+				        searchString = "entity=",
+				        startPos = Text.PositionOf(text, searchString),
+				        extractedText = if startPos <> -1 then 
+				            Text.BetweenDelimiters(Text.Middle(text, startPos), "entity=""", """")
+				        else 
+				            null
+				    in
+				        extractedText, type text),
+				    // Rename extracted columns to descriptive names
+				    #"Renamed Columns1" = Table.RenameColumns(#"Added Custom1",{{"Custom", "Dataflow ID used in Partition"}, {"Custom.1", "Dataflow Query Name"}}),
+				    // Replace null dataflow values with N/A for missing dataflow references
+				    #"Replaced Value" = Table.ReplaceValue(#"Renamed Columns1",null,"N/A",Replacer.ReplaceValue,{"Dataflow ID used in Partition", "Dataflow Query Name"}),
+				    // Append Report Level Measures to combine with base model objects
+				    #"Appended Query" = Table.Combine({#"Replaced Value", #"Report Level Measures"}),
+				    // Create composite key combining Dataflow ID and Query Name for joining
+				    #"Added Custom2" = Table.AddColumn(#"Appended Query", "Dataflow ID - Query Name", each [Dataflow ID used in Partition]&" - "&[Dataflow Query Name], type text),
+				    #"Added Custom11" = Table.AddColumn(#"Added Custom2", "Workspace Name - ModelID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    // Join with All Dataflows to get dataflow name and query expression
+				    #"Merged Queries" = Table.NestedJoin(#"Added Custom11", {"Dataflow ID - Query Name"}, #"All Dataflows", {"Dataflow ID - Query Name"}, "All Dataflows", JoinKind.LeftOuter),
+				    // Expand the Dataflow Name and Query Expression columns
+				    #"Expanded All Dataflows" = Table.ExpandTableColumn(#"Merged Queries", "All Dataflows", {"Dataflow Name", "Dataflow Query Expression"}, {"Dataflow Name", "Dataflow Query Expression"}),
+				    // Join with Workspace & Model Mapping to get workspace context for each model
+				    #"Merged Queries1" = Table.NestedJoin(#"Expanded All Dataflows", {"Workspace Name - ModelID"}, #"Workspace & Model Mapping", {"Workspace Name - Model ID"}, "Model Report Mapping - Combined", JoinKind.LeftOuter),
+				    // Expand workspace mapping columns: IDs, names, flags, and description
+				    #"Expanded Model Report Mapping - Combined" = Table.ExpandTableColumn(#"Merged Queries1", "Model Report Mapping - Combined", {"Workspace Name - Model ID", "Model in Workspace Flag", "Model Home Workspace Name", "Workspace Name", "Model Name", "DatasetDescription", "Model ID", "Workspace ID"}, {"Workspace Name - Model ID", "Model in Workspace Flag", "Model Home Workspace Name", "Workspace Name", "Model Name", "DatasetDescription", "Model ID", "Workspace ID"}),
+				    // Filter out rows without a valid Model ID (unmatched records)
+				    #"Filtered Rows" = Table.SelectRows(#"Expanded Model Report Mapping - Combined", each [Model ID] <> null and [Model ID] <> ""),
+				    // Remove the original raw workspace/model columns superseded by mapping
+				    #"Removed Columns" = Table.RemoveColumns(#"Filtered Rows",{"WorkspaceName", "ModelName", "ModelID", "Workspace Name - ModelID"}),
+				    // Add flag indicating whether the object is a calculated column
+				    #"Added Conditional Column" = Table.AddColumn(#"Removed Columns", "Calculated Column Flag", each if [Object Type] = "CalculatedColumn" then "True" else "False", type text),
+				    // Append the NoModelDetail rows for reports without model metadata
+				    #"Appended Query1" = Table.Combine({#"Added Conditional Column", NoModelDetail}),
+				    // Default null Model Detail Available values to TRUE
+				    #"Replaced Value1" = Table.ReplaceValue(#"Appended Query1",null,"TRUE",Replacer.ReplaceValue,{"Model Detail Available?"}),
+				    // Create composite key: Workspace Name - Model Name
+				    #"Added Custom3" = Table.AddColumn(#"Replaced Value1", "Workspace Name - Model Name", each [Workspace Name]&" - "&[Model Name], type text),
+				    // Normalize CalculatedColumn type to Column for consistent categorization
+				    #"Replaced Value2" = Table.ReplaceValue(#"Added Custom3","CalculatedColumn","Column",Replacer.ReplaceValue,{"Object Type"}),
+				    // Create composite key: Model - ObjectType - Table - ObjectName
+				    #"Added Custom4" = Table.AddColumn(#"Replaced Value2", "ModelName - ObjectType - TableName - ObjectName", each [Model Name]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Create composite key: Workspace - Model - ObjectType - Table - ObjectName
+				    #"Added Custom5" = Table.AddColumn(#"Added Custom4", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", each [Workspace Name]&" - "&[Model Name]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Rename DatasetDescription to Model Description for clarity
+				    #"Renamed Columns2" = Table.RenameColumns(#"Added Custom5",{{"DatasetDescription", "Model Description"}}),
+				    // Replace null dataflow-related values with N/A
+				    #"Replaced Value3" = Table.ReplaceValue(#"Renamed Columns2",null,"N/A",Replacer.ReplaceValue,{"Dataflow ID used in Partition", "Dataflow Query Name", "Dataflow ID - Query Name", "Dataflow Name", "Dataflow Query Expression"}),
+				    // Default null Report Level Measure Flag to False
+				    #"Replaced Value4" = Table.ReplaceValue(#"Replaced Value3",null,"False",Replacer.ReplaceValue,{"Report Level Measure Flag"}),
+				    // Add numeric sort order based on Object Type for hierarchical display
+				    #"Added Conditional Column1" = Table.AddColumn(#"Replaced Value4", "Object Type Sort Order", each if [Object Type] = "Table" then 3 else if [Object Type] = "Column" then 4 else if [Object Type] = "CalculatedColumn" then 5 else if [Object Type] = "Measure" then 9 else if [Object Type] = "Hierarchy" then 6 else if [Object Type] = "Level" then 7 else if [Object Type] = "Partition" then 1 else if [Object Type] = "Relationship" then 2 else if [Object Type] = "CalculationGroup" then 8 else null, type number),
+				    // Create composite key: Dataflow Name - Query Name
+				    #"Added Custom6" = Table.AddColumn(#"Added Conditional Column1", "Dataflow Name - Query Name", each [Dataflow Name]&" - "&[Dataflow Query Name], type text),
+				    // Create composite key: Workspace Name - Dataflow Name
+				    #"Added Custom7" = Table.AddColumn(#"Added Custom6", "Workspace Name - Dataflow Name", each [Workspace Name]&" - "&[Dataflow Name], type text),
+				    // Create composite key: Workspace - Dataflow - Model Name
+				    #"Added Custom8" = Table.AddColumn(#"Added Custom7", "Workspace Name - Datafow Name - Model Name", each [Workspace Name]&" - "&[Dataflow Name]&" - "&[Model Name], type text),
+				    // Create temporary composite key: Workspace - ModelID - Table Name
+				    #"Added Custom9" = Table.AddColumn(#"Added Custom8", "Temp Workspace Name - Model ID - Table Name", each [Workspace Name]&" - "&[Model ID]&" - "&[Table Name], type text),
+				    // Conditionally set Workspace-ModelID-Table key only for applicable object types
+				    #"Added Conditional Column2" = Table.AddColumn(#"Added Custom9", "Workspace Name - Model ID - Table Name", each if [Object Type] = "Relationship" then [#"Temp Workspace Name - Model ID - Table Name"] else if [Object Type] = "Measure" then [#"Temp Workspace Name - Model ID - Table Name"] else if [Object Type] = "Column" then [#"Temp Workspace Name - Model ID - Table Name"] else if [Object Type] = "Level" then [#"Temp Workspace Name - Model ID - Table Name"] else null, type text),
+				    // Create temporary composite key: Workspace - ModelID - ObjectType - Table - Object
+				    #"Added Custom10" = Table.AddColumn(#"Added Conditional Column2", "Temp Workspace Name - Model ID - Object Type - Table Name - Object Name", each [Workspace Name]&" - "&[Model ID]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Conditionally set full composite key only for applicable object types
+				    #"Added Conditional Column3" = Table.AddColumn(#"Added Custom10", "Workspace Name - Model ID - Object Type - Table Name - Object Name", each if [Object Type] = "Relationship" then [#"Temp Workspace Name - Model ID - Object Type - Table Name - Object Name"] else if [Object Type] = "Measure" then [#"Temp Workspace Name - Model ID - Object Type - Table Name - Object Name"] else if [Object Type] = "Column" then [#"Temp Workspace Name - Model ID - Object Type - Table Name - Object Name"] else if [Object Type] = "Level" then [#"Temp Workspace Name - Model ID - Object Type - Table Name - Object Name"] else null, type text),
+				    // Remove temporary columns used for conditional key creation
+				    #"Removed Columns1" = Table.RemoveColumns(#"Added Conditional Column3",{"Temp Workspace Name - Model ID - Object Type - Table Name - Object Name", "Temp Workspace Name - Model ID - Table Name"}),
+				    #"Trimmed Text" = Table.TransformColumns(#"Removed Columns1",{{"ModelName - ObjectType - TableName - ObjectName", Text.Trim, type text}, {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName", Text.Trim, type text}, {"Workspace Name - Model ID - Object Type - Table Name - Object Name", Text.Trim, type text}}),
+				    #"Cleaned Text" = Table.TransformColumns(#"Trimmed Text",{{"ModelName - ObjectType - TableName - ObjectName", Text.Proper, type text}, {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName", Text.Proper, type text}, {"Workspace Name - Model ID - Object Type - Table Name - Object Name", Text.Proper, type text}})
+				in
+				    #"Cleaned Text"
+				```
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

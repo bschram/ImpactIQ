@@ -1,0 +1,358 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "6f6470d720583731ddba",
+  "position": {
+    "x": 0.95579445190824641,
+    "y": 63.082433825944264,
+    "z": 6000,
+    "height": 656.63078846096528,
+    "width": 1278.8529766532338,
+    "tabOrder": 6000
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dataflow Hierarchy"
+                    }
+                  },
+                  "Property": "Workspace Name"
+                }
+              },
+              "queryRef": "Dataflow Hierarchy.Workspace Name",
+              "nativeQueryRef": "Workspace Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dataflow Hierarchy"
+                    }
+                  },
+                  "Property": "Dataflow Name"
+                }
+              },
+              "queryRef": "Dataflow Hierarchy.Dataflow Name",
+              "nativeQueryRef": "Dataflow Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Dataflow Hierarchy"
+                    }
+                  },
+                  "Property": "Dataflow Query Name"
+                }
+              },
+              "queryRef": "Dataflow Hierarchy.Dataflow Query Name",
+              "nativeQueryRef": "Dataflow Query Name"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Dataflows"
+                    }
+                  },
+                  "Property": "Dataflow Related Models Distinct Count"
+                }
+              },
+              "queryRef": "All Dataflows.Dataflow Related Models Distinct Count",
+              "nativeQueryRef": "# of Models Referencing Dataflow",
+              "displayName": "# of Models Referencing Dataflow"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Dataflows"
+                    }
+                  },
+                  "Property": "Dataflow Related Models Concatenate"
+                }
+              },
+              "queryRef": "All Dataflows.Dataflow Related Models Concatenate",
+              "nativeQueryRef": "Models Referencing Dataflow",
+              "displayName": "Models Referencing Dataflow"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Dataflows"
+                    }
+                  },
+                  "Property": "Dataflow Query Expression"
+                }
+              },
+              "queryRef": "All Dataflows.Dataflow Query Expression",
+              "nativeQueryRef": "Dataflow Query Expression"
+            }
+          ],
+          "showAll": true
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Measure": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "All Dataflows"
+                  }
+                },
+                "Property": "Dataflow Related Models Distinct Count"
+              }
+            },
+            "direction": "Descending"
+          }
+        ]
+      }
+    },
+    "objects": {
+      "values": [
+        {
+          "properties": {
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "backColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#5A82AA'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 0,
+                      "Percent": 0
+                    }
+                  }
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "autoSizeColumnWidth": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnWidth": [
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "152.92981427314058D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Dataflows.Dataflow Related Models Concatenate"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "69.00389518264826D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Dataflows.Dataflow Related Models Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "93D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Dataflow Hierarchy.Dataflow Name"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "115D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Dataflow Hierarchy.Dataflow Query Name"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "13984D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Dataflows.Dataflow Query Expression"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "113D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Dataflow Hierarchy.Workspace Name"
+          }
+        }
+      ],
+      "columnFormatting": [
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Dataflows.Dataflow Related Models Distinct Count"
+          }
+        }
+      ],
+      "total": [
+        {
+          "properties": {
+            "totals": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "57984e59eb7044206464",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Dataflows"
+              }
+            },
+            "Property": "Dataflow Query Count - All Rows"
+          }
+        },
+        "type": "Advanced",
+        "filter": {
+          "Version": 2,
+          "From": [
+            {
+              "Name": "a",
+              "Entity": "All Dataflows",
+              "Type": 0
+            }
+          ],
+          "Where": [
+            {
+              "Condition": {
+                "Not": {
+                  "Expression": {
+                    "Comparison": {
+                      "ComparisonKind": 0,
+                      "Left": {
+                        "Measure": {
+                          "Expression": {
+                            "SourceRef": {
+                              "Source": "a"
+                            }
+                          },
+                          "Property": "Dataflow Query Count - All Rows"
+                        }
+                      },
+                      "Right": {
+                        "Literal": {
+                          "Value": "null"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "howCreated": "User"
+      }
+    ]
+  }
+}

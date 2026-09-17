@@ -1,0 +1,341 @@
+table 'All Model Refresh History'
+	lineageTag: f6792d07-2b79-43c9-ba89-52cd65746ac9
+
+	measure 'Model Refresh Count' = COUNT('All Model Refresh History'[Refresh ID])
+		formatString: 0
+		lineageTag: e005227a-5ad8-465a-a708-dbcbbfcce838
+
+	measure 'Model Refresh Count - Fail' = CALCULATE([Model Refresh Count], KEEPFILTERS('All Model Refresh History'[Refresh Status] IN {"Failed"}))
+		formatString: 0
+		lineageTag: aaa0633f-374b-4418-8da5-ac8cf0bc691a
+
+	measure 'Model Refresh Count - Success' =
+			CALCULATE(
+			    [Model Refresh Count],
+			    KEEPFILTERS(
+			        'All Model Refresh History'[Refresh Status] IN { "Completed" }
+			    )
+			)
+		formatString: 0
+		lineageTag: ada718c4-4955-46f6-9432-cd8cf0c445ba
+
+	measure 'Model Refresh Duration' =
+			VAR Hours = INT([Model Refresh Duration (Hours)])
+			VAR Minutes = INT([Model Refresh Duration (Minutes)])
+			VAR Seconds = MOD([Model Refresh Duration (Seconds)], 60)
+			RETURN
+			SWITCH(TRUE(), Seconds=blank(), BLANK(),  FORMAT(Hours, "00") & ":" & FORMAT(Minutes, "00") & ":" & FORMAT(Seconds, "00"))
+		lineageTag: 065af0d7-ff90-4e1b-bc53-1bb40997cc98
+
+	measure 'Model Refresh Duration - Success' =
+			CALCULATE(
+			    [Model Refresh Duration],
+			    KEEPFILTERS(
+			        'All Model Refresh History'[Refresh Status] IN { "Completed" }
+			    )
+			)
+		lineageTag: 093f0599-0e41-4f9d-ae10-d35b8fb2be5e
+
+	measure 'Model Refresh Duration (Hours - Success)' =
+			CALCULATE(
+			    [Model Refresh Duration (Hours)],
+			    KEEPFILTERS(
+			        'All Model Refresh History'[Refresh Status] IN { "Completed" }
+			    )
+			)
+		lineageTag: 8c758136-0cc9-40d1-970a-492cc97da05d
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Model Refresh Duration (Hours)' = DIVIDE([Model Refresh Duration (Seconds)], 3600)
+		lineageTag: f7d2ecb3-fff5-4058-9570-b4101a2a348a
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Model Refresh Duration (Minutes - Success)' =
+			CALCULATE(
+			    [Model Refresh Duration (Minutes)],
+			    KEEPFILTERS(
+			        'All Model Refresh History'[Refresh Status] IN { "Completed" }
+			    )
+			)
+		lineageTag: fa346f3e-0516-4175-b66a-3a79e3eae7b3
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Model Refresh Duration (Minutes)' = DIVIDE([Model Refresh Duration (Seconds)], 60)
+		lineageTag: d35ee7d5-0ba8-4cf1-8329-5bbc8a1fa18c
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Model Refresh Duration (Seconds - Success)' =
+			CALCULATE(
+			    [Model Refresh Duration (Seconds)],
+			    KEEPFILTERS(
+			        'All Model Refresh History'[Refresh Status] IN { "Completed" }
+			    )
+			)
+		formatString: 0
+		lineageTag: 386b1164-fcb1-48d8-b60a-783719619432
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Model Refresh Duration (Seconds)' = DATEDIFF([Model Refresh Start Time], [Model Refresh End Time], SECOND)
+		formatString: 0
+		lineageTag: fdd223dc-8219-4db2-8745-a3a4b9f6f430
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Model Refresh Duration Average' = ```
+			VAR TotalSeconds = [Model Refresh Duration Average (Seconds - Success)]
+			VAR Hours = INT(TotalSeconds / 3600)
+			VAR Minutes = INT(MOD(TotalSeconds, 3600) / 60)
+			VAR Seconds = MOD(TotalSeconds, 60)
+			
+			RETURN
+			SWITCH(
+			    TRUE(), 
+			    ISBLANK(TotalSeconds), BLANK(), 
+			    FORMAT(Hours, "00") & ":" & FORMAT(Minutes, "00") & ":" & FORMAT(Seconds, "00")
+			)
+			```
+		lineageTag: 944ad26f-c5fc-4551-b885-82f062ca6ff0
+
+	measure 'Model Refresh Duration Average (Hours - Success)' =
+			DIVIDE(
+			    [Model Refresh Duration Total (Hours - Success)],
+			    [Model Refresh Count - Success]
+			)
+		formatString: 0
+		lineageTag: 6811860d-82e9-466f-b35b-b3ea996d060f
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Model Refresh Duration Average (Minutes - Success)' =
+			DIVIDE(
+			    [Model Refresh Duration Total (Minutes - Success)],
+			    [Model Refresh Count - Success]
+			)
+		formatString: 0
+		lineageTag: 3dcb6aaf-9fe4-4bbd-947d-374ee6c70b2b
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Model Refresh Duration Average (Seconds - Success)' =
+			DIVIDE(
+			    [Model Refresh Duration Total (Seconds - Success)],
+			    [Model Refresh Count - Success]
+			)
+		formatString: 0
+		lineageTag: f2eea783-6691-41a0-896c-312a0877fbea
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Model Refresh Duration Total (Hours - Success)' = SUMX('All Model Refresh History', [Model Refresh Duration (Hours - Success)])
+		formatString: 0
+		lineageTag: 8803c8be-b09e-4f77-aa43-f3532d89e8bb
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Model Refresh Duration Total (Minutes - Success)' = SUMX('All Model Refresh History', [Model Refresh Duration (Minutes - Success)])
+		formatString: 0
+		lineageTag: 04cb799e-e90b-49dd-85d0-bfff83ec5a24
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Model Refresh Duration Total (Seconds - Success)' = SUMX('All Model Refresh History', [Model Refresh Duration (Seconds - Success)])
+		formatString: 0
+		lineageTag: 3255ecd1-1ddc-43f7-89f8-a4a52e6807fc
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Model Refresh End Time' = MAX('All Model Refresh History'[Refresh End Time])
+		formatString: General Date
+		lineageTag: d51453c7-9c56-431c-8b1e-3086beeaf810
+
+	measure 'Model Refresh Start Time' = MAX('All Model Refresh History'[Refresh Start Time])
+		formatString: General Date
+		lineageTag: be052c91-e049-4bcc-945a-06762cc1ccab
+
+	measure 'Model Refresh Success Rate' = DIVIDE([Model Refresh Count - Success], [Model Refresh Count])
+		formatString: 0.0%;-0.0%;0.0%
+		lineageTag: 485c4022-7397-4639-80f1-e74990a0b19e
+
+	column 'Model ID'
+		dataType: string
+		isHidden
+		lineageTag: 7b8e777c-f86a-47dd-a15e-652ac80e7ff8
+		summarizeBy: none
+		sourceColumn: Model ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name'
+		dataType: string
+		isHidden
+		lineageTag: 72203d2b-996d-4223-b5f5-817eb42d2f21
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Duration (HH:MM:SS)'
+		dataType: string
+		lineageTag: fbe83ff7-f9d0-40e0-9c66-ddde43b6ec74
+		summarizeBy: none
+		sourceColumn: Refresh Duration (HH:MM:SS)
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Request ID'
+		dataType: string
+		lineageTag: 38fc0278-fa0d-426b-b2b8-c42a2bdf4147
+		summarizeBy: none
+		sourceColumn: Refresh Request ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh ID'
+		dataType: string
+		lineageTag: cb097e33-1957-44eb-a76c-3e7f33d3737d
+		summarizeBy: none
+		sourceColumn: Refresh ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Start Time'
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 71cdff00-c7ed-4368-8f90-91cb4f3fda7c
+		summarizeBy: none
+		sourceColumn: Refresh Start Time
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh End Time'
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 89ce8ccd-84ff-47e0-a4b9-9b49095997f7
+		summarizeBy: none
+		sourceColumn: Refresh End Time
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Type'
+		dataType: string
+		lineageTag: b7cf6bb1-b1d1-475f-ad44-092a8c8ae693
+		summarizeBy: none
+		sourceColumn: Refresh Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Status'
+		dataType: string
+		lineageTag: 313bb99f-2658-4d38-82c1-2b43807eace0
+		summarizeBy: none
+		sourceColumn: Refresh Status
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: ee319f54-f893-4d3b-9586-0eac82a63060
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Name'
+		dataType: string
+		lineageTag: f604c50f-5a56-4ba9-bdfe-3095e08df212
+		summarizeBy: none
+		sourceColumn: Model Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model in Workspace Flag'
+		dataType: string
+		isHidden
+		lineageTag: 995be22d-361f-45a1-99f4-a815653a2ff4
+		summarizeBy: none
+		sourceColumn: Model in Workspace Flag
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceName
+		dataType: string
+		lineageTag: fb0ca6c2-1df0-4791-a12b-beaa4031cb9b
+		summarizeBy: none
+		sourceColumn: WorkspaceName
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID'
+		dataType: string
+		lineageTag: b4487406-2de2-48fa-bc2a-3a2633146685
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Home Workspace Name'
+		dataType: string
+		lineageTag: 5cc146f5-b2a0-49c2-be2e-f5eab367c24c
+		summarizeBy: none
+		sourceColumn: Model Home Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'All Model Refresh History' = m
+		mode: import
+		queryGroup: 'Model Layer'
+		source = ```
+				let
+				    // Load model refresh history from the base query
+				    Source = #"Base Power BI Model Refresh History",
+				    // Sanitize workspace name using the Clean Name function
+				    #"Invoked Custom Function" = Table.AddColumn(Source, "Clean Name", each #"Clean Name"([WorkspaceName]), type text),
+				    // Sanitize model (dataset) name using the Clean Name function
+				    #"Invoked Custom Function1" = Table.AddColumn(#"Invoked Custom Function", "Clean Name.1", each #"Clean Name"([DatasetName]), type text),
+				    // Remove the original unsanitized workspace and dataset name columns
+				    #"Removed Columns" = Table.RemoveColumns(#"Invoked Custom Function1",{"WorkspaceName", "DatasetName"}),
+				    // Rename the sanitized columns back to their original names
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns",{{"Clean Name", "WorkspaceName"}, {"Clean Name.1", "DatasetName"}}),
+				    // Keep only the essential refresh history columns
+				    #"Removed Other Columns" = Table.SelectColumns(#"Renamed Columns", {"DatasetName", "DatasetId", "DatasetRefreshRequestId", "DatasetRefreshId", "DatasetRefreshStartTime", "DatasetRefreshEndTime", "DatasetRefreshType", "DatasetRefreshStatus"}),
+				    // Pre-filter Workspace & Model Mapping to home workspace only (prevents fan-out duplication and memory explosion)
+				    #"Merged Queries" = Table.NestedJoin(#"Removed Other Columns", {"DatasetId"}, Table.SelectRows(#"Workspace & Model Mapping", each [Model in Workspace Flag] = "TRUE"), {"Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    // Expand workspace name, ID, and model home workspace from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Merged Queries", "Workspace & Model Mapping", {"Model in Workspace Flag", "Workspace Name", "Workspace ID", "Model Home Workspace Name"}, {"Model in Workspace Flag", "WorkspaceName", "Workspace ID", "Model Home Workspace Name"}),
+				    // Rename all columns to user-friendly display names
+				    #"Renamed Columns1" = Table.RenameColumns(#"Expanded Workspace & Model Mapping",{{"DatasetId", "Model ID"}, {"DatasetRefreshRequestId", "Refresh Request ID"}, {"DatasetRefreshId", "Refresh ID"}, {"DatasetRefreshStartTime", "Refresh Start Time"}, {"DatasetRefreshEndTime", "Refresh End Time"}, {"DatasetRefreshType", "Refresh Type"}, {"DatasetRefreshStatus", "Refresh Status"}, {"DatasetName", "Model Name"}}),
+				    // Create a composite key combining workspace and model names
+				    #"Added Custom" = Table.AddColumn(#"Renamed Columns1", "Workspace Name - Model Name", each [WorkspaceName]&" - "&[Model Name], type text),
+				    // Create a composite key combining workspace name and model ID
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Workspace Name - Model ID", each [WorkspaceName]&" - "&[Model ID], type text),
+				    // Calculate refresh duration in HH:MM:SS format from start and end times
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Refresh Duration (HH:MM:SS)", each let
+				            Duration = [Refresh End Time] - [Refresh Start Time],
+				            TotalSeconds = Duration.TotalSeconds(Duration),
+				            Hours = Number.IntegerDivide(TotalSeconds, 3600),
+				            Minutes = Number.IntegerDivide(TotalSeconds - (Hours * 3600), 60),
+				            Seconds = Number.Round(TotalSeconds - (Hours * 3600) - (Minutes * 60), 0),
+				            DurationFormatted = Text.PadStart(Text.From(Hours), 2, "0") & ":" & 
+				                                Text.PadStart(Text.From(Minutes), 2, "0") & ":" & 
+				                                Text.PadStart(Text.From(Seconds), 2, "0")
+				        in
+				            DurationFormatted, type text),
+				    #"Replaced Value" = Table.ReplaceValue(#"Added Custom2",null,"TRUE",Replacer.ReplaceValue,{"Model in Workspace Flag"})
+				in
+				    #"Replaced Value"
+				```
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Exception
+

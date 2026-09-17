@@ -1,0 +1,271 @@
+table 'All Measure Dependencies'
+	lineageTag: 7eb6f6dd-6922-4775-902e-2bd14417942c
+
+	column 'Combined Workspace Name - Model Name - DependsOn'
+		dataType: string
+		isHidden
+		lineageTag: 30c626d4-eeba-4acb-b5d6-1b5ea22491a3
+		summarizeBy: none
+		sourceColumn: Combined Workspace Name - Model Name - DependsOn
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Depends On Type Sort Key'
+		dataType: double
+		isHidden
+		lineageTag: 8e2579ef-1e1c-4337-922e-1adf4256a970
+		summarizeBy: count
+		sourceColumn: Depends On Type Sort Key
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column 'Depends On Type'
+		dataType: string
+		lineageTag: 17132b16-bdaf-4d46-b415-60102bd6b3b3
+		summarizeBy: none
+		sourceColumn: Depends On Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Depends On'
+		dataType: string
+		lineageTag: 2f3a7603-4287-444f-9702-946e343ce160
+		summarizeBy: none
+		sourceColumn: Depends On
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Measure Name'
+		dataType: string
+		lineageTag: 7e5aa9da-3087-43c4-ac9d-a6197889c252
+		summarizeBy: none
+		sourceColumn: Measure Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model in Workspace Flag'
+		dataType: string
+		isHidden
+		lineageTag: 0c804762-2ca7-46ff-b901-b7a6170d0a0b
+		summarizeBy: none
+		sourceColumn: Model in Workspace Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column ModelAsOfDate
+		dataType: dateTime
+		isHidden
+		formatString: Long Date
+		lineageTag: ff114cd2-3128-4f3f-93ba-204a713c7e80
+		summarizeBy: none
+		sourceColumn: ModelAsOfDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column 'ModelName - ObjectType - TableName - ObjectName'
+		dataType: string
+		isHidden
+		lineageTag: b641607f-25eb-4d76-9220-ed29c61628dd
+		summarizeBy: none
+		sourceColumn: ModelName - ObjectType - TableName - ObjectName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID'
+		dataType: string
+		isHidden
+		lineageTag: 34c37d86-8949-41d8-8003-8d24f7378fd4
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name - Object Name'
+		dataType: string
+		isHidden
+		lineageTag: d8ada8c2-aa6c-4310-a777-04179394e8c3
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name - Object Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+		dataType: string
+		isHidden
+		lineageTag: e777bffa-1d1b-4f97-9cd4-348559b5b3ea
+		summarizeBy: none
+		sourceColumn: WorkspaceName - ModelName - ObjectType - TableName - ObjectName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		isHidden
+		lineageTag: 67711c48-1e7a-4ead-9191-76074a0f5b7a
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column ModelID
+		dataType: string
+		lineageTag: 70b3953c-e94a-4866-babb-efadc7b42a5a
+		summarizeBy: none
+		sourceColumn: ModelID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name'
+		dataType: string
+		isHidden
+		lineageTag: 6723dad0-d946-4485-ab77-fa1d645d3890
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: 80810f86-7842-4676-91cf-c95a77cccbde
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model ID - Object Name'
+		dataType: string
+		lineageTag: 527990d8-9faa-46cc-b626-8226f39186dc
+		summarizeBy: none
+		sourceColumn: Model ID - Object Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID - Object Name'
+		dataType: string
+		lineageTag: 7cb86a10-f57f-4714-8094-b325e6d38395
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID - Object Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column OriginalModelID
+		dataType: string
+		lineageTag: 60b0f301-ec4d-4105-9908-a28e55720cff
+		summarizeBy: none
+		sourceColumn: OriginalModelID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Name'
+		dataType: string
+		lineageTag: f1d311b3-bb67-401b-b7d5-4b891f400e5b
+		summarizeBy: none
+		sourceColumn: Model Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceName
+		dataType: string
+		lineageTag: 1cd38657-cd08-43a9-bd10-7f8ca9e777d2
+		summarizeBy: none
+		sourceColumn: WorkspaceName
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'All Measure Dependencies' = m
+		mode: import
+		queryGroup: 'Measure Lineage'
+		source =
+				let
+				    // Inner query: Build a measures-only reference table with all composite keys for joining
+				    ModelDetailMeasuresOnly=let
+				    // Load all semantic model objects from the base query
+				    Source = #"Base Semantic Models",
+				    // Rename raw field names to user-friendly display names
+				    #"Renamed Columns" = Table.RenameColumns(Source,{{"Name", "Object Name"}, {"Type", "Object Type"}, {"Table", "Table Name"}, {"IsHidden", "Is Hidden"}, {"DisplayFolder", "Display Folder"}, {"FormatString", "Format String"}}),
+				    // Remove the original workspace name column (will be resolved via mapping)
+				    #"Removed Columns" = Table.RemoveColumns(#"Renamed Columns",{"WorkspaceName"}),
+				    // Join with Workspace & Model Mapping to resolve the correct workspace context
+				    #"Merged Queries" = Table.NestedJoin(#"Removed Columns", {"ModelID"}, #"Workspace & Model Mapping", {"Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    // Expand model-in-workspace flag and workspace name from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Merged Queries", "Workspace & Model Mapping", {"Model in Workspace Flag", "Workspace Name"}, {"Model in Workspace Flag", "WorkspaceName"}),
+				    // Filter to only include Measure objects
+				    #"Filtered Rows" = Table.SelectRows(#"Expanded Workspace & Model Mapping", each ([Object Type] = "Measure")),
+				    // Create a composite key: ModelName - ObjectType - TableName - ObjectName
+				    #"Added Custom" = Table.AddColumn(#"Filtered Rows", "ModelName - ObjectType - TableName - ObjectName", each [ModelName]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Create a composite key with workspace prefix for unique identification
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", each [WorkspaceName]&" - "&[ModelName]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Create a composite key combining workspace and model names
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Workspace Name - Model Name", each [WorkspaceName]&" - "&[ModelName], type text),
+				    // Create a composite key combining workspace, model, and object names
+				    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Workspace Name - Model Name - Object Name", each [WorkspaceName]&" - "&[ModelName]&" - "&[Object Name], type text),
+				    // Create a composite key combining model ID and object name
+				    #"Added Custom4" = Table.AddColumn(#"Added Custom3", "Model ID - Object Name", each [ModelID]&" - "&[Object Name], type text),
+				    // Create a composite key combining workspace name and model ID
+				    #"Added Custom5" = Table.AddColumn(#"Added Custom4", "Workspace Name - Model ID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    // Create a composite key combining workspace, model ID, and object name
+				    #"Added Custom6" = Table.AddColumn(#"Added Custom5", "Workspace Name - Model ID - Object Name", each [WorkspaceName]&" - "&[ModelID]&" - "&[Object Name], type text),
+				    // Remove duplicate measures based on the workspace-model-object key
+				    #"Removed Duplicates" = Table.Distinct(#"Added Custom6", {"Workspace Name - Model ID - Object Name"}),
+				    // Keep only the columns needed for the measures-only reference table
+				    #"Removed Other Columns" = Table.SelectColumns(#"Removed Duplicates",{"Object Type", "Table Name", "Object Name", "Format String", "Display Folder", "Description", "Is Hidden", "Expression", "ModelAsOfDate", "WorkspaceName", "ModelName", "ModelID", "ModelName - ObjectType - TableName - ObjectName", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", "Workspace Name - Model Name", "Workspace Name - Model Name - Object Name", "Model ID - Object Name", "Workspace Name - Model ID - Object Name"})
+				in
+				    #"Removed Other Columns",
+				    // Load all measure dependency records from the base query
+				    Source = #"Base Measure Dependencies",
+				    #"Added Custom6" = Table.AddColumn(Source, "Workspace Name - Model ID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    // Join with Workspace & Model Mapping to resolve the correct workspace context
+				    #"Merged Queries" = Table.NestedJoin(#"Added Custom6", {"Workspace Name - Model ID"}, #"Workspace & Model Mapping", {"Workspace Name - Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    #"Removed Columns" = Table.RemoveColumns(#"Merged Queries",{"WorkspaceName", "Workspace Name - Model ID"}),
+				    // Expand model-in-workspace flag, workspace ID, and workspace name from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Removed Columns", "Workspace & Model Mapping", {"Model in Workspace Flag", "Workspace ID", "Workspace Name"}, {"Model in Workspace Flag", "Workspace ID", "WorkspaceName"}),
+				    // Create a composite key combining workspace and model names
+				    #"Added Custom" = Table.AddColumn(#"Expanded Workspace & Model Mapping", "Workspace Name - Model Name", each [WorkspaceName]&" - "&[ModelName], type text),
+				    // Create a composite key combining workspace, model, and measure names
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Workspace Name - Model Name - Object Name", each [WorkspaceName]&" - "&[ModelName]&" - "&[MeasureName], type text),
+				    // Create a composite key combining model ID and measure name
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Model ID - Object Name", each [ModelID]&" - "&[MeasureName], type text),
+				    // Create a composite key combining workspace name and model ID
+				    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Workspace Name - Model ID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    // Create a composite key combining workspace, model ID, and measure name
+				    #"Added Custom4" = Table.AddColumn(#"Added Custom3", "Workspace Name - Model ID - Object Name", each [WorkspaceName]&" - "&[ModelID]&" - "&[MeasureName], type text),
+				    // Rename workspace and model columns to display-friendly names
+				    #"Renamed Columns" = Table.RenameColumns(#"Added Custom4",{{"ModelName", "Model Name"}, {"WorkspaceName", "Workspace Name"}}),
+				    // Create a combined key for the dependency: workspace - model - depends on object
+				    #"Added Custom5" = Table.AddColumn(#"Renamed Columns", "Combined Workspace Name - Model Name - DependsOn", each [Workspace Name]&" - "&[Model Name]&" - "&[DependsOn], type text),
+				    // Join with the measures-only table to bring in measure metadata for each dependency
+				    #"Merged Queries1" = Table.NestedJoin(#"Added Custom5", {"Workspace Name - Model ID - Object Name"}, ModelDetailMeasuresOnly, {"Workspace Name - Model ID - Object Name"}, "Measures Only", JoinKind.LeftOuter),
+				    // Expand measure metadata: workspace name, and composite key columns
+				    #"Expanded Measures Only" = Table.ExpandTableColumn(#"Merged Queries1", "Measures Only", {"WorkspaceName", "ModelName - ObjectType - TableName - ObjectName", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName"}, {"WorkspaceName", "ModelName - ObjectType - TableName - ObjectName", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName"}),
+				    // Rename dependency columns to user-friendly display names
+				    #"Renamed Columns1" = Table.RenameColumns(#"Expanded Measures Only",{{"DependsOn", "Depends On"}, {"DependsOnType", "Depends On Type"}}),
+				    // Rename MeasureName to Measure Name for consistency
+				    #"Renamed Columns2" = Table.RenameColumns(#"Renamed Columns1",{{"MeasureName", "Measure Name"}}),
+				    // Add a sort key for dependency type (Table=1, Column=2, CalculationGroupTable=3, Measure=4)
+				    #"Added Conditional Column" = Table.AddColumn(#"Renamed Columns2", "Depends On Type Sort Key", each if [Depends On Type] = "Table" then 1 else if [Depends On Type] = "Column" then 2 else if [Depends On Type] = "Measure" then 4 else if [Depends On Type] = "CalculationGroupTable" then 3 else null, type number)
+				in
+				    #"Added Conditional Column"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Exception
+

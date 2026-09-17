@@ -1,0 +1,794 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "name": "053ba39b8e78f8a95b1f",
+  "position": {
+    "x": 0,
+    "y": 60.377560763161867,
+    "z": 4000,
+    "height": 655.91986465434934,
+    "width": 1278.9065143469741,
+    "tabOrder": 0
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "WorkspaceName"
+                }
+              },
+              "queryRef": "Power BI Environment Information.WorkspaceName",
+              "nativeQueryRef": "Workspace Name",
+              "displayName": "Workspace Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "WorkspaceId"
+                }
+              },
+              "queryRef": "Power BI Environment Information.WorkspaceId",
+              "nativeQueryRef": "Workspace ID",
+              "displayName": "Workspace ID"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Workspace Type"
+                }
+              },
+              "queryRef": "Power BI Service Information.Workspace Type",
+              "nativeQueryRef": "Workspace Type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Workspace Is Read Only"
+                }
+              },
+              "queryRef": "Power BI Service Information.Workspace Is Read Only",
+              "nativeQueryRef": "Workspace Is Read Only"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Workspace Is On Dedicated Capacity"
+                }
+              },
+              "queryRef": "Power BI Service Information.Workspace Is On Dedicated Capacity",
+              "nativeQueryRef": "Workspace Is On Dedicated Capacity"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "ReportName"
+                }
+              },
+              "queryRef": "Power BI Environment Information.ReportName",
+              "nativeQueryRef": "ReportName"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "ReportDescription"
+                }
+              },
+              "queryRef": "Power BI Environment Information.ReportDescription",
+              "nativeQueryRef": "ReportDescription"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "ReportId"
+                }
+              },
+              "queryRef": "Power BI Environment Information.ReportId",
+              "nativeQueryRef": "ReportId"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Report Is Owned By Me"
+                }
+              },
+              "queryRef": "Power BI Service Information.Report Is Owned By Me",
+              "nativeQueryRef": "Report Is Owned By Me"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Report Is From PBIX"
+                }
+              },
+              "queryRef": "Power BI Service Information.Report Is From PBIX",
+              "nativeQueryRef": "Report Is From PBIX"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Report Type"
+                }
+              },
+              "queryRef": "Power BI Service Information.Report Type",
+              "nativeQueryRef": "Report Type"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "DatasetWorkspaceId"
+                }
+              },
+              "queryRef": "Power BI Environment Information.DatasetWorkspaceId",
+              "nativeQueryRef": "Dataset Workspace ID",
+              "displayName": "Dataset Workspace ID"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "DatasetName"
+                }
+              },
+              "queryRef": "Power BI Environment Information.DatasetName",
+              "nativeQueryRef": "DatasetName"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "DatasetId"
+                }
+              },
+              "queryRef": "Power BI Environment Information.DatasetId",
+              "nativeQueryRef": "DatasetId"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "DatasetDescription"
+                }
+              },
+              "queryRef": "Power BI Environment Information.DatasetDescription",
+              "nativeQueryRef": "DatasetDescription"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Dataset Created Date"
+                }
+              },
+              "queryRef": "Power BI Service Information.Dataset Created Date",
+              "nativeQueryRef": "Dataset Created Date"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Dataset Add Rows API Enabled"
+                }
+              },
+              "queryRef": "Power BI Service Information.Dataset Add Rows API Enabled",
+              "nativeQueryRef": "Dataset Add Rows API Enabled"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Dataset Is Effective Identity Required"
+                }
+              },
+              "queryRef": "Power BI Service Information.Dataset Is Effective Identity Required",
+              "nativeQueryRef": "Dataset Is Effective Identity Required"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Dataset Is Effective Identity Roles Required"
+                }
+              },
+              "queryRef": "Power BI Service Information.Dataset Is Effective Identity Roles Required",
+              "nativeQueryRef": "Dataset Is Effective Identity Roles Required"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Dataset Is On Prem Gateway Required"
+                }
+              },
+              "queryRef": "Power BI Service Information.Dataset Is On Prem Gateway Required",
+              "nativeQueryRef": "Dataset Is On Prem Gateway Required"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Dataset Is Refreshable"
+                }
+              },
+              "queryRef": "Power BI Service Information.Dataset Is Refreshable",
+              "nativeQueryRef": "Dataset Is Refreshable"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Dataset Query Scale Out Settings"
+                }
+              },
+              "queryRef": "Power BI Service Information.Dataset Query Scale Out Settings",
+              "nativeQueryRef": "Dataset Query Scale Out Settings"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "Dataset Target Storage Mode"
+                }
+              },
+              "queryRef": "Power BI Service Information.Dataset Target Storage Mode",
+              "nativeQueryRef": "Dataset Target Storage Mode"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "DataflowName"
+                }
+              },
+              "queryRef": "Power BI Environment Information.DataflowName",
+              "nativeQueryRef": "Dataflow Name",
+              "displayName": "Dataflow Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "DataflowId"
+                }
+              },
+              "queryRef": "Power BI Environment Information.DataflowId",
+              "nativeQueryRef": "Dataflow ID",
+              "displayName": "Dataflow ID"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "DataflowGeneration"
+                }
+              },
+              "queryRef": "Power BI Environment Information.DataflowGeneration",
+              "nativeQueryRef": "Dataflow Generation",
+              "displayName": "Dataflow Generation"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "DataflowConfiguredBy"
+                }
+              },
+              "queryRef": "Power BI Environment Information.DataflowConfiguredBy",
+              "nativeQueryRef": "Dataflow Configured By",
+              "displayName": "Dataflow Configured By"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "App Name"
+                }
+              },
+              "queryRef": "Power BI Service Information.App Name",
+              "nativeQueryRef": "App Name"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "App ID"
+                }
+              },
+              "queryRef": "Power BI Service Information.App ID",
+              "nativeQueryRef": "App ID"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "App Description"
+                }
+              },
+              "queryRef": "Power BI Service Information.App Description",
+              "nativeQueryRef": "App Description"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "App Last Update"
+                }
+              },
+              "queryRef": "Power BI Service Information.App Last Update",
+              "nativeQueryRef": "App Last Update"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "App Published By"
+                }
+              },
+              "queryRef": "Power BI Service Information.App Published By",
+              "nativeQueryRef": "App Published By"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Power BI Environment Information"
+                    }
+                  },
+                  "Property": "App Workspace ID"
+                }
+              },
+              "queryRef": "Power BI Service Information.App Workspace ID",
+              "nativeQueryRef": "App Workspace ID"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Power BI Environment Information"
+                  }
+                },
+                "Property": "WorkspaceName"
+              }
+            },
+            "direction": "Ascending"
+          }
+        ]
+      }
+    },
+    "objects": {
+      "values": [
+        {
+          "properties": {
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "backColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#5A82AA'"
+                    }
+                  }
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 0,
+                      "Percent": 0
+                    }
+                  }
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnWidth": [
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "118.70634847159934D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Workspace Is On Dedicated Capacity"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "89.38034185888526D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Workspace Is Read Only"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "86.76214237897054D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Report Is Owned By Me"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "70.6167731655039D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Report Is From PBIX"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "97.2702117987163D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Dataset Add Rows API Enabled"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "104.48756015281842D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Dataset Is Effective Identity Required"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "121.35980204239785D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Dataset Is Effective Identity Roles Required"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "127.5609756097561D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Dataset Is On Prem Gateway Required"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "81.6167592368993D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Dataset Is Refreshable"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "97.76069677556086D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Dataset Query Scale Out Settings"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "97.92513311041027D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Power BI Service Information.Dataset Target Storage Mode"
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "09123d5f09ea71c1c5d8",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Report Hierarchy"
+              }
+            },
+            "Property": "Workspace Name"
+          }
+        },
+        "type": "Categorical",
+        "filter": {
+          "Version": 2,
+          "From": [
+            {
+              "Name": "r",
+              "Entity": "Report Hierarchy",
+              "Type": 0
+            }
+          ],
+          "Where": [
+            {
+              "Condition": {
+                "Not": {
+                  "Expression": {
+                    "In": {
+                      "Expressions": [
+                        {
+                          "Column": {
+                            "Expression": {
+                              "SourceRef": {
+                                "Source": "r"
+                              }
+                            },
+                            "Property": "Workspace Name"
+                          }
+                        }
+                      ],
+                      "Values": [
+                        [
+                          {
+                            "Literal": {
+                              "Value": "null"
+                            }
+                          }
+                        ]
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "howCreated": "User",
+        "objects": {
+          "general": [
+            {
+              "properties": {
+                "isInvertedSelectionMode": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "true"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

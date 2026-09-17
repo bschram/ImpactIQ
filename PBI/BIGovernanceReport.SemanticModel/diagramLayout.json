@@ -1,0 +1,273 @@
+{
+  "version": "1.1.0",
+  "diagrams": [
+    {
+      "ordinal": 0,
+      "scrollPosition": {
+        "x": 3310.66075620821,
+        "y": 0
+      },
+      "nodes": [
+        {
+          "location": {
+            "x": 10924.751426166751,
+            "y": 1214.690242925112
+          },
+          "nodeIndex": "All Models",
+          "size": {
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 9162.4033145719386,
+            "y": 1118.690242925112
+          },
+          "nodeIndex": "PBI Snapshot Date",
+          "size": {
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 979.83196364607829,
+            "y": 819.00765208153712
+          },
+          "nodeIndex": "All Dataflows",
+          "nodeLineageTag": "2d5dd675-31bd-46af-93cb-dcd2e1230465",
+          "size": {
+            "height": 200,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 12142.548666299965,
+            "y": 890.17777431780235
+          },
+          "nodeIndex": "All Model Sources",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 12700.548666299965,
+            "y": 878.17777431780235
+          },
+          "nodeIndex": "Measure Lineage - Parents",
+          "size": {
+            "height": 296,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 12416.548666299965,
+            "y": 876.17777431780235
+          },
+          "nodeIndex": "Measure Lineage - Dependents",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 13522.548666299965,
+            "y": 926.34717300185093
+          },
+          "nodeIndex": "Report Hierarchy",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 13248.548666299965,
+            "y": 902.17777431780235
+          },
+          "nodeIndex": "All Measure Dependencies",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 12974.548666299965,
+            "y": 876.17777431780235
+          },
+          "nodeIndex": "Measure Lineage",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 10831.123087099093,
+            "y": 1118.690242925112
+          },
+          "nodeIndex": "Model Object Hierarchy",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 13679.099752668581,
+            "y": 428.60678795231269
+          },
+          "nodeIndex": "All Model Refresh History",
+          "nodeLineageTag": "f6792d07-2b79-43c9-ba89-52cd65746ac9",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 11594.548666299965,
+            "y": 1204.690242925112
+          },
+          "nodeIndex": "All Reports",
+          "size": {
+            "height": 128,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 4546.67331341731,
+            "y": 852.34717300185093
+          },
+          "nodeIndex": "Power BI Environment Information",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 13445.099752668581,
+            "y": 363.18443897239024
+          },
+          "nodeIndex": "All Dataflow Refresh History",
+          "nodeLineageTag": "21808947-2213-40f3-803e-902463645ff2",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 12876.716702653886,
+            "y": 393.16954975198809
+          },
+          "nodeIndex": "All Dataflow Sources",
+          "nodeLineageTag": "884e8b03-192c-4b9e-ac97-f17a4812684f",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 13160.918263847072,
+            "y": 398.02913693223525
+          },
+          "nodeIndex": "Dataflow Hierarchy",
+          "nodeLineageTag": "861719bd-92ef-47e3-acf5-f5c4510542c8",
+          "size": {
+            "height": 296,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 13963.099752668581,
+            "y": 442.60678795231269
+          },
+          "nodeIndex": "Fabric Item Information",
+          "nodeLineageTag": "ed0bf72c-0c33-4be6-b21a-7042387c5d49",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 14247.099752668581,
+            "y": 428.60678795231269
+          },
+          "nodeIndex": "All Model Refresh Schedule",
+          "nodeLineageTag": "fe64becc-6670-4c21-afa7-24d2681d79a2",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        }
+      ],
+      "name": "All tables",
+      "zoomValue": 39.097936023398972,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
+    },
+    {
+      "ordinal": 1,
+      "scrollPosition": {
+        "x": 0,
+        "y": 0
+      },
+      "nodes": [],
+      "name": "Layout 1",
+      "zoomValue": 88.955223880597018,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
+    },
+    {
+      "ordinal": 2,
+      "scrollPosition": {
+        "x": 0,
+        "y": 0
+      },
+      "nodes": [],
+      "name": "Layout 2",
+      "zoomValue": 100,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
+    }
+  ],
+  "selectedDiagram": "All tables",
+  "defaultDiagram": "All tables"
+}

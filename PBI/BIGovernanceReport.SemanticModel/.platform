@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "SemanticModel",
+    "displayName": "BIGovernanceReport"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "c7a1c6d0-c9e3-430d-a5ba-040bca11ff1e"
+  }
+}

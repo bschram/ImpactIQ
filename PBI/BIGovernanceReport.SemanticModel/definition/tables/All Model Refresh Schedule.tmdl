@@ -1,0 +1,236 @@
+table 'All Model Refresh Schedule'
+	lineageTag: fe64becc-6670-4c21-afa7-24d2681d79a2
+
+	measure 'Model Refresh Scheduled Status' = MAX('All Model Refresh Schedule'[Dataset Refresh Schedule Enabled])
+		lineageTag: 1e7621d3-5792-4499-998c-0b525b0d357b
+
+	measure 'Failure Notification Status' = MAX('All Model Refresh Schedule'[Dataset Refresh Schedule Notify Option])
+		lineageTag: 90333ad5-dabf-4df8-9fee-f5206cd75b54
+
+	measure 'Scheduled Refresh Distinct Count' = DISTINCTCOUNTNOBLANK('All Model Refresh Schedule'[UniqueRefreshScheduleID])
+		formatString: 0
+		lineageTag: 5ed6943d-5267-4312-9095-38f6ea0139f8
+
+	measure 'Scheduled Refresh Distinct Count - Models' = DISTINCTCOUNTNOBLANK('All Model Refresh Schedule'[Model ID])
+		formatString: 0
+		lineageTag: aa737cca-16f9-4d1f-bdb1-6fa8f793a0bf
+
+	measure 'Scheduled Refreshes per Day' = CALCULATE(DIVIDE([Scheduled Refresh Distinct Count], 7), KEEPFILTERS('All Model Refresh Schedule'[Dataset Refresh Schedule Enabled] IN {"True"}))
+		formatString: #,0
+		lineageTag: 70df1213-4fae-46c5-b710-3703a61fe230
+
+	measure 'Scheduled Refreshes per Week' = CALCULATE([Scheduled Refresh Distinct Count], KEEPFILTERS('All Model Refresh Schedule'[Dataset Refresh Schedule Enabled] IN {"True"}))
+		lineageTag: 99f34764-7832-4977-a202-eb280ac61a32
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column 'Dataset Refresh Schedule Local Time Zone'
+		dataType: string
+		lineageTag: f4559a0a-d757-45dd-b8d5-abde2496b338
+		summarizeBy: none
+		sourceColumn: Dataset Refresh Schedule Local Time Zone
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Refresh Schedule Notify Option'
+		dataType: string
+		lineageTag: bf3186f6-1b6a-4aeb-a0ee-5f3078542ba4
+		summarizeBy: none
+		sourceColumn: Dataset Refresh Schedule Notify Option
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Refresh Schedule Enabled'
+		dataType: string
+		lineageTag: dac8a871-7a6b-4183-bafb-a2d8a26288fc
+		summarizeBy: none
+		sourceColumn: Dataset Refresh Schedule Enabled
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Schedule Settings URL'
+		dataType: string
+		lineageTag: a5eae669-bf46-4bec-9cea-3e076e028d59
+		summarizeBy: none
+		sourceColumn: Schedule Settings URL
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model ID'
+		dataType: string
+		isHidden
+		lineageTag: caa7f9ad-c175-4ba6-85a4-75dd4b4a7c78
+		summarizeBy: none
+		sourceColumn: Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Refresh Schedule Day'
+		dataType: string
+		lineageTag: 2686a6e1-9be1-4c51-a669-7494ffa15c41
+		summarizeBy: none
+		sourceColumn: Dataset Refresh Schedule Day
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataset Refresh Schedule Time'
+		dataType: dateTime
+		formatString: Long Time
+		lineageTag: f5e5c0ce-6c2a-4254-b31c-010c794f64b1
+		summarizeBy: none
+		sourceColumn: Dataset Refresh Schedule Time
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Time
+
+	column 'Model Name'
+		dataType: string
+		lineageTag: cacb6241-980c-456a-b1b7-d28af0808c24
+		summarizeBy: none
+		sourceColumn: Model Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name'
+		dataType: string
+		isHidden
+		lineageTag: fb4270af-ee52-42ed-b7c2-3cf42a3a2e71
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: a7095cbf-eaf5-44f9-9d5b-b8f034322a03
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column UniqueRefreshScheduleID
+		dataType: string
+		lineageTag: bef89ee9-5edf-4447-9416-c1f3d117e58b
+		summarizeBy: none
+		sourceColumn: UniqueRefreshScheduleID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'UTC Scheduled Time'
+		dataType: dateTime
+		formatString: Long Time
+		lineageTag: bf9a0c21-c8fc-4fba-b17c-2703f6a9a4ec
+		summarizeBy: none
+		sourceColumn: UTC Scheduled Time
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Time
+
+	column 'CST Scheduled Time'
+		dataType: dateTime
+		formatString: Long Time
+		lineageTag: 66ca1845-a3d8-4d59-9502-28105985b7e4
+		summarizeBy: none
+		sourceColumn: CST Scheduled Time
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Time
+
+	column 'Model in Workspace Flag'
+		dataType: string
+		isHidden
+		lineageTag: 4e046fee-36f4-4be6-a8cb-5f01321269ab
+		summarizeBy: none
+		sourceColumn: Model in Workspace Flag
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceName
+		dataType: string
+		lineageTag: 70fcad0c-4bb7-4725-9226-6f3c19fe4413
+		summarizeBy: none
+		sourceColumn: WorkspaceName
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID'
+		dataType: string
+		lineageTag: b110fc25-5ff9-4feb-af01-72c0b61b08e2
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Home Workspace Name'
+		dataType: string
+		lineageTag: 51195753-50e3-4880-87de-2d1ea3e37619
+		summarizeBy: none
+		sourceColumn: Model Home Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'All Model Refresh Schedule' = m
+		mode: import
+		queryGroup: 'Model Layer'
+		source =
+				let
+				    // Load model refresh schedule data from the base query
+				    Source = #"Base Power BI Model Refresh Schedule",
+				    // Sanitize workspace name using the Clean Name function
+				    #"Invoked Custom Function" = Table.AddColumn(Source, "Clean Name", each #"Clean Name"([WorkspaceName]), type text),
+				    // Sanitize model (dataset) name using the Clean Name function
+				    #"Invoked Custom Function1" = Table.AddColumn(#"Invoked Custom Function", "Clean Name.1", each #"Clean Name"([DatasetName]), type text),
+				    // Remove the original unsanitized workspace and dataset name columns
+				    #"Removed Columns" = Table.RemoveColumns(#"Invoked Custom Function1",{"WorkspaceName", "DatasetName"}),
+				    // Rename sanitized columns and standardize all field names to user-friendly display names
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns",{{"Clean Name", "WorkspaceName"}, {"Clean Name.1", "Model Name"}, {"@odata.context", "Schedule Settings URL"}, {"DatasetRefreshScheduleLocalTimeZoneId", "Dataset Refresh Schedule Local Time Zone"}, {"DatasetRefreshScheduleNotifyOption", "Dataset Refresh Schedule Notify Option"}, {"DatasetRefreshScheduleEnabled", "Dataset Refresh Schedule Enabled"}, {"WorkspaceId", "Workspace ID"}, {"DatasetId", "Model ID"}, {"DatasetRefreshScheduleDay", "Dataset Refresh Schedule Day"}, {"DatasetRefreshScheduleTime", "Dataset Refresh Schedule Time"}}),
+				    // Remove original workspace columns (will be resolved via Workspace & Model Mapping)
+				    #"Removed Columns1" = Table.RemoveColumns(#"Renamed Columns",{"Workspace ID", "WorkspaceName"}),
+				    // Pre-filter Workspace & Model Mapping to home workspace only (prevents fan-out duplication and memory explosion)
+				    #"Merged Queries" = Table.NestedJoin(#"Removed Columns1", {"Model ID"}, Table.SelectRows(#"Workspace & Model Mapping", each [Model in Workspace Flag] = "TRUE"), {"Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    // Expand workspace name, ID, and model home workspace from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Merged Queries", "Workspace & Model Mapping", {"Model in Workspace Flag", "Workspace Name", "Workspace ID", "Model Home Workspace Name"}, {"Model in Workspace Flag", "WorkspaceName", "Workspace ID", "Model Home Workspace Name"}),
+				    // Apply proper casing to the Enabled flag (e.g., "true" → "True")
+				    #"Cleaned Text" = Table.TransformColumns(#"Expanded Workspace & Model Mapping",{{"Dataset Refresh Schedule Enabled", Text.Proper, type text}}),
+				    // Create a composite key combining workspace and model names
+				    #"Added Custom" = Table.AddColumn(#"Cleaned Text", "Workspace Name - Model Name", each [WorkspaceName]&" - "&[Model Name], type text),
+				    // Create a composite key combining workspace name and model ID
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Workspace Name - Model ID", each [WorkspaceName]&" - "&[Model ID], type text),
+				    // Create a unique refresh schedule ID combining workspace, model, day, time, and timezone
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "UniqueRefreshScheduleID", each [WorkspaceName]&" - "&[Model ID]&" - "&[Dataset Refresh Schedule Day]&" - "& Text.From([Dataset Refresh Schedule Time])&" - "&[Dataset Refresh Schedule Local Time Zone], type text),
+				    // Calculate the UTC timezone offset based on the local timezone name
+				    #"Added Conditional Column" = Table.AddColumn(#"Added Custom2", "UTC Timezone Offset", each if [Dataset Refresh Schedule Local Time Zone] = "Pacific Standard Time" then -8 else if [Dataset Refresh Schedule Local Time Zone] = "UTC" then 0 else if [Dataset Refresh Schedule Local Time Zone] = "Mountain Standard Time" then -7 else if [Dataset Refresh Schedule Local Time Zone] = "Central Standard Time" then -6 else if [Dataset Refresh Schedule Local Time Zone] = "Eastern Standard Time" then -5 else if [Dataset Refresh Schedule Local Time Zone] = "Pacific Daylight Time" then -7 else if [Dataset Refresh Schedule Local Time Zone] = "Mountain Daylight Time" then -6 else if [Dataset Refresh Schedule Local Time Zone] = "Central Daylight Time" then -5 else if [Dataset Refresh Schedule Local Time Zone] = "Eastern Daylight Time" then -4 else 0, type number),
+				    // Convert the local scheduled time to UTC using the timezone offset
+				    #"Added Custom3" = Table.AddColumn(
+				    #"Added Conditional Column",
+				    "UTC Scheduled Time",
+				    each [Dataset Refresh Schedule Time] + #duration(0, [UTC Timezone Offset], 0, 0), type time),
+				    // Set the CST timezone offset constant (-6 hours from UTC)
+				    #"Added Custom4" = Table.AddColumn(#"Added Custom3", "CST Timezone Offset", each -6, type number),
+				    // Convert the UTC scheduled time to CST using the CST offset
+				    #"Added Custom5" = Table.AddColumn(
+				    #"Added Custom4",
+				    "CST Scheduled Time",
+				    each [UTC Scheduled Time] - #duration(0, [CST Timezone Offset], 0, 0), type time),
+				    // Remove the temporary timezone offset columns
+				    #"Removed Columns2" = Table.RemoveColumns(#"Added Custom5",{"UTC Timezone Offset", "CST Timezone Offset"}),
+				    #"Replaced Value" = Table.ReplaceValue(#"Removed Columns2",null,"TRUE",Replacer.ReplaceValue,{"Model in Workspace Flag"})
+				in
+				    #"Replaced Value"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Exception
+

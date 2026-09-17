@@ -1,0 +1,359 @@
+table 'Measure Lineage'
+	lineageTag: d860bb50-0a4e-4f3d-a85e-3986c1682dfc
+
+	column 'Workspace Name - Model Name - Object Name'
+		dataType: string
+		isHidden
+		lineageTag: dbea8b77-60a9-43c7-8801-310f0f6d69ba
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name - Object Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'WorkspaceName - ModelName - ObjectType - TableName - ObjectName'
+		dataType: string
+		isHidden
+		lineageTag: 7fe1ac0e-150d-4b17-b2d1-32c44b26cba0
+		summarizeBy: none
+		sourceColumn: WorkspaceName - ModelName - ObjectType - TableName - ObjectName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'ModelName - ObjectType - TableName - ObjectName'
+		dataType: string
+		isHidden
+		lineageTag: c473b1cb-6763-451e-b854-72438220d822
+		summarizeBy: none
+		sourceColumn: ModelName - ObjectType - TableName - ObjectName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Name'
+		dataType: string
+		isHidden
+		lineageTag: a237808b-96b1-4a38-859d-459cf1e0d268
+		summarizeBy: none
+		sourceColumn: Model Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		isHidden
+		lineageTag: f764f5c5-830f-4e5d-b160-88209c07489d
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Measure Name'
+		dataType: string
+		isHidden
+		lineageTag: 5bb25a9f-8b17-4cfc-ba8c-c256afb51445
+		summarizeBy: none
+		sourceColumn: Measure Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Table Name'
+		dataType: string
+		isHidden
+		lineageTag: 476c40d4-e107-41c9-a698-7bfd6af138e2
+		summarizeBy: none
+		sourceColumn: Table Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Format String'
+		dataType: string
+		isHidden
+		lineageTag: 07fe9dec-e14a-4eb5-a849-fd5ec9bc8ac9
+		summarizeBy: none
+		sourceColumn: Format String
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Display Folder'
+		dataType: string
+		isHidden
+		lineageTag: d2ef57b6-fedb-45db-a380-9e7c015f9ae1
+		summarizeBy: none
+		sourceColumn: Display Folder
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Description
+		dataType: string
+		isHidden
+		lineageTag: 88a29a60-18ab-4dc5-9890-40ff9f614bf8
+		summarizeBy: none
+		sourceColumn: Description
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Is Hidden'
+		dataType: string
+		isHidden
+		lineageTag: 142a4213-198d-4961-91ac-2e364068df09
+		summarizeBy: none
+		sourceColumn: Is Hidden
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Expression
+		dataType: string
+		isHidden
+		lineageTag: 22b5ac1a-99ad-4c24-8cdf-d2a5159e7a90
+		summarizeBy: none
+		sourceColumn: Expression
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model Name'
+		dataType: string
+		isHidden
+		lineageTag: 7246be58-9a81-40ba-8d03-aff039df9734
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: e33466a2-9961-4a82-a12d-77bfe4eb4b27
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Measure Level'
+		dataType: string
+		lineageTag: 6a7855d1-f6d2-4edd-ba46-2f02a69ea8d9
+		summarizeBy: none
+		sourceColumn: Measure Level
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Base Measure Flag'
+		dataType: string
+		lineageTag: 170c04d6-8402-467e-adfc-68460bfd16e2
+		summarizeBy: none
+		sourceColumn: Base Measure Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'Measure Lineage' = m
+		mode: import
+		queryGroup: 'Measure Lineage'
+		source =
+				let
+				    // --- Inner Query: Build MeasureDependencies lookup with only measure-type dependencies ---
+				    MeasureDependencies=let
+				    // --- Inner Query: Build MeasureDependencieMeasuresOnly with workspace-qualified measure keys ---
+				    MeasureDependencieMeasuresOnly=let
+				    // Load the base measure dependency data
+				    Source = #"Base Measure Dependencies",
+				    // Filter to only dependencies where the dependent object is a Measure
+				    #"Filtered Rows" = Table.SelectRows(Source, each ([DependsOnType] = "Measure")),
+				    // Remove the raw WorkspaceName column (will be replaced via mapping)
+				    #"Added Custom6" = Table.AddColumn(#"Filtered Rows", "Workspace Name - Model ID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    // Join with Workspace & Model Mapping to resolve the correct workspace context
+				    #"Merged Queries1" = Table.NestedJoin(#"Added Custom6", {"Workspace Name - Model ID"}, #"Workspace & Model Mapping", {"Workspace Name - Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    #"Removed Columns" = Table.RemoveColumns(#"Merged Queries1",{"WorkspaceName", "Workspace Name - Model ID"}),
+				    // Expand model-in-workspace flag, workspace ID, and workspace name from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Removed Columns", "Workspace & Model Mapping", {"Model in Workspace Flag", "Workspace Name"}, {"Model in Workspace Flag", "WorkspaceName"}),
+				    // Remove opening brackets from the DependsOn column
+				    #"Replaced Value" = Table.ReplaceValue(#"Expanded Workspace & Model Mapping","[","",Replacer.ReplaceText,{"DependsOn"}),
+				    // Remove closing brackets from the DependsOn column
+				    #"Replaced Value1" = Table.ReplaceValue(#"Replaced Value","]","",Replacer.ReplaceText,{"DependsOn"}),
+				    // Create a workspace-qualified Measure Name key
+				    #"Added Custom" = Table.AddColumn(#"Replaced Value1", "Measure Name", each [WorkspaceName]&" - "&[ModelName]&" - "&[MeasureName], type text),
+				    // Create a workspace-qualified Depends On key
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Depends On", each [WorkspaceName]&" - "&[ModelName]&" - "&[DependsOn], type text)
+				in
+				    #"Added Custom1",
+				    // Load the base measure dependency data for the full dependency set
+				    Source = #"Base Measure Dependencies",
+				    // Remove the raw WorkspaceName column (will be replaced via mapping)
+				    #"Added Custom6" = Table.AddColumn(Source, "Workspace Name - Model ID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    // Join with Workspace & Model Mapping to resolve the correct workspace context
+				    #"Merged Queries1" = Table.NestedJoin(#"Added Custom6", {"Workspace Name - Model ID"}, #"Workspace & Model Mapping", {"Workspace Name - Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    #"Removed Columns" = Table.RemoveColumns(#"Merged Queries1",{"WorkspaceName", "Workspace Name - Model ID"}),
+				    // Expand model-in-workspace flag, workspace ID, and workspace name from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Removed Columns", "Workspace & Model Mapping", {"Workspace Name - Model ID", "Workspace Name"}, {"Workspace Name - Model ID", "WorkspaceName"}),
+				    // Create a workspace-qualified Measure Name key
+				    #"Added Custom" = Table.AddColumn(#"Expanded Workspace & Model Mapping", "Measure Name", each [WorkspaceName]&" - "&[ModelName]&" - "&[MeasureName], type text),
+				    // Select only the Measure Name column for distinct measure list
+				    #"Removed Other Columns" = Table.SelectColumns(#"Added Custom",{"Measure Name"}),
+				    // Get distinct measure names to avoid duplicate joins
+				    #"Removed Duplicates" = Table.Distinct(#"Removed Other Columns"),
+				    // Join with MeasureDependencieMeasuresOnly to get measure-only dependencies
+				    #"Merged Queries" = Table.NestedJoin(#"Removed Duplicates", {"Measure Name"}, MeasureDependencieMeasuresOnly, {"Measure Name"}, "dependencies_with_types", JoinKind.LeftOuter),
+				    // Expand the Depends On column from the measures-only dependency lookup
+				    #"Expanded dependencies_with_types" = Table.ExpandTableColumn(#"Merged Queries", "dependencies_with_types", {"Depends On"}, {"Depends On"})
+				in
+				    #"Expanded dependencies_with_types",
+				    // --- Inner Query: Build NonMeasures table with all non-measure model objects ---
+				    NonMeasures=let
+				    // Load base semantic model metadata
+				    Source = #"Base Semantic Models",
+				    // Rename columns to user-friendly names
+				    #"Renamed Columns" = Table.RenameColumns(Source,{{"Name", "Object Name"}, {"Type", "Object Type"}, {"Table", "Table Name"}, {"IsHidden", "Is Hidden"}, {"DisplayFolder", "Display Folder"}, {"FormatString", "Format String"}, {"WorkspaceName", "Workspace Name"}, {"ModelName", "Model Name"}, {"ModelID", "Model ID"}}),
+				    // Remove the raw workspace name (will be replaced by mapping)
+				    #"Removed Columns" = Table.RemoveColumns(#"Renamed Columns",{"Workspace Name"}),
+				    // Join with Workspace & Model Mapping to resolve workspace context
+				    #"Merged Queries" = Table.NestedJoin(#"Removed Columns", {"Model ID"}, #"Workspace & Model Mapping", {"Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    // Expand workspace flag and workspace name from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Merged Queries", "Workspace & Model Mapping", {"Model in Workspace Flag", "Workspace Name"}, {"Model in Workspace Flag", "Workspace Name"}),
+				    // Filter to only non-measure object types (tables, columns, hierarchies, etc.)
+				    #"Filtered Rows" = Table.SelectRows(#"Expanded Workspace & Model Mapping", each ([Object Type] <> "Measure")),
+				    // Create composite key: Model - ObjectType - Table - ObjectName
+				    #"Added Custom" = Table.AddColumn(#"Filtered Rows", "ModelName - ObjectType - TableName - ObjectName", each [Model Name]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Create composite key: Workspace - Model - ObjectType - Table - ObjectName
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", each [Workspace Name]&" - "&[Model Name]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Create composite key: Workspace Name - Model Name
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Workspace Name - Model Name", each [Workspace Name]&" - "&[Model Name], type text),
+				    // Create composite key: Workspace Name - Model ID
+				    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Workspace Name - Model ID", each [Workspace Name]&" - "&[Model ID], type text),
+				    // Create composite key: Workspace Name - Model Name - Object Name
+				    #"Added Custom4" = Table.AddColumn(#"Added Custom3", "Workspace Name - Model Name - Object Name", each [Workspace Name]&" - "&[Model Name]&" - "&[Object Name], type text),
+				    // Select only the columns needed for the non-measure output
+				    #"Removed Other Columns" = Table.SelectColumns(#"Added Custom4",{"Table Name", "Format String", "Display Folder", "Description", "Is Hidden", "Expression", "Workspace Name", "Model Name", "ModelName - ObjectType - TableName - ObjectName", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", "Workspace Name - Model Name", "Workspace Name - Model ID", "Workspace Name - Model Name - Object Name"})
+				in
+				    #"Removed Other Columns",
+				    // --- Outer Query: Build the full measure lineage with 12 levels of dependency chaining ---
+				    // Load base semantic model metadata for measures
+				    Source = #"Base Semantic Models",
+				    // Rename columns to user-friendly names
+				    #"Renamed Columns" = Table.RenameColumns(Source,{{"Name", "Object Name"}, {"Type", "Object Type"}, {"Table", "Table Name"}, {"IsHidden", "Is Hidden"}, {"DisplayFolder", "Display Folder"}, {"FormatString", "Format String"}}),
+				    #"Added Custom5" = Table.AddColumn(#"Renamed Columns", "Workspace Name - Model ID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    // Join with Workspace & Model Mapping to resolve workspace context
+				    #"Merged Queries12" = Table.NestedJoin(#"Added Custom5", {"Workspace Name - Model ID"}, #"Workspace & Model Mapping", {"Workspace Name - Model ID"}, "Workspace & Model Mapping", JoinKind.LeftOuter),
+				    #"Removed Columns3" = Table.RemoveColumns(#"Merged Queries12",{"WorkspaceName", "Workspace Name - Model ID"}),
+				    // Expand workspace flag and workspace name from the mapping
+				    #"Expanded Workspace & Model Mapping" = Table.ExpandTableColumn(#"Removed Columns3", "Workspace & Model Mapping", {"Workspace Name"}, {"WorkspaceName"}),
+				    // Filter to only Measure object types
+				    #"Filtered Rows" = Table.SelectRows(#"Expanded Workspace & Model Mapping", each ([Object Type] = "Measure")),
+				    // Create composite key: Model - ObjectType - Table - ObjectName
+				    #"Added Custom" = Table.AddColumn(#"Filtered Rows", "ModelName - ObjectType - TableName - ObjectName", each [ModelName]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Create composite key: Workspace - Model - ObjectType - Table - ObjectName
+				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", each [WorkspaceName]&" - "&[ModelName]&" - "&[Object Type]&" - "&[Table Name]&" - "&[Object Name], type text),
+				    // Create workspace-qualified measure name key for dependency lookups
+				    #"Added Custom2" = Table.AddColumn(#"Added Custom1", "Measure Name", each [WorkspaceName]&" - "&[ModelName]&" - "&[Object Name], type text),
+				    // Create composite key: Workspace Name - Model Name
+				    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Workspace Name - Model Name", each [WorkspaceName]&" - "&[ModelName], type text),
+				    // Create composite key: Workspace Name - Model ID
+				    #"Added Custom4" = Table.AddColumn(#"Added Custom3", "Workspace Name - Model ID", each [WorkspaceName]&" - "&[ModelID], type text),
+				    // Rename Object Name to ObjectName and Measure Name to Object Name for clarity
+				    #"Renamed Columns6" = Table.RenameColumns(#"Added Custom4",{{"Object Name", "ObjectName"}}),
+				    #"Renamed Columns1" = Table.RenameColumns(#"Renamed Columns6",{{"Measure Name", "Object Name"}}),
+				    // Remove relationship columns not relevant to measure lineage
+				    #"Removed Columns2" = Table.RemoveColumns(#"Renamed Columns1",{"RelationshipFromTable", "RelationshipFromColumn", "RelationshipToTable", "RelationshipToColumn", "RelationshipStatus", "RelationshipFromCardinality", "RelationshipToCardinality", "RelationshipCrossFilteringBehavior"}),
+				    // Level 01: Join with MeasureDependencies to get first-level dependencies
+				    #"Merged Queries" = Table.NestedJoin(#"Removed Columns2", {"Object Name"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)" = Table.ExpandTableColumn(#"Merged Queries", "dependencies_with_types (2)", {"Depends On"}, {"Depends On"}),
+				    // Level 02: Chain to second-level dependencies
+				    #"Merged Queries1" = Table.NestedJoin(#"Expanded dependencies_with_types (2)", {"Depends On"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)1" = Table.ExpandTableColumn(#"Merged Queries1", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.1"}),
+				    // Level 03: Chain to third-level dependencies
+				    #"Merged Queries2" = Table.NestedJoin(#"Expanded dependencies_with_types (2)1", {"Depends On.1"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)2" = Table.ExpandTableColumn(#"Merged Queries2", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.2"}),
+				    // Level 04: Chain to fourth-level dependencies
+				    #"Merged Queries3" = Table.NestedJoin(#"Expanded dependencies_with_types (2)2", {"Depends On.2"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)3" = Table.ExpandTableColumn(#"Merged Queries3", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.3"}),
+				    // Level 05: Chain to fifth-level dependencies
+				    #"Merged Queries4" = Table.NestedJoin(#"Expanded dependencies_with_types (2)3", {"Depends On.3"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)4" = Table.ExpandTableColumn(#"Merged Queries4", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.4"}),
+				    // Level 06: Chain to sixth-level dependencies
+				    #"Merged Queries5" = Table.NestedJoin(#"Expanded dependencies_with_types (2)4", {"Depends On.4"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)5" = Table.ExpandTableColumn(#"Merged Queries5", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.5"}),
+				    // Level 07: Chain to seventh-level dependencies
+				    #"Merged Queries6" = Table.NestedJoin(#"Expanded dependencies_with_types (2)5", {"Depends On.5"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)6" = Table.ExpandTableColumn(#"Merged Queries6", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.6"}),
+				    // Level 08: Chain to eighth-level dependencies
+				    #"Merged Queries7" = Table.NestedJoin(#"Expanded dependencies_with_types (2)6", {"Depends On.6"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)7" = Table.ExpandTableColumn(#"Merged Queries7", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.7"}),
+				    // Level 09: Chain to ninth-level dependencies
+				    #"Merged Queries8" = Table.NestedJoin(#"Expanded dependencies_with_types (2)7", {"Depends On.7"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)8" = Table.ExpandTableColumn(#"Merged Queries8", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.8"}),
+				    // Level 10: Chain to tenth-level dependencies
+				    #"Merged Queries9" = Table.NestedJoin(#"Expanded dependencies_with_types (2)8", {"Depends On.8"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)9" = Table.ExpandTableColumn(#"Merged Queries9", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.9"}),
+				    // Level 11: Chain to eleventh-level dependencies
+				    #"Merged Queries10" = Table.NestedJoin(#"Expanded dependencies_with_types (2)9", {"Depends On.9"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)10" = Table.ExpandTableColumn(#"Merged Queries10", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.10"}),
+				    // Level 12: Chain to twelfth-level dependencies
+				    #"Merged Queries11" = Table.NestedJoin(#"Expanded dependencies_with_types (2)10", {"Depends On.10"}, MeasureDependencies, {"Measure Name"}, "dependencies_with_types (2)", JoinKind.LeftOuter),
+				    #"Expanded dependencies_with_types (2)11" = Table.ExpandTableColumn(#"Merged Queries11", "dependencies_with_types (2)", {"Depends On"}, {"Depends On.11"}),
+				    // Rename all Depends On columns to Level 01 through Level 12
+				    #"Renamed Columns3" = Table.RenameColumns(#"Expanded dependencies_with_types (2)11",{{"Depends On", "Level 01"}, {"Depends On.1", "Level 02"}, {"Depends On.2", "Level 03"}, {"Depends On.3", "Level 04"}, {"Depends On.4", "Level 05"}, {"Depends On.5", "Level 06"}, {"Depends On.6", "Level 07"}, {"Depends On.7", "Level 08"}, {"Depends On.8", "Level 09"}, {"Depends On.9", "Level 10"}, {"Depends On.10", "Level 11"}, {"Depends On.11", "Level 12"}}),
+				    // Flag measures with no Level 01 dependency as Base Measures
+				    #"Added Conditional Column" = Table.AddColumn(#"Renamed Columns3", "Base Measure Flag", each if [Level 01] = null then "Base Measure" else "Not Base Measure", type text),
+				    // Replace null Level 01 with "No Related Measures" for base measures
+				    #"Replaced Value" = Table.ReplaceValue(#"Added Conditional Column",null,"No Related Measures",Replacer.ReplaceValue,{"Level 01"}),
+				    // Remove rows with errors in any level columns (invalid dependency chains)
+				    #"Removed Errors" = Table.RemoveRowsWithErrors(#"Replaced Value", {"Level 12", "Level 11", "Level 10", "Level 09", "Level 08", "Level 07", "Level 06", "Level 05", "Level 04", "Level 03", "Level 02", "Level 01"}),
+				    // Unpivot the 12 level columns into Dependency Level / Dependent Measures rows
+				    #"Unpivoted Only Selected Columns" = Table.Unpivot(#"Removed Errors", {"Level 01", "Level 02", "Level 03", "Level 04", "Level 05", "Level 06", "Level 07", "Level 08", "Level 09", "Level 10", "Level 11", "Level 12"}, "Attribute", "Value"),
+				    // Rename unpivoted columns to Dependency Level, Dependent Measures, and Measure Name
+				    #"Renamed Columns4" = Table.RenameColumns(#"Unpivoted Only Selected Columns",{{"Attribute", "Dependency Level"}, {"Value", "Dependent Measures"}, {"Object Name", "Measure Name"}}),
+				    // Add a numeric sort order based on the dependency level text
+				    #"Added Conditional Column1" = Table.AddColumn(#"Renamed Columns4", "Dependency Sort Order", each if [Dependency Level] = "Level 01" then 1 else if [Dependency Level] = "Level 02" then 2 else if [Dependency Level] = "Level 03" then 3 else if [Dependency Level] = "Level 04" then 4 else if [Dependency Level] = "Level 05" then 5 else if [Dependency Level] = "Level 06" then 6 else if [Dependency Level] = "Level 07" then 7 else if [Dependency Level] = "Level 08" then 8 else if [Dependency Level] = "Level 09" then 9 else if [Dependency Level] = "Level 10" then 10 else if [Dependency Level] = "Level 11" then 11 else null, type number),
+				    // Add a numeric dependency level (0 for base measures, 1-14 for dependency depth)
+				    #"Added Conditional Column2" = Table.AddColumn(#"Added Conditional Column1", "Numeric Dependency Level", each if [Base Measure Flag] = "Base Measure" then 0 else if [Dependency Level] = "Level 01" then 1 else if [Dependency Level] = "Level 02" then 2 else if [Dependency Level] = "Level 03" then 3 else if [Dependency Level] = "Level 04" then 4 else if [Dependency Level] = "Level 05" then 5 else if [Dependency Level] = "Level 06" then 6 else if [Dependency Level] = "Level 07" then 7 else if [Dependency Level] = "Level 08" then 8 else if [Dependency Level] = "Level 09" then 9 else if [Dependency Level] = "Level 10" then 10 else if [Dependency Level] = "Level 11" then 11 else if [Dependency Level] = "Level 12" then 12 else if [Dependency Level] = "Level 13" then 13 else 14),
+				    // Group by measure identity columns and compute the max numeric dependency level
+				    #"Grouped Rows" = Table.Group(#"Added Conditional Column2", {"Measure Name", "WorkspaceName - ModelName - ObjectType - TableName - ObjectName", "ModelName - ObjectType - TableName - ObjectName", "ModelName", "WorkspaceName", "ObjectName", "Table Name", "Format String", "Display Folder", "Description", "Is Hidden", "Expression", "Workspace Name - Model Name", "Workspace Name - Model ID"}, {{"Max Numeric Level", each List.Max([Numeric Dependency Level]), type number}}),
+				    // Increment the Max Level by 1 to determine the measure's own level
+				    AddLevel = Table.AddColumn(#"Grouped Rows", "New Numeric Level", each [Max Numeric Level] + 1, type number),
+				    // Convert numeric level back to zero-padded text format (e.g., "Level 01")
+				    AddTextLevel = Table.AddColumn(AddLevel, "New Dependency Level", each "Level " & Text.PadStart(Text.From([New Numeric Level]), 2, "0"), type text),
+				    // Rename columns to final output names
+				    #"Renamed Columns5" = Table.RenameColumns(AddTextLevel,{{"New Dependency Level", "Measure Level"}, {"Measure Name", "Workspace Name - Model Name - Object Name"}, {"ModelName", "Model Name"}, {"WorkspaceName", "Workspace Name"}, {"ObjectName", "Measure Name"}}),
+				    // Remove temporary numeric level columns
+				    #"Removed Columns" = Table.RemoveColumns(#"Renamed Columns5",{"Max Numeric Level", "New Numeric Level"}),
+				    // Set Base Measure Flag: True for Level 01, False otherwise
+				    #"Added Conditional Column3" = Table.AddColumn(#"Removed Columns", "Base Measure Flag", each if [Measure Level] = "Level 01" then "True" else "False", type text),
+				     // Bring back the non-measure Model Detail so all keys are in this table. This enabls us to create a 1-to-1 Bi-Directional Relationship with the Model Object Hierarchy for better interactivity on the Lineage visuals.  If this isn't done, using the Report Hierarchy will filter out all objects except for measures.
+				    #"Appended Query" = Table.Combine({#"Added Conditional Column3", NonMeasures}),
+				    // Trim whitespace from the duplicated key
+				    #"Trimmed Text" = Table.TransformColumns(#"Appended Query",{{"WorkspaceName - ModelName - ObjectType - TableName - ObjectName", Text.Trim, type text}}),
+				    // Apply proper casing to the duplicated key for consistent matching
+				    #"Cleaned Text" = Table.TransformColumns(#"Trimmed Text",{{"WorkspaceName - ModelName - ObjectType - TableName - ObjectName", Text.Proper, type text}}),
+				    // Remove duplicate rows based on the cleaned composite key
+				    #"Removed Duplicates" = Table.Distinct(#"Cleaned Text", {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"})
+				in
+				    #"Removed Duplicates"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

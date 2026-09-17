@@ -1,0 +1,2162 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/semanticModel/copilot/schema/1.0.0/schema.json",
+  "tables": [
+    {
+      "id": "80b1ac66-3631-4a9c-9f61-b690b0d0bbee",
+      "name": "PBI Snapshot Date",
+      "visibility": "Hidden",
+      "columns": [
+        {
+          "id": "543243b7-b517-4325-9bdc-880a444ac195",
+          "name": "Latest PBI Snapshot Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8dca7fa2-0218-4029-a6b5-15ee4f07c6fa",
+          "name": "PBI Snapshot Date",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "0593a271-895e-4bab-a216-85c82ad1ef55",
+      "name": "All Reports",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "8e3ddd16-360d-48f0-8ff9-a2c3f14c4bc1",
+          "name": "ReportDate",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8b512d8f-d44e-4be0-93eb-0678d2a97981",
+          "name": "CustomVisualFlag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "38f8663c-dac0-4076-b40d-38ad369fc33d",
+          "name": "Index",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "86ec4dab-7ed0-4586-9031-172cc345eeec",
+          "name": "Filter Detail Key",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "41bc87e8-4e29-4185-a5f0-ad747fb4bfd4",
+          "name": "Filter Type Detail",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8b267fd1-53fa-4993-9d49-845bed681599",
+          "name": "ParentGroup",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bd59f663-4650-4f04-befb-91034f2c4520",
+          "name": "Visual Slicer Type",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ccb42ab0-4e48-48fa-99f6-ca6a52381672",
+          "name": "Show Items No Data Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "63703dc0-eb04-4afd-a90d-f59af95812f4",
+          "name": "Visual Object Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8eb7731a-d2a2-4e72-b074-c6ba923cd225",
+          "name": "Visual Height",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "63d3c004-df86-444e-bb3e-928f8ec44169",
+          "name": "Visual Width",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d2c12e1f-626c-4341-8379-0eb29ad4a28d",
+          "name": "Visual Z Position",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bc353028-7c38-4925-8294-d09b03cb8571",
+          "name": "Visual Y Position",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "893f7f6a-3e4e-479b-af85-8e32a4f342d1",
+          "name": "Visual X Position",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "da40f61c-95dc-44a9-b2d6-bdae80fca052",
+          "name": "Visual Hidden Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7b986029-01cf-45ac-8ac7-460b01b4b3d6",
+          "name": "Visual Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "5ce37469-e29c-480a-ae5b-76b4068d68ad",
+          "name": "Visual Interaction Type",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "461a39d6-8b9e-4319-9d9d-5079f2d10a36",
+          "name": "VisualInteractionTypeID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "aa790d08-8f55-4b23-a2c8-3ec712f90e04",
+          "name": "TargetVisualID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "89e96740-9941-443a-89a9-3e9c7dd361b9",
+          "name": "SourceVisualID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e728d71a-48d9-42f0-b547-7149271bfda1",
+          "name": "Report Name - Page Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "db2999a2-5678-4ab7-a59e-60f88159a353",
+          "name": "Page Dimensions Type",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "c1913b2d-4fa7-43c8-9379-c91ef41fda38",
+          "name": "WallpaperImage",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b580be99-aab1-49d8-b8c9-11fc2385b084",
+          "name": "Page Visual Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "204ee6dd-bcef-422e-b0e7-7a9b14bf8a33",
+          "name": "Page Hidden Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0dd7590f-3749-4aee-94ec-5a77d73ecbe7",
+          "name": "Page Height",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "220a0ddd-d6a4-4c34-a833-fa6eeb48072f",
+          "name": "Page Width",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "29f6da75-e2d8-431a-89a6-efdd08ce017f",
+          "name": "Locked Filter",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "2819bf26-a804-4cd3-91bd-b8c4c55b7a59",
+          "name": "Hidden Filter",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6f1f676a-8c84-4c65-9ac9-297bbdf71903",
+          "name": "Custom Visual Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6d6dabb3-8e88-44f0-aac2-9605f64678bb",
+          "name": "Exclude First Page Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "5ea10416-c97f-402f-8c5c-bbdd5f52eff9",
+          "name": "ConnectionType",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "c2c6c1f7-6365-4776-97b9-a0bbb4465b3a",
+          "name": "Page Number",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "46bd0ba7-21eb-44d9-bad9-5a8e664973f6",
+          "name": "BookmarkVisualHiddenFlag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "572dbc38-f6ca-48de-9292-6e70417a4d4e",
+          "name": "Bookmark ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "32263bff-e73d-4e23-bc1e-a0bf0614435f",
+          "name": "Bookmark Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7634bc3b-3f5e-4deb-8f46-3b3ce26ad462",
+          "name": "Object Name - Visual Layer",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ea5464a8-507c-4bde-8a77-e0ed44cd1a1b",
+          "name": "Object - Visual Layer",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "5d74fc5b-4fb7-44b4-a6e3-6d0665d0e0f7",
+          "name": "Applied Filter",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ec76442c-387b-471f-bc6f-c4b86fd66701",
+          "name": "Report Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "35b23157-1cab-4c4d-bb5d-2f071d3ea1d6",
+          "name": "WorkspaceName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d29f0720-4628-4213-8699-2df1b09c1a6f",
+          "name": "Filter Type",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "17ebd80a-d3a1-455c-8c30-1cf5743ceca5",
+          "name": "Filter Type Group",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "75e106e7-fb73-446a-a0f7-2c6e73f818d4",
+          "name": "Visual Object Category",
+          "visibility": "Visible",
+          "synonyms": [
+            "usage type",
+            "where used",
+            "filter type",
+            "visual or filter"
+          ]
+        },
+        {
+          "id": "2d4faf32-277c-400c-893c-86373bdd2f1c",
+          "name": "Display Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "2107c12b-d926-4f26-99c9-f15ca2912b8f",
+          "name": "Object Type - Visual Layer",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6f811d07-82a9-4a12-9b5e-0a9e23faaf89",
+          "name": "Workspace Name - Report Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b6218e02-95b2-413f-bad7-350682bc5b6c",
+          "name": "ModelName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6266426e-c918-43c6-93f9-28046ad8e031",
+          "name": "WorkspaceName - ModelName - ObjectType - TableName - ObjectName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f80f6e7b-cac7-44af-bd4c-398ee033efd8",
+          "name": "Workspace Name - Report Name - Page Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "047fdc3c-4c1b-4307-8636-0e8198f66a02",
+          "name": "ModelName - ObjectType - TableName - ObjectName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "30e83855-a298-406c-904e-605edad9d177",
+          "name": "Original TableName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b6fa2ec4-51d3-4213-8cef-09375c28dfbb",
+          "name": "Visual Type",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f77d4c47-d970-4f21-a6f2-c9bacd257a7c",
+          "name": "Visual ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "af2ac071-be77-4c1c-b96a-b0c817620dbc",
+          "name": "Page Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "93f6077e-b463-47c1-bd33-2aaa50e2a8c4",
+          "name": "Original ObjectType",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bc04799f-e7d0-4ceb-a5c7-b8b2b1030b85",
+          "name": "Original ObjectName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "c6e17c1d-e216-4791-a5d8-43cfce9329d0",
+          "name": "Listing Visual on Non-Listing Page?",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ace14def-5a5e-4109-9b9b-6d8218e7161c",
+          "name": "Workspace Name - Report Name - Page Name - Visual ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6ac7ec99-5f46-4a1f-9d22-1e225760b9cd",
+          "name": "Table Name - Visual Layer",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b2d17f85-3dac-46f7-96bf-af0932d4ed28",
+          "name": "Report Object Unique Key",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "3178f802-9908-46e6-befd-8c007e689175",
+          "name": "ModelID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0f0c0d89-c318-4519-94cc-b3482e1a9da0",
+          "name": "Page ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "18ab1d34-2f10-4fd7-866b-6daa0d892368",
+          "name": "UniquePageID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "17fd98ed-982d-411c-b956-450d2aac5b9e",
+          "name": "Workspace Name - ReportID - ModelID - PageName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e213ae0e-f147-477b-aae5-c2e36ca8c619",
+          "name": "Listing Page Check",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "67025e2c-4bd2-4a05-a56d-2b34f549dca0",
+          "name": "Visual Listing Check",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1c25bcb9-1d58-48cd-9ffa-c4ab70f00539",
+          "name": "Workspace Name - Model ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "44c4ad58-2ef2-42a6-9876-2a1e161f0bd5",
+          "name": "ReportID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "17a9c36d-4dbb-4a11-a906-6dcd4529fe94",
+          "name": "Workspace Name - Model ID - Report ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f6a0403f-7802-4769-b9d8-cec4f4ab8974",
+          "name": "BackgroundImage",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a599be01-4ff6-4de8-a411-57f88d12efbf",
+          "name": "Workspace Name - Report ID - Page ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "58586505-4156-4b61-9e07-a38f02f01a5c",
+          "name": "Workspace Name - Model ID - Table Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "eb0f236c-c010-4b9d-9a18-652dfad3c123",
+          "name": "Workspace Name - Model Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b562baf4-8bf7-44f3-826a-71e5fae2f7d5",
+          "name": "ModelID - ObjectType - TableName - ObjectName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f4b33dd4-fa79-40be-b02a-36dfd93aa24e",
+          "name": "ImplicitMeasure",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7935aa0c-d318-40b5-a26c-6d3dae6902ec",
+          "name": "Sparkline",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "fa716022-d607-4648-904e-d433f714b48e",
+          "name": "VisualCalc",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4588874a-5dbd-4b10-9229-ea7ff7a9eac5",
+          "name": "Format",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8012bac5-2cc5-4a82-a0c2-820d950d5bac",
+          "name": "SuppressData",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ac738541-9007-4c39-af0e-ac21febe5c8f",
+          "name": "CurrentPageSelected",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0c91f552-61f3-4b6c-b79c-6892e95ab51e",
+          "name": "ApplyVisualDisplayState",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "978be110-020b-4f71-b960-4672929becf5",
+          "name": "ApplyToAllVisuals",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6e67c461-2060-4251-8c33-08fb6f73181b",
+          "name": "HowCreated",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "33ab20b1-54dc-4541-af84-6e33ac02417a",
+          "name": "Used",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a9cd644b-8059-47c2-b507-c17be919214b",
+          "name": "SourceVisualName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a0f6bcbb-880d-4514-9a8d-352ed6d363d2",
+          "name": "TargetVisualName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "aed22218-692a-4009-9ce1-efb5e5499ac6",
+          "name": "DisplayType",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bf21ce04-4ea9-48a6-93b9-cd88e757af80",
+          "name": "Title",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "9bf2e59c-2d80-4874-8937-f614bd8119e7",
+          "name": "SubTitle",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1c971f6b-54a1-43b8-8159-e615c3fdee0a",
+          "name": "AltText",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7582683d-edaa-4766-9364-ddf95fa40a15",
+          "name": "TabOrder",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "12315dd6-bff6-4d2d-be67-9aad12087565",
+          "name": "VisualFilterCount",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "5b68ab9d-408a-4057-ad24-5dd29ffd1e3d",
+          "name": "DataLimit",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7766475c-ce72-4dcf-97d1-0a3057ad7623",
+          "name": "Divider",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "943cb588-307c-445a-9256-a13ec94fbe88",
+          "name": "RowSubTotals",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "2f1ca558-b327-4429-b577-a74c0ee7b450",
+          "name": "ColumnSubTotals",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "12a21aaa-a18c-402b-8a8d-b956c5fc5415",
+          "name": "DataVisual",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1b89b8d0-4cf8-4fee-815b-a11714d4b8ab",
+          "name": "HasSparkline",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "97071b3e-fb43-4060-aaab-254438fb1f56",
+          "name": "DisplayOption",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "822bb329-89f9-4dd5-89ea-2afca701e6b2",
+          "name": "DataVisualCount",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bc1fd9cd-a071-4846-be7c-839c060bb44d",
+          "name": "VisibleVisualCount",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "223542ae-1f6a-4178-80a7-e1969e002360",
+          "name": "PageFilterCount",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "76739bce-5bc0-45eb-84a5-299b500a4c5c",
+          "name": "Model Home Workspace Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "9ede7746-9b5d-4e65-a900-0f7750a4c610",
+          "name": "Model Home Workspace Name - Model ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "measures": [
+        {
+          "id": "babfdc7f-9755-4a73-b056-494610313b52",
+          "name": "Report Objects Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ebd89ceb-8f19-40db-8e94-b7c836c172ca",
+          "name": "Page Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4634e546-0fe3-49cc-824e-d12aa5f88a4b",
+          "name": "Bookmark Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8b5e07e9-ab5b-4a55-82b6-d7b331f4d871",
+          "name": "Filter Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "02e54559-ef07-449b-8664-d0ebc21f6a81",
+          "name": "Filter Count - Page Filters",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "55347c61-c27b-497e-8521-7d98e3b40086",
+          "name": "Filter Count - Visual Filters",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "fd51865e-b118-4623-8eab-c710d89fad89",
+          "name": "Filter Count - Report Filters",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a5b2d179-b987-4cfc-8737-a3c98f455afd",
+          "name": "Filter Count - Visual Filters (Measures)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "48a2ee32-dffd-491d-b90f-8aead1f90b50",
+          "name": "Filter Count - Visual Filters (Column)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4fc03135-0da0-4e99-90ba-44473161cb74",
+          "name": "Filter Distinct Count - Report Filters (Hierarchy)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "04a64fb7-febc-4116-80c8-40cb6cab9aee",
+          "name": "Visual Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "744d77ea-3e62-4ac8-8389-7de180f527f8",
+          "name": "Report Objects Count - All Reports",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "9cd93919-cc75-4e8e-9a99-de6b9f028ebb",
+          "name": "Report Objects Count - All Pages",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ca3a7d8b-0d32-4ddd-bf0b-1fb4786bb0c1",
+          "name": "Report Objects Count % - Pages",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8b9376b9-380f-4f2f-9bf6-5f84c26bf210",
+          "name": "Report Objects Count % - Reports",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e96a2268-0a45-4915-ad89-e0714d3c708a",
+          "name": "Report Objects Distinct Count - All Pages",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "32b302a0-83f7-4815-9322-c81f2a1204f6",
+          "name": "Report Objects Distinct Count - All Reports",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "27a8a725-b154-419e-a3c2-50813fe4a377",
+          "name": "Report Objects Distinct Count % - Pages",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6e436b3c-522e-485e-a2d8-2e5c541a6946",
+          "name": "Report Objects Distinct Count % - Reports",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "60b2aa52-5487-4d30-bf6b-b80e6b98f18f",
+          "name": "Filter Count - Earliest Report",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "74c6e500-3afe-4a5d-bef7-7ef2ccdfd68e",
+          "name": "Page Count - Earliest Report",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "be32c0fa-6e5a-4e23-be7b-5d81afaed8ca",
+          "name": "Report Objects Count - Earliest Report",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e0b9af3f-4519-4c0d-a938-b3b6fdd4ad71",
+          "name": "Report Objects Distinct Count - Earliest Report",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f18fd106-098c-440e-85b2-045642329776",
+          "name": "Drillthrough Measure Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0a65ace0-a242-42c4-ad63-baa0f5bf78d4",
+          "name": "Report Objects Distinct Count - Measure",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8d3fc6d7-8eee-4696-8425-170f862e45e2",
+          "name": "Report Objects Distinct Count - Column",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f078806c-3070-436e-b1f2-5526b0cf7e89",
+          "name": "Filter Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1cc09ff1-4ce3-4386-a79f-44094f7d28d6",
+          "name": "Filter Distinct Count - Earliest Report",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "3d1dbcba-2e6d-4a25-9841-b120b66c9b50",
+          "name": "Filter Distinct Count - Page Filters",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d41e0533-7719-42b1-b149-ebac0cd8c262",
+          "name": "Filter Distinct Count - Report Filters",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "dcc4232a-8433-46d0-b0b0-d5229c4c97db",
+          "name": "Filter Distinct Count - Visual Filters (Column)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7ccd6e06-34d1-45b0-923c-2e5d2f62b403",
+          "name": "Filter Distinct Count - Page Filters (Hierarchy)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7c17df6a-aeae-4271-a0c9-a483e92beb68",
+          "name": "Filter Distinct Count - Visual Filters (Measures)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "558895ce-b564-4280-a412-ec41761b3bfa",
+          "name": "Filter Distinct Count - Visual Filters",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7cfe25de-24ab-450d-be92-a0e53b8fa19d",
+          "name": "Drillthrough Measure Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1b1b1b6f-f6a3-470c-87fe-ed84d8f092a0",
+          "name": "Filter Count - Page Filters (Hierarchy)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "908cb55c-77c6-401a-b759-f64823ce1d64",
+          "name": "Filter Count - Page Filters (Column)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4238b864-1ade-49e3-a3d6-61d9a19f781a",
+          "name": "Filter Count - Report Filters (Column)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "733ff3c4-1744-4664-8ae7-60fe7e49c24c",
+          "name": "Filter Count - Report Filters (Hierarchy)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "cfeb608f-8567-45e7-8893-94582c7284c4",
+          "name": "Filter Distinct Count - Report Filters (Column)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d9e24493-8fb7-4d7d-9b69-988cff029185",
+          "name": "Filter Distinct Count - Visual Filters (Hierarchy)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e71904aa-5b6a-45fb-a532-1a4704da3a24",
+          "name": "Filter Distinct Count - Page Filters (Column)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0ef1244e-7aca-4aef-a986-4f0f13a060f2",
+          "name": "Filter Count - Visual Filters (Hierarchy)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "92808ea3-0227-469e-98db-6037201a36d1",
+          "name": "Filter Count - Visual Filters (Applied)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "5c715b6e-1f11-4471-b655-b54ae611cb66",
+          "name": "Filter Count - Page Filters (Applied)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6bc8eb13-694b-4dfc-b8ee-b77f27dea439",
+          "name": "Filter Count - Report Filters (Applied)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "61bb3d4b-7b86-4ab4-8aec-d6e4cda18150",
+          "name": "Filter Count - Visual Filters (Measures - Applied)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0ffa012a-3bb7-4fe2-8f2b-02383221ad61",
+          "name": "Filter Distinct Count - Page Filters (Applied)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8e23538a-e33a-42af-a7e5-982a9df6d739",
+          "name": "Filter Distinct Count - Report Filters (Applied)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "98d63d0b-6cd3-4394-a920-cefa089faa0f",
+          "name": "Filter Distinct Count - Visual Filters (Applied)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "00408e50-1a42-4e6c-94b0-cdf8c43eef8f",
+          "name": "Filter Distinct Count - Visual Filters (Measures - Applied)",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "095455c1-05f0-493b-bdaa-2106f62bee62",
+          "name": "Visual Distinct Count (Visual Impact)",
+          "visibility": "Visible",
+          "synonyms": []
+        },
+        {
+          "id": "76d1fa15-fc08-4746-ba2a-0e176bf65960",
+          "name": "Visual Objects Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e7b52202-9aa0-4f08-a5d5-b0678bd0cf70",
+          "name": "Visual Objects Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "cbe71cec-546a-4ea2-b20d-add8eeed0181",
+          "name": "Report Objects Count - All Selected Objects",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "5ea4a76f-8adf-4821-a307-c8680c66337b",
+          "name": "Report Objects Count % - Selected Objects",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "9ec21362-2515-478f-b7ca-44cf5e16e491",
+          "name": "Report Objects Count - All Objects",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0bd93c63-334d-4887-8e1f-c9125d86f042",
+          "name": "Report Objects Count - All Selected Reports",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d3e36681-d6f8-4619-8dd0-df568f073dd5",
+          "name": "Report Objects Count - All Selected Pages",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "188ea205-963c-4bd1-a6d7-d0877debc4f6",
+          "name": "Report Objects Count % - Selected Pages",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f1745459-a418-4009-9d62-9a0beedca992",
+          "name": "Report Objects Count % - Selected Reports",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d6738f99-c951-4b97-aaea-80a4276c54f2",
+          "name": "Report Object Weighted Usage Score",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1062c31b-5847-4064-8a3f-cec06fcbff43",
+          "name": "Report Objects Count",
+          "visibility": "Visible",
+          "synonyms": []
+        },
+        {
+          "id": "867f9efc-758f-491d-8230-30069b765088",
+          "name": "Report Object Weighted Usage Rank",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "82e1eb91-d4d2-4e47-9e2c-daef4b940523",
+          "name": "Report Objects Distinct Count - Hierarchy Level",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "2431b545-dfc7-4336-a086-75b53a1c9af3",
+          "name": "Report Objects Distinct Count - Table",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "507ca52e-7e2b-4206-9362-de626de297e1",
+          "name": "Report Objects Count - Measure",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a0e000c9-9c4c-48e3-baa5-89a2b63161c2",
+          "name": "Report Objects Count - Column",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "9256a933-2f38-4f0a-bc3f-1afd665f1ccf",
+          "name": "Report Objects Count - All Else",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e59b4bc8-e55a-48fa-8e4f-294251a487b2",
+          "name": "Visual Wireframe SVG",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "34cff100-e172-4927-b6ee-c95708c6992f",
+      "name": "All Models",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "c8dbc8cf-299c-4885-a0b8-a40ff06f7507",
+          "name": "Description",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b9ff9151-4184-422f-af72-56052f9d0657",
+          "name": "Expression",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "40bb5538-3b24-4973-81b6-feeddff1261a",
+          "name": "ModelAsOfDate",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "c1c9a332-0a82-497a-b42d-1021d733bcc2",
+          "name": "ModelName - ObjectType - TableName - ObjectName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7d975ff0-5151-40c7-b0b4-cb6d2f007ead",
+          "name": "Object Type Sort Order",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0fcb7347-9ef1-4669-b848-178f7805b1c4",
+          "name": "Model in Workspace Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d0370643-81a9-4dce-b367-4f6158fe7ea0",
+          "name": "Workspace Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f3a0e3fc-5308-47cc-9a72-e68b0de37c9b",
+          "name": "Model Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8711a442-c298-44cf-9e9a-34e7a40a18ec",
+          "name": "WorkspaceName - ModelName - ObjectType - TableName - ObjectName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "38109d4a-5d29-435b-80e8-002607bcfb07",
+          "name": "Workspace ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "54fe5fd6-f5ab-45c8-b796-6dbf91c0a620",
+          "name": "Object Type",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "133ffee0-7c56-4ac3-8e49-5c1ef087a0e9",
+          "name": "Table Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4a9a3c47-655e-4866-acd7-bf908458fb0d",
+          "name": "Object Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "41beecf7-a9e9-4497-bb2e-5795e3774292",
+          "name": "Format String",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "96a360ec-feb9-48fa-938d-7f6c738a5a2a",
+          "name": "Display Folder",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "38d55b88-6470-4350-819b-c0161b417813",
+          "name": "Is Hidden",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "845848bb-8f6a-489d-80eb-508cedb273d3",
+          "name": "Relationship From Table",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "74cd1879-93d3-456d-b88a-60f2080c88d1",
+          "name": "Relationship From Column",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "31869193-2128-4480-a508-fba54c7fa9af",
+          "name": "Relationship To Table",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f382782e-da26-4c7b-99a6-b51eae966a6d",
+          "name": "Relationship To Column",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d7b92773-b774-4955-a9ed-bae07be9455e",
+          "name": "Relationship Status",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8ab2f33a-5019-406d-94fe-7b658fdda784",
+          "name": "Relationship From Cardinality",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bea126fd-e7f0-416a-93e2-9d113210129a",
+          "name": "Relationship To Cardinality",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "288512e8-ce5c-4cc7-84d5-a1e73aeafb8e",
+          "name": "Relationship Cross Filtering Behavior",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "fca30871-6bdb-49a7-b622-4f9fbd126997",
+          "name": "Model Detail Available?",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "3587cd01-73d9-4b19-a26e-6f8782bbbb4f",
+          "name": "Workspace Name - Model ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "15af30c9-7274-4547-b686-1ea8b70ec0a3",
+          "name": "Calculated Column Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "34a6d75c-94d1-4693-a05e-374abffea1c1",
+          "name": "Workspace Name - Model ID - Table Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "748afe18-07db-48bb-8990-ec0f39b3cb45",
+          "name": "Workspace Name - Model ID - Object Type - Table Name - Object Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b72f60c4-afec-4cee-9a72-877f0d3546ad",
+          "name": "Table Storage Mode",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f2fa9126-a680-45c5-92a3-dd7998e64f4c",
+          "name": "Report Level Measure Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "44da2e25-dbc8-431f-814e-ced8a5639e7f",
+          "name": "Model Description",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "3ee4443f-ca63-45be-9f39-4a990e1a1db7",
+          "name": "Model ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f0ea8d06-340f-4e98-a0c7-865299573533",
+          "name": "Workspace Name - Model Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "504380e4-1506-4d9b-abbd-471e3f5d9f63",
+          "name": "OriginalModelID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7042398f-716e-4e8e-9410-09ef2fbe2dc0",
+          "name": "DataType",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "3eda6b72-35b4-45f9-9c3a-dd0c8c898b8c",
+          "name": "DataCategory",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d4e5f6a7-b8c9-0123-4567-89abcdef0123",
+          "name": "Model Home Workspace Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "97adfac3-5fe5-4c58-94c8-0852fd1dbbba",
+          "name": "Report Workspace Name - Model ID - Report ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "measures": [
+        {
+          "id": "7691c61e-a26a-4cf0-b563-c6e92367f087",
+          "name": "Model Object Distinct Count",
+          "visibility": "Visible",
+          "synonyms": []
+        },
+        {
+          "id": "536e0f1f-6d53-48ad-9899-9c90e8d7a207",
+          "name": "Count Variance",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bbda47eb-c836-4d73-8f2c-c2f50b4d8188",
+          "name": "Count Variance %",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "93699acd-80e1-40e5-b128-a26b5455e70e",
+          "name": "Count Variance - Measure",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a99c61e5-9c2d-432d-988c-c6723e60f445",
+          "name": "Count Variance % - Measure",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ca7ea167-4378-4e30-9269-ca8e51d817a0",
+          "name": "Count Variance - Column",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b6db3dfe-7182-40a3-9cb0-8a4244184b41",
+          "name": "Count Variance % - Column",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "5ab3a6d9-84c9-46dc-81cd-1fe6f89c402b",
+          "name": "Model Object Distinct Count - Measure",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "73dd75f2-6527-4996-b233-6398532134a3",
+          "name": "Model Object Distinct Count - Column",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "dde0e4c0-cb22-42b2-becf-51f8fda99721",
+          "name": "Model Object Distinct Count - Table",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "61941b1f-6cc1-4c43-99b3-fa861b6e4346",
+          "name": "Model Object Distinct Count - Calculated Column",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "59e57d1a-509d-4994-a3c9-c28b02924295",
+          "name": "Model Object Distinct Count - Hierarchy",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b9959174-c1d8-4d68-9f03-67a81e1667f7",
+          "name": "Model Object Distinct Count - Relationship",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a849f5bc-f233-4dff-b4cf-8a7a06e6a782",
+          "name": "Model Object Distinct Count - Query",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bee042fc-9035-4198-943d-a5d3dbe36e3b",
+          "name": "Model Object Distinct Count - Hierarchy Level",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "278cd8b9-c2c5-43cb-95d7-5aab8a355023",
+          "name": "Model Object Distinct Count - Calculation Group",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6a26a929-3745-483c-bc55-7f8355b12fe6",
+          "name": "Model Objects Count - All Rows",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "c96f9f89-28c9-4136-8aff-64d374128646",
+          "name": "Composite Model Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f15dbd07-25c3-4637-b4f1-cd4b3a73129d",
+          "name": "Standard Model Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "d55d29a5-22f6-4fad-85c0-c5916c4dbba9",
+          "name": "Model Distinct Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0f02acce-ab16-4617-b34e-10f9c5f1e5ab",
+          "name": "Report Level Measure Count",
+          "visibility": "Visible",
+          "synonyms": []
+        },
+        {
+          "id": "59874911-8d74-4ec9-9fc5-86ec26f8363e",
+          "name": "Model Object Distinct Count - Base",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bf385070-62b7-40fd-84f0-d8b5c64cb3f8",
+          "name": "Connected Report Count",
+          "visibility": "Visible",
+          "synonyms": []
+        }
+      ],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "577b944f-fd4d-4383-ba91-cd70e869ac92",
+      "name": "Model Object Hierarchy",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "09b7cabe-424d-43be-9ed3-4d2797ad73d0",
+          "name": "Workspace Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4630cfe2-6cb0-4b88-b940-ba6b26819c6a",
+          "name": "Model Detail Available?",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6f65d902-ca6c-4862-afcc-52751b25e2d2",
+          "name": "Model in Workspace Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "00d81c53-0db8-443b-b567-9a71969ed066",
+          "name": "Model Name - Model ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "788d6819-6e3d-49ed-b544-1096bf77f681",
+          "name": "Object Name",
+          "visibility": "Visible",
+          "synonyms": [
+            "measure name",
+            "column name",
+            "field name",
+            "object",
+            "field"
+          ]
+        },
+        {
+          "id": "65f42b5e-f966-4ade-bbbc-ac8a2485e876",
+          "name": "Object Type",
+          "visibility": "Visible",
+          "synonyms": [
+            "type",
+            "object kind",
+            "category"
+          ]
+        },
+        {
+          "id": "775e1fcb-ac43-402f-8aad-c09c6a2d501e",
+          "name": "Object Used Flag",
+          "visibility": "Visible",
+          "synonyms": [
+            "used",
+            "unused",
+            "usage status",
+            "is used"
+          ]
+        },
+        {
+          "id": "4b2ace71-e36f-475a-8aa1-2db9bc14c19c",
+          "name": "Object Used In",
+          "visibility": "Visible",
+          "synonyms": [
+            "used where",
+            "referenced in"
+          ]
+        },
+        {
+          "id": "5413cc1f-5c8c-4b42-be6a-1fb31fce5695",
+          "name": "Model ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "2b9da598-7958-48d5-87a1-db3d24ed95ef",
+          "name": "Format String",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "33442683-2051-4847-ad88-53f410c2c00e",
+          "name": "Display Folder",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1ead16ed-52f9-4f1c-afea-bc1d88e5950e",
+          "name": "Is Hidden",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "3e62a823-0ba1-4ee2-826a-bff626915b5d",
+          "name": "Model Description",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ebcb9933-8c5e-4d86-9661-0425f6a2962f",
+          "name": "Table Storage Mode",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "35205fbd-bbb2-4b66-add2-d20dbbfc0953",
+          "name": "Model Type",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "dddbcb3b-ad71-415c-a042-c7a7945c5b73",
+          "name": "Report Level Measure Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ee4094a4-77a1-46d6-bae6-481240f10ee2",
+          "name": "Expression",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "c2e1d28e-4dc9-4082-b532-b8aae3b8d2e3",
+          "name": "Calculated Column Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4b14e93b-a910-44fe-9a6c-46685da5dbda",
+          "name": "Object Used In Reports Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "measures": [
+        {
+          "id": "5266c82a-361c-4f02-8e42-04fb012135ec",
+          "name": "Unused Model Objects",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "87678837-23c7-4f65-969c-5e561bfcaf6d",
+          "name": "Unused Model Objects %",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6499d632-9a8b-4842-b4c7-5280369caa9e",
+          "name": "Used Model Objects",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "c7450e30-3156-49ec-a4dc-355819190085",
+          "name": "Used Model Objects %",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "ffaddcc3-4123-4243-8f8f-0b609cb9b924",
+      "name": "All Model Sources",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "075f7190-6add-4a5b-bd28-44bc2162ecb3",
+          "name": "Datasource Type - Connection Detail",
+          "visibility": "Visible",
+          "synonyms": []
+        },
+        {
+          "id": "cfd2b522-f786-45a8-8604-1cc87367f9e1",
+          "name": "ModelName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4b61b427-c86c-40c2-b1cc-24b3fda065ed",
+          "name": "WorkspaceName",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "42d268fe-9f38-4352-94de-a2c99d4e19e9",
+          "name": "Workspace ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b49a328a-b775-40e4-9731-fd602a43b5b8",
+          "name": "Model in Workspace Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0d00064a-b3d0-4307-8654-03735ad642e2",
+          "name": "Model Home Workspace Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "80b98b7f-29b4-4b34-b730-736be5f8ceda",
+          "name": "DatasetDatasource Gateway ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "9ad0cdf7-a3d7-42b4-8fa2-620619e9ff98",
+          "name": "Datasource ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "measures": [
+        {
+          "id": "c2080ec3-0882-4e6c-b00e-db60d5394d75",
+          "name": "Model Source Count - All Rows",
+          "visibility": "Visible",
+          "synonyms": []
+        }
+      ],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "356b5d2d-ec02-49a7-90d1-300f1a6e0590",
+      "name": "Measure Lineage - Dependents",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "d13d7380-473e-4997-9351-2d8909f5d0eb",
+          "name": "Dependent Measure Drillthrough Level Type",
+          "visibility": "Visible",
+          "synonyms": [
+            "direct or indirect",
+            "dependency type"
+          ]
+        },
+        {
+          "id": "39df2b98-80b4-4226-974a-cbb9407b3774",
+          "name": "Dependent Measure Drillthrough Level",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "eba620bc-5de2-407c-be42-e3dd26a964d7",
+          "name": "Dependent Measure Name",
+          "visibility": "Visible",
+          "synonyms": [
+            "input measure",
+            "relies on",
+            "depends on",
+            "upstream measure"
+          ]
+        },
+        {
+          "id": "949ee55b-dd9e-4d61-9c99-6257c655ded1",
+          "name": "Dependent Measure Level",
+          "visibility": "Visible",
+          "synonyms": [
+            "depth",
+            "level"
+          ]
+        }
+      ],
+      "measures": [
+        {
+          "id": "978a7a2f-b360-4b68-84ae-a670f71cc60b",
+          "name": "Dependent Measures - All",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e1ab896f-dd24-43e3-8c77-129180b41111",
+          "name": "Dependent Measures - Direct",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "0a5e5288-109a-4bac-bdad-92ae250041ac",
+          "name": "Dependent Measures - Indirect",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e4edb99d-26a3-42d8-87da-d37c0a655442",
+          "name": "Dependent Measures Distinct Count - Direct",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "04a1e1b4-d4c2-4c0c-ae67-79e42ddb7905",
+          "name": "Dependent Measures Distinct Count - Indirect",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a74b5c5f-1f91-4c1c-b166-18d020cfec29",
+          "name": "Dependent Measures Distinct Count - All",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "f71b7d24-b2c6-45eb-b099-018a912844cc",
+      "name": "Measure Lineage - Parents",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "477b4607-e27c-4b48-a0c3-91af3e60457c",
+          "name": "Parent Measure Name",
+          "visibility": "Visible",
+          "synonyms": [
+            "affected measure",
+            "downstream measure",
+            "consumer",
+            "breaks if changed",
+            "what is affected"
+          ]
+        },
+        {
+          "id": "84d29b43-85d7-4cc0-a7d6-e5fd9c2f6b3c",
+          "name": "Parent Measure Level",
+          "visibility": "Visible",
+          "synonyms": [
+            "depth",
+            "level"
+          ]
+        },
+        {
+          "id": "fbc2167f-8a85-4193-a0d5-5c98bad04513",
+          "name": "Parent Measure Drillthrough Level Type",
+          "visibility": "Visible",
+          "synonyms": [
+            "direct or indirect",
+            "dependency type"
+          ]
+        },
+        {
+          "id": "66b8b0e6-da16-4538-b345-efffb141ba0a",
+          "name": "Parent Measure Drillthrough Level",
+          "visibility": "Visible",
+          "synonyms": []
+        }
+      ],
+      "measures": [
+        {
+          "id": "f1d4e5d7-ec63-4977-aa87-62a5790743ac",
+          "name": "Parent Measures - Direct",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "facf7895-eb5a-4d13-a332-ea837df6bfbf",
+          "name": "Parent Measures - Indirect",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f222eea8-88a8-4886-945a-a05aab4d62bb",
+          "name": "Parent Measures Distinct Count - Direct",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f0e19f88-eeb3-477e-9cf4-43af59cea17d",
+          "name": "Parent Measures Distinct Count - Indirect",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1a107add-74b9-408d-a3b9-0b0a4567b9a7",
+          "name": "Parent Measures Row Count",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "57dc2726-671f-4fb8-9cca-6e6602b0b216",
+          "name": "Parent Measures Distinct Count - All",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "be9923ed-8696-4ebb-8b22-88dc281b9ee4",
+          "name": "Parent Measures - All",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "7eb6f6dd-6922-4775-902e-2bd14417942c",
+      "name": "All Measure Dependencies",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "7e5aa9da-3087-43c4-ac9d-a6197889c252",
+          "name": "Measure Name",
+          "visibility": "Visible",
+          "synonyms": []
+        },
+        {
+          "id": "70b3953c-e94a-4866-babb-efadc7b42a5a",
+          "name": "ModelID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "527990d8-9faa-46cc-b626-8226f39186dc",
+          "name": "Model ID - Object Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "7cb86a10-f57f-4714-8094-b325e6d38395",
+          "name": "Workspace Name - Model ID - Object Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f1d311b3-bb67-401b-b7d5-4b891f400e5b",
+          "name": "Model Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "60b0f301-ec4d-4105-9908-a28e55720cff",
+          "name": "OriginalModelID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "1cd38657-cd08-43a9-bd10-7f8ca9e777d2",
+          "name": "WorkspaceName",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "55ab2f49-41f2-4c58-a5f4-d860fc89b665",
+      "name": "Report Hierarchy",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "fef488f7-2077-446f-a99c-6129fe3dab98",
+          "name": "Model Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "59e64b77-4135-4837-8e54-046f50598ef9",
+          "name": "Model Name - Model ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4f8d088f-6a61-4c61-934f-4b82468d36a4",
+          "name": "Listing Page?",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "00ed4e1c-c6a9-4302-8ec8-7c797bd532b2",
+          "name": "Model Detail Available?",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "f6a7b8c9-d0e1-2345-6789-abcdef012345",
+          "name": "Model Home Workspace Name",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "092c911b-a153-4182-8874-e03335a4f73b",
+          "name": "Model ID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "925bb484-4e52-419a-8527-5d95313d042f",
+          "name": "Page Dimensions Type",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "e707fa8c-b004-495d-bd4c-4e3631830951",
+          "name": "Page Height",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6aaca6b1-f587-43f1-8de2-3ca25f791599",
+          "name": "Page Hidden Flag",
+          "visibility": "Visible",
+          "synonyms": []
+        },
+        {
+          "id": "77fb57cc-2732-4402-a6d0-e2748030f6ba",
+          "name": "Page Metrics Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "b6712d1c-dfd1-4a63-9426-1cdf57daa250",
+          "name": "Page Number",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "bb8b3bd7-a057-4d6d-b6dc-f2147a784c5e",
+          "name": "Page Width",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "4e047a50-c86e-4e35-8b6f-0c29c27fcd51",
+          "name": "PageID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "13d6e694-4a4b-4bab-a600-04f2d23f2bb2",
+          "name": "Workspace URL",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "203c4737-5d05-4280-ab1e-db359a01b347",
+          "name": "Workspace Report URL",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "a9dc4a10-5c6b-4eaa-b0e8-f688ada05eaa",
+          "name": "ReportID",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "8c88b9ce-4041-428a-8bc1-f6acb4856cbf",
+          "name": "Report Format",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "ecfaf3ec-9fc9-4395-bffd-449a27045cda",
+          "name": "Workspace Page URL",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "dd1f494e-5eb6-4fae-aed9-02328370c31a",
+          "name": "Report Description",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "measures": [
+        {
+          "id": "40171e82-10a1-419a-be18-0de468552afd",
+          "name": "Workspace Report URL Link",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "75dabe8d-475e-40b0-b70e-9f582f9e9345",
+          "name": "Workspace URL Link",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "d860bb50-0a4e-4f3d-a85e-3986c1682dfc",
+      "name": "Measure Lineage",
+      "visibility": "Visible",
+      "columns": [
+        {
+          "id": "170c04d6-8402-467e-adfc-68460bfd16e2",
+          "name": "Base Measure Flag",
+          "visibility": "Hidden",
+          "synonyms": []
+        },
+        {
+          "id": "6a7855d1-f6d2-4edd-ba46-2f02a69ea8d9",
+          "name": "Measure Level",
+          "visibility": "Hidden",
+          "synonyms": []
+        }
+      ],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "55d1e4e3-c9be-4bea-bf72-5ff51093c1f6",
+      "name": "All Dataflows",
+      "visibility": "Hidden",
+      "columns": [],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "884e8b03-192c-4b9e-ac97-f17a4812684f",
+      "name": "All Dataflow Sources",
+      "visibility": "Hidden",
+      "columns": [],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "21808947-2213-40f3-803e-902463645ff2",
+      "name": "All Dataflow Refresh History",
+      "visibility": "Hidden",
+      "columns": [],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "f6792d07-2b79-43c9-ba89-52cd65746ac9",
+      "name": "All Model Refresh History",
+      "visibility": "Hidden",
+      "columns": [],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "fe64becc-6670-4c21-afa7-24d2681d79a2",
+      "name": "All Model Refresh Schedule",
+      "visibility": "Hidden",
+      "columns": [],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "182ae03e-5210-4b84-b3cc-afedd6783395",
+      "name": "Power BI Environment Information",
+      "visibility": "Hidden",
+      "columns": [],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "ed0bf72c-0c33-4be6-b21a-7042387c5d49",
+      "name": "Fabric Item Information",
+      "visibility": "Hidden",
+      "columns": [],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    },
+    {
+      "id": "861719bd-92ef-47e3-acf5-f5c4510542c8",
+      "name": "Dataflow Hierarchy",
+      "visibility": "Hidden",
+      "columns": [],
+      "measures": [],
+      "hierarchies": [],
+      "synonyms": []
+    }
+  ]
+}

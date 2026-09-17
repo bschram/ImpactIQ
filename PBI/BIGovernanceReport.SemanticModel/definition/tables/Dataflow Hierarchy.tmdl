@@ -1,0 +1,90 @@
+table 'Dataflow Hierarchy'
+	lineageTag: 861719bd-92ef-47e3-acf5-f5c4510542c8
+
+	column 'Dataflow ID'
+		dataType: string
+		lineageTag: 9187cde4-6bff-4e21-a214-ced516086597
+		summarizeBy: none
+		sourceColumn: Dataflow ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Name'
+		dataType: string
+		lineageTag: 68c05a01-32bc-4a70-98dc-86cc606e668d
+		summarizeBy: none
+		sourceColumn: Dataflow Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Query Name'
+		dataType: string
+		lineageTag: 0eabeb1f-16be-4015-81bd-ec076f63ebda
+		summarizeBy: none
+		sourceColumn: Dataflow Query Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		lineageTag: c77b9693-9283-43be-9f46-f148c8ef1b6c
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow ID - Query Name'
+		dataType: string
+		lineageTag: 289d8087-eef3-4300-9f00-1c7fc3560fdf
+		summarizeBy: none
+		sourceColumn: Dataflow ID - Query Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: 0bc65960-57b2-43cd-9eb9-8e96e5d8bb22
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name - Query Name'
+		dataType: string
+		isHidden
+		lineageTag: 888ce229-b825-4db6-8b40-09eb10317f03
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name - Query Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'Dataflow Hierarchy' = m
+		mode: import
+		queryGroup: Dimensions
+		source = ```
+				let 
+				    // Load all dataflow records from the All Dataflows table
+				    Source = #"All Dataflows",
+				    // Trim whitespace from the composite key column for consistent matching
+				    #"Trimmed Text" = Table.TransformColumns(Source,{{"Workspace Name - Dataflow Name - Query Name", Text.Trim, type text}}),
+				    // Apply proper casing to the composite key for standardized display
+				    #"Cleaned Text" = Table.TransformColumns(#"Trimmed Text",{{"Workspace Name - Dataflow Name - Query Name", Text.Proper, type text}}),
+				    // Remove duplicate rows based on the standardized composite key
+				    #"Removed Duplicates" = Table.Distinct(#"Cleaned Text", {"Workspace Name - Dataflow Name - Query Name"}),
+				    // Keep only the key dataflow hierarchy columns needed for the dimension
+				    #"Removed Other Columns" = Table.SelectColumns(#"Removed Duplicates",{"Dataflow ID", "Dataflow Name", "Dataflow Query Name", "Workspace Name", "Dataflow ID - Query Name", "Workspace Name - Dataflow Name", "Workspace Name - Dataflow Name - Query Name"})
+				in
+				    #"Removed Other Columns"
+				```
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

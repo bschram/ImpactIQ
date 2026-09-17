@@ -1,0 +1,48 @@
+table 'PBI Snapshot Date'
+	lineageTag: 80b1ac66-3631-4a9c-9f61-b690b0d0bbee
+
+	column 'Latest PBI Snapshot Flag'
+		dataType: string
+		lineageTag: 543243b7-b517-4325-9bdc-880a444ac195
+		summarizeBy: none
+		sourceColumn: Latest PBI Snapshot Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'PBI Snapshot Date'
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: 8dca7fa2-0218-4029-a6b5-15ee4f07c6fa
+		summarizeBy: none
+		sourceColumn: PBI Snapshot Date
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	partition 'PBI Snapshot Date' = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    // Load the Connections table containing report snapshot dates
+				    Source = #"Connections",
+				    // Keep only the ReportDate column
+				    #"Removed Other Columns" = Table.SelectColumns(Source,{"ReportDate"}),
+				    // Remove duplicate dates to get a distinct list of snapshot dates
+				    #"Removed Duplicates" = Table.Distinct(#"Removed Other Columns"),
+				    // Rename ReportDate to PBI Snapshot Date
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Duplicates",{{"ReportDate", "PBI Snapshot Date"}}),
+				    // Sort snapshot dates in ascending order
+				    #"Sorted Rows" = Table.Sort(#"Renamed Columns",{{"PBI Snapshot Date", Order.Ascending}}),
+				    // Flag the most recent snapshot date as "True", all others as "False"
+				    #"Added Custom" = Table.AddColumn(#"Sorted Rows", "Latest PBI Snapshot Flag", each if [PBI Snapshot Date] = List.Max(#"Sorted Rows"[PBI Snapshot Date]) then "True" else "False"),
+				    // Set the Latest PBI Snapshot Flag column to text type
+				    #"Changed Type" = Table.TransformColumnTypes(#"Added Custom",{{"Latest PBI Snapshot Flag", type text}})
+				in
+				    #"Changed Type"
+
+	annotation PBI_ResultType = Exception
+
+	annotation PBI_NavigationStepName = Navigation
+

@@ -1,0 +1,85 @@
+model Model
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	sourceQueryCulture: en-US
+	dataAccessOptions
+		legacyRedirects
+		returnErrorValuesAsNull
+
+queryGroup Dimensions
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup 'Measure Lineage'
+
+	annotation PBI_QueryGroupOrder = 2
+
+queryGroup 'Base Directory'
+
+	annotation PBI_QueryGroupOrder = 7
+
+queryGroup 'Model Layer'
+
+	annotation PBI_QueryGroupOrder = 1
+
+queryGroup 'Environment Information'
+
+	annotation PBI_QueryGroupOrder = 5
+
+queryGroup 'Dataflow Layer'
+
+	annotation PBI_QueryGroupOrder = 4
+
+queryGroup 'Base Report Detail Queries'
+
+	annotation PBI_QueryGroupOrder = 10
+
+queryGroup 'Mapping Queries'
+
+	annotation PBI_QueryGroupOrder = 8
+
+queryGroup 'Base Dataflow Detail Queries'
+
+	annotation PBI_QueryGroupOrder = 12
+
+queryGroup 'Base Environment Detail Queries'
+
+	annotation PBI_QueryGroupOrder = 13
+
+queryGroup 'Base Model Detail Queries'
+
+	annotation PBI_QueryGroupOrder = 9
+
+queryGroup 'Report Layer'
+
+	annotation PBI_QueryGroupOrder = 3
+
+annotation PBI_QueryOrder = ["Model Object Hierarchy","Report Hierarchy","Dataflow Hierarchy","PBI Snapshot Date","All Reports","Report Level Measures","All Models","Power BI Environment Information","Fabric Item Information","All Dataflows","All Dataflow Sources","All Dataflow Refresh History","All Model Sources","All Measure Dependencies","All Model Refresh History","All Model Refresh Schedule","UsedinRelationships","UsedinRLS","ColumnsUsedinMeasures","MeasuresUsedinMeasures","ColumnsUsedinCalculatedColumns","MeasuresUsedinCalculatedColumns","MeasuresUsedinCalculationGroups","ColumnsUsedinCalculationGroups","UsedinReports","UsedObjects","Power BI Datasets","Power BI Dataflows","Power BI Reports","Power BI Workspaces","Measure Lineage - Dependents","Measure Lineage - Parents","Measure Lineage","Workspace, Model, Report, & Page Mapping","Workspace, Model, & Report Mapping","Workspace, Dataflow, & Model Mapping","Workspace & Model Mapping","Report & Model Mapping","Power BI Pages","Power BI Apps","Bookmarks","Connections","Custom Visuals","Page Filters","Report Filters","Pages","Visuals","Visual Filters","Visual Interactions","Visual Objects","Power BI App Reports","Base Semantic Models","Base Measure Dependencies","Base Connections","Base Directory","Base Report File","Base Model File","Base Dataflow File","Base Environment File","UseWeb","Base Bookmarks","Base Custom Visuals","Base Visual Interactions","Base Pages","Base Page Filters","Base Report Filters","Base Visuals","Base Visuals Objects","Base Visual Filters","Base Report Level Measures","Base Power BI Workspaces","Base Power BI Reports","Base Power BI Pages","Base Power BI Datasets","Base Power BI Model Refresh History","Base Power BI Model Refresh Schedule","Base Power BI Model Sources","Base Power BI Apps","Base Power BI App Reports","Base Fabric Item Info","Base Power BI Dataflows","Base Dataflow Lineage","Base Dataflow Source Info","Base Dataflow Refresh History","Clean Name","Base Dataflows","Base Calculated Column Dependencies","Model Only Check","RLS Expression Parsing","Base Calculation Group Dependencies"]
+
+annotation __PBI_TimeIntelligenceEnabled = 0
+
+annotation __TEdtr = 1
+
+annotation PBI_ProTooling = ["DaxQueryView_Desktop","DevMode","TMDL-Extension","CopilotTooling","CopilotTooling_PrepDataForAI"]
+
+ref table 'All Dataflows'
+ref table 'All Measure Dependencies'
+ref table 'All Model Sources'
+ref table 'All Models'
+ref table 'All Reports'
+ref table 'Measure Lineage - Dependents'
+ref table 'Measure Lineage - Parents'
+ref table 'Model Object Hierarchy'
+ref table 'PBI Snapshot Date'
+ref table 'Power BI Environment Information'
+ref table 'Report Hierarchy'
+ref table 'All Model Refresh History'
+ref table 'All Dataflow Sources'
+ref table 'All Dataflow Refresh History'
+ref table 'Dataflow Hierarchy'
+ref table 'Fabric Item Information'
+ref table 'Measure Lineage'
+ref table 'All Model Refresh Schedule'
+
+ref cultureInfo en-US
+

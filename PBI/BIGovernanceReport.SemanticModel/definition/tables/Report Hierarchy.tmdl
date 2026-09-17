@@ -1,0 +1,555 @@
+table 'Report Hierarchy'
+	lineageTag: 55ab2f49-41f2-4c58-a5f4-d860fc89b665
+
+	measure 'App Page URL Link' =
+			VAR A = MAX( 'Report Hierarchy'[App Page URL] )
+			RETURN
+			    SWITCH(
+			        TRUE( ),
+			        ISINSCOPE( 'Report Hierarchy'[Workspace Name] )
+			            && ISINSCOPE( 'Report Hierarchy'[Report Name] )
+			            && ISINSCOPE( 'Report Hierarchy'[Page Name] ), A,
+			        BLANK( )
+			    )
+		lineageTag: 665cb320-f5ec-42ea-9c69-2d4ac70303ff
+		dataCategory: WebUrl
+
+	measure 'App Report URL Link' =
+			VAR A = MAX( 'Report Hierarchy'[App Report URL] )
+			RETURN
+			    SWITCH(
+			        TRUE( ),
+			        ISINSCOPE( 'Report Hierarchy'[Workspace Name] )
+			            && ISINSCOPE( 'Report Hierarchy'[Report Name] ), A,
+			        BLANK( )
+			    )
+		lineageTag: c9b7343d-9d69-42a0-84f8-70954727613f
+		dataCategory: WebUrl
+
+	measure 'App URL Link' = MAX('Report Hierarchy'[App URL])
+		lineageTag: 183a44f8-32b3-4f8e-ab07-802f9fd31c34
+		dataCategory: WebUrl
+
+	/// Generates a clickable URL to navigate directly to a specific page within the Power BI workspace (not the app). Only returns a value when a specific workspace, report, and page are selected.
+	measure 'Workspace Page URL Link' =
+			VAR A =
+			    CALCULATE(
+			        MAX( 'Report Hierarchy'[Workspace Page URL] ),
+			        KEEPFILTERS( 'All Reports' )
+			    )
+			RETURN
+			    SWITCH(
+			        TRUE( ),
+			        ISINSCOPE( 'Report Hierarchy'[Workspace Name] )
+			            && ISINSCOPE( 'Report Hierarchy'[Report Name] )
+			            && ISINSCOPE( 'Report Hierarchy'[Page Name] ), A,
+			        BLANK( )
+			    )
+		lineageTag: 44eaaae4-2aac-4e49-ae8e-5589a8c66f3e
+		dataCategory: WebUrl
+
+	/// Generates a clickable URL to navigate to a report within the Power BI workspace. Only returns a value when a specific workspace and report are selected.
+	measure 'Workspace Report URL Link' =
+			VAR A =
+			    CALCULATE(
+			        MAX( 'Report Hierarchy'[Workspace Report URL] ),
+			        KEEPFILTERS( 'All Reports' )
+			    )
+			RETURN
+			    SWITCH(
+			        TRUE( ),
+			        ISINSCOPE( 'Report Hierarchy'[Workspace Name] )
+			            && ISINSCOPE( 'Report Hierarchy'[Report Name] ), A,
+			        BLANK( )
+			    )
+		lineageTag: 40171e82-10a1-419a-be18-0de468552afd
+		dataCategory: WebUrl
+
+	/// Generates a clickable URL to navigate to the Power BI workspace. Only returns a value when a specific workspace is selected.
+	measure 'Workspace URL Link' =
+			VAR A = MAX( 'Report Hierarchy'[Workspace URL] )
+			RETURN
+			    SWITCH(
+			        TRUE( ),
+			        ISINSCOPE( 'Report Hierarchy'[Workspace Name] ), A,
+			        BLANK( )
+			    )
+		lineageTag: 75dabe8d-475e-40b0-b70e-9f582f9e9345
+		dataCategory: WebUrl
+
+	/// Counts the distinct Power BI reports that reference a specific object. When a user asks "where do I use Total Sales?" or "how many reports use Revenue?", filter 'Model Object Hierarchy'[Object Name] to the name the user provided (e.g. "Total Sales"). The Object Name column contains the actual names of measures, columns, calculated columns, hierarchy levels, etc. — do not search for the word "measure" or "column" itself. The count spans all workspaces and models in the current filter context.
+	measure 'Report Distinct Count (Visual Impact)' =
+			CALCULATE(
+			    DISTINCTCOUNT(
+			        'Report Hierarchy'[Workspace Name - Model ID - Report ID]
+			    ),
+			    KEEPFILTERS( 'All Reports' )
+			)
+		formatString: #,##0
+		lineageTag: a414763f-5f01-4f6c-8fad-bc7979f7afe9
+
+	/// Counts the distinct Power BI workspaces containing reports that reference a specific object. When a user asks "how many workspaces use Total Sales?" or "which workspaces are impacted by Revenue?", filter 'Model Object Hierarchy'[Object Name] to the name the user provided. The Object Name column holds the actual names of measures, columns, calculated columns, hierarchy levels, etc. — do not search for type keywords like "measure" or "column".
+	measure 'Workspace Distinct Count (Visual Impact)' =
+			CALCULATE(
+			    DISTINCTCOUNT(
+			        'Report Hierarchy'[Workspace Name]
+			    ),
+			    KEEPFILTERS( 'All Reports' )
+			)
+		formatString: #,##0
+		lineageTag: 45d6f65b-0d7e-4404-a355-e132c56fe6cc
+
+	/// Counts the distinct report pages that reference a specific object. When a user asks "how many pages use Total Sales?" or "which pages would break if I change Revenue?", filter 'Model Object Hierarchy'[Object Name] to the name the user provided. The Object Name column holds the actual names of measures, columns, calculated columns, hierarchy levels, etc. — do not search for type keywords like "measure" or "column".
+	measure 'Page Distinct Count (Visual Impact)' =
+			CALCULATE(
+			    DISTINCTCOUNT(
+			        'All Reports'[UniquePageID]
+			    ),
+			    KEEPFILTERS( 'All Reports' )
+			)
+		formatString: #,##0
+		lineageTag: eaf831f2-69bc-4fdb-9493-a1ee667770a2
+
+	/// Counts the distinct semantic models whose connected reports reference a specific object. When a user asks "how many models are impacted by Total Sales?", filter 'Model Object Hierarchy'[Object Name] to the name the user provided. Useful when the same object name exists in multiple models. The Object Name column holds the actual names of measures, columns, calculated columns, hierarchy levels, etc. — do not search for type keywords like "measure" or "column".
+	measure 'Model Distinct Count (Visual Impact)' =
+			CALCULATE(
+			    DISTINCTCOUNT(
+			        'Report Hierarchy'[Workspace Name - Model ID]
+			    ),
+			    KEEPFILTERS( 'All Reports' )
+			)
+		formatString: 0
+		lineageTag: b580e931-126f-4c15-9a92-8101834813d6
+
+	column 'Workspace Name - Report Name - Page Name'
+		dataType: string
+		isHidden
+		lineageTag: e8fc6960-d881-424f-a326-287b73a5c698
+		summarizeBy: none
+		sourceColumn: Workspace Name - Report Name - Page Name
+		sortByColumn: Index
+
+		changedProperty = SortByColumn
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Report Name'
+		dataType: string
+		isHidden
+		lineageTag: 6d636c7b-47f0-4360-a04a-5c3044b4bb1c
+		summarizeBy: none
+		sourceColumn: Workspace Name - Report Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Index
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 67315087-fc31-46b6-bd34-4359b26359db
+		summarizeBy: sum
+		sourceColumn: Index
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReportID
+		dataType: string
+		lineageTag: a9dc4a10-5c6b-4eaa-b0e8-f688ada05eaa
+		summarizeBy: none
+		sourceColumn: ReportID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Name - Page Name'
+		dataType: string
+		isHidden
+		lineageTag: 754801a1-345e-4e0d-ac87-27a67937407c
+		summarizeBy: none
+		sourceColumn: Report Name - Page Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column UniquePageID
+		dataType: string
+		isHidden
+		lineageTag: ed633f18-ac14-492c-9d14-e4445c26146a
+		summarizeBy: none
+		sourceColumn: UniquePageID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model ID'
+		dataType: string
+		lineageTag: 092c911b-a153-4182-8874-e03335a4f73b
+		summarizeBy: none
+		sourceColumn: Model ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		lineageTag: 38ec0d44-9dcd-4e3f-bac5-fbba347b01b1
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Name'
+		dataType: string
+		lineageTag: a1ca9571-b5e9-4c90-ab09-8ae9537302c6
+		summarizeBy: none
+		sourceColumn: Report Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Page Name'
+		dataType: string
+		lineageTag: bb6f083a-f916-480b-a490-b2b907b16b8d
+		summarizeBy: none
+		sourceColumn: Page Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column PageID
+		dataType: string
+		lineageTag: 4e047a50-c86e-4e35-8b6f-0c29c27fcd51
+		summarizeBy: none
+		sourceColumn: PageID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Page Number'
+		dataType: int64
+		formatString: 0
+		lineageTag: b6712d1c-dfd1-4a63-9426-1cdf57daa250
+		summarizeBy: sum
+		sourceColumn: Page Number
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Page Width'
+		dataType: int64
+		formatString: 0
+		lineageTag: bb8b3bd7-a057-4d6d-b6dc-f2147a784c5e
+		summarizeBy: sum
+		sourceColumn: Page Width
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Page Height'
+		dataType: int64
+		formatString: 0
+		lineageTag: e707fa8c-b004-495d-bd4c-4e3631830951
+		summarizeBy: sum
+		sourceColumn: Page Height
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Page Hidden Flag'
+		dataType: string
+		lineageTag: 6aaca6b1-f587-43f1-8de2-3ca25f791599
+		summarizeBy: none
+		sourceColumn: Page Hidden Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Page Dimensions Type'
+		dataType: string
+		lineageTag: 925bb484-4e52-419a-8527-5d95313d042f
+		summarizeBy: none
+		sourceColumn: Page Dimensions Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID - Report ID'
+		dataType: string
+		isHidden
+		lineageTag: 1df3e061-0166-4d47-a945-032e0a349f3a
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID - Report ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Listing Page?'
+		dataType: string
+		lineageTag: 4f8d088f-6a61-4c61-934f-4b82468d36a4
+		summarizeBy: none
+		sourceColumn: Listing Page?
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Page Metrics Flag'
+		dataType: string
+		lineageTag: 77fb57cc-2732-4402-a6d0-e2748030f6ba
+		summarizeBy: none
+		sourceColumn: Page Metrics Flag
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Name'
+		dataType: string
+		lineageTag: fef488f7-2077-446f-a99c-6129fe3dab98
+		summarizeBy: none
+		sourceColumn: Model Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: ac51ba81-e6b3-491e-ada9-b9003e49988e
+		summarizeBy: none
+		sourceColumn: Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Page URL'
+		dataType: string
+		lineageTag: d84d554a-8401-4e54-b412-5d57855e96c5
+		summarizeBy: none
+		sourceColumn: App Page URL
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Page URL'
+		dataType: string
+		lineageTag: ecfaf3ec-9fc9-4395-bffd-449a27045cda
+		summarizeBy: none
+		sourceColumn: Workspace Page URL
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App Report URL'
+		dataType: string
+		lineageTag: e574be2c-6c30-4c74-9017-39eb743c225d
+		summarizeBy: none
+		sourceColumn: App Report URL
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Report URL'
+		dataType: string
+		lineageTag: 203c4737-5d05-4280-ab1e-db359a01b347
+		summarizeBy: none
+		sourceColumn: Workspace Report URL
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace URL'
+		dataType: string
+		lineageTag: 13d6e694-4a4b-4bab-a600-04f2d23f2bb2
+		summarizeBy: none
+		sourceColumn: Workspace URL
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'App URL'
+		dataType: string
+		lineageTag: 808a419e-1ee9-40f3-877f-a6bab729cc59
+		summarizeBy: none
+		sourceColumn: App URL
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Report ID - Page ID'
+		dataType: string
+		isHidden
+		lineageTag: f06af7ff-a545-4acd-8e01-8b019a1a4d60
+		summarizeBy: none
+		sourceColumn: Workspace Name - Report ID - Page ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkspaceID
+		dataType: string
+		lineageTag: 4a15213e-406e-42dd-ae9e-858bb78b1986
+		summarizeBy: none
+		sourceColumn: WorkspaceID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace ID - Report ID - Page ID'
+		dataType: string
+		isHidden
+		lineageTag: e80b48f5-dba3-4ebe-834a-643417262ebe
+		summarizeBy: none
+		sourceColumn: Workspace ID - Report ID - Page ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column AppID
+		dataType: string
+		lineageTag: 9231d794-0383-4c85-b965-b87b656e73d1
+		summarizeBy: none
+		sourceColumn: AppID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Report ID'
+		dataType: string
+		isHidden
+		lineageTag: 907036ce-4d7a-43ab-9376-2deaf98ffed3
+		summarizeBy: none
+		sourceColumn: Workspace Name - Report ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Home Workspace Name'
+		dataType: string
+		lineageTag: f6a7b8c9-d0e1-2345-6789-abcdef012345
+		summarizeBy: none
+		sourceColumn: Model Home Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Workspace Name - Model ID'
+		dataType: string
+		isHidden
+		lineageTag: 81b41e36-53c8-4638-bf37-d1913d8b37a2
+		summarizeBy: none
+		sourceColumn: Model Workspace Name - Model ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Name - Model ID'
+		dataType: string
+		lineageTag: 59e64b77-4135-4837-8e54-046f50598ef9
+		summarizeBy: none
+		sourceColumn: Model Name - Model ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Model Detail Available?'
+		dataType: string
+		lineageTag: 00ed4e1c-c6a9-4302-8ec8-7c797bd532b2
+		summarizeBy: none
+		sourceColumn: Model Detail Available?
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Description'
+		dataType: string
+		lineageTag: dd1f494e-5eb6-4fae-aed9-02328370c31a
+		summarizeBy: none
+		sourceColumn: Report Description
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Report Format'
+		dataType: string
+		lineageTag: 8c88b9ce-4041-428a-8bc1-f6acb4856cbf
+		summarizeBy: none
+		sourceColumn: Report Format
+
+		annotation SummarizationSetBy = Automatic
+
+	hierarchy 'Report Hierarchy'
+		lineageTag: c2d741f2-f6d4-4d89-87cf-281571635ff6
+
+		level 'Workspace Name'
+			lineageTag: 7a7390e2-24fc-4019-9231-384059d1f0a8
+			column: 'Workspace Name'
+
+		level 'Model Name'
+			lineageTag: 8628df56-36d1-466b-8427-210133ccb18f
+			column: 'Model Name'
+
+		level 'Report Name'
+			lineageTag: 16458a40-5d35-40c2-a91b-f3076753aed9
+			column: 'Report Name'
+
+		level 'Page Name'
+			lineageTag: ea5ac875-33f5-4105-950d-d91a0306940b
+			column: 'Page Name'
+
+	partition 'Report Hierarchy' = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    // Load report page data from the Pages query
+				    Source = #"Pages",
+				    // Keep only the essential page and report identifier columns
+				    #"Removed Other Columns" = Table.SelectColumns(Source,{"WorkspaceName", "ReportName", "ReportID", "ModelID", "PageName", "PageID", "PageNumber", "PageWidth", "PageHeight", "PageHiddenFlag", "PageDimensionsType", "UniquePageID", "Report Name - Page Name","Workspace Name - Report Name", "Workspace Name - Model ID - Report ID", "Workspace Name - Report Name - Page Name", "Workspace Name - Report ID - Page ID"}),
+				    // Rename columns to user-friendly display names with spaces
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Other Columns",{{"PageName", "Page Name"}, {"PageNumber", "Page Number"}, {"PageWidth", "Page Width"}, {"PageHeight", "Page Height"}, {"PageHiddenFlag", "Page Hidden Flag"}, {"PageDimensionsType", "Page Dimensions Type"}, {"ReportName", "Report Name"}, {"WorkspaceName", "Workspace Name"}, {"ModelID", "Model ID"}}),
+				    // Sort pages in ascending order by page number
+				    #"Sorted Rows" = Table.Sort(#"Renamed Columns",{{"Page Number", Order.Ascending}}),
+				    // Add a sequential index column for row ordering
+				    #"Added Index" = Table.AddIndexColumn(#"Sorted Rows", "Index", 1, 1, Int64.Type),
+				    // Flag pages whose name contains "isting" (e.g., "Listing") as listing pages
+				    #"Added Conditional Column" = Table.AddColumn(#"Added Index", "Listing Page?", each if Text.Contains([Page Name], "isting") then "true" else "false", type text),
+				    // Add a Page Metrics Flag defaulting to "True" for all pages
+				    #"Added Custom" = Table.AddColumn(#"Added Conditional Column", "Page Metrics Flag", each "True", type text),
+				    // Join with Workspace, Model, & Report Mapping to resolve model context
+				    #"Merged Queries" = Table.NestedJoin(#"Added Custom", {"Workspace Name - Model ID - Report ID"}, #"Workspace, Model, & Report Mapping", {"Workspace Name - Model ID - Report ID"}, "Workspace, Model, & Report Mapping", JoinKind.LeftOuter),
+				    // Expand model-in-workspace flag, model home workspace, model detail availability, and model name
+				    #"Expanded Workspace, Model, & Report Mapping" = Table.ExpandTableColumn(#"Merged Queries", "Workspace, Model, & Report Mapping", {"Model Home Workspace Name", "Model Detail Available?", "Model Name"}, {"Model Home Workspace Name", "Model Detail Available?", "Model Name"}),
+				    // Create a composite key combining workspace name and model ID
+				    #"Added Custom1" = Table.AddColumn(#"Expanded Workspace, Model, & Report Mapping", "Workspace Name - Model ID", each [Workspace Name]&" - "&[Model ID], type text),
+				    // Replace null model names with "Unknown Model" for unresolved models
+				    #"Replaced Value1" = Table.ReplaceValue(#"Added Custom1",null,"Unknown Model",Replacer.ReplaceValue,{"Model Name"}),
+				    // Join with Power BI Environment Information to get workspace and app IDs
+				    #"Merged Queries1" = Table.NestedJoin(#"Replaced Value1", {"Workspace Name"}, #"Power BI Environment Information", {"WorkspaceName"}, "Power BI Environment Information", JoinKind.LeftOuter),
+				    // Expand WorkspaceId and AppID from the environment info
+				    #"Expanded Power BI Environment Information" = Table.ExpandTableColumn(#"Merged Queries1", "Power BI Environment Information", {"WorkspaceId", "App ID"}, {"WorkspaceID", "AppID"}),
+				    // Create a composite key combining workspace ID, report ID, and page ID
+				    #"Added Custom2" = Table.AddColumn(#"Expanded Power BI Environment Information", "Workspace ID - Report ID - Page ID", each [WorkspaceID]&" - "&[ReportID]&" - "&[PageID], type text),
+				    // Create a composite key combining workspace name and report ID
+				    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Workspace Name - Report ID", each [Workspace Name]&" - "&[ReportID], type text),
+				    // Generate the App Page URL for navigating to a specific page in the published app
+				    #"Added Custom4" = Table.AddColumn(#"Added Custom3", "App Page URL", each "https://app.powerbi.com/groups/me/apps/"&[AppID]&"/reports/"&[ReportID]&"/"&[PageID], type text),
+				    // Generate the Workspace Page URL for navigating to a specific page in the workspace
+				    #"Added Custom5" = Table.AddColumn(#"Added Custom4", "Workspace Page URL", each "https://app.powerbi.com/groups/"&[WorkspaceID]&"/reports/"&[ReportID]&"/"&[PageID], type text),
+				    // Generate the App Report URL for navigating to the report in the published app
+				    #"Added Custom6" = Table.AddColumn(#"Added Custom5", "App Report URL", each "https://app.powerbi.com/groups/me/apps/"&[AppID]&"/reports/"&[ReportID], type text),
+				    // Generate the Workspace Report URL for navigating to the report in the workspace
+				    #"Added Custom7" = Table.AddColumn(#"Added Custom6", "Workspace Report URL", each "https://app.powerbi.com/groups/"&[WorkspaceID]&"/reports/"&[ReportID], type text),
+				    // Generate the Workspace URL for navigating to the workspace
+				    #"Added Custom8" = Table.AddColumn(#"Added Custom7", "Workspace URL", each "https://app.powerbi.com/groups/"&[WorkspaceID], type text),
+				    // Generate the App URL for navigating to the published app
+				    #"Added Custom9" = Table.AddColumn(#"Added Custom8", "App URL", each "https://app.powerbi.com/groups/me/apps/"&[AppID], type text),
+				    // Append Model Only Check rows for models with no associated reports
+				    #"Appended Query" = Table.Combine({#"Added Custom9", #"Model Only Check"}),
+				    // Duplicate the UniquePageID column for deduplication processing
+				    #"Duplicated Column" = Table.DuplicateColumn(#"Appended Query", "UniquePageID", "UniquePageID - Copy"),
+				    // Trim whitespace from the duplicated UniquePageID for consistent matching
+				    #"Trimmed Text" = Table.TransformColumns(#"Duplicated Column",{{"UniquePageID - Copy", Text.Trim, type text}}),
+				    // Apply proper casing to the duplicated UniquePageID for standardized comparison
+				    #"Cleaned Text" = Table.TransformColumns(#"Trimmed Text",{{"UniquePageID - Copy", Text.Proper, type text}}),
+				    // Remove duplicate rows based on the standardized UniquePageID copy
+				    #"Removed Duplicates" = Table.Distinct(#"Cleaned Text", {"UniquePageID - Copy"}),
+				    // Remove the temporary UniquePageID copy column used for deduplication
+				    #"Removed Columns" = Table.RemoveColumns(#"Removed Duplicates",{"UniquePageID - Copy", "Model in Workspace Flag"}),
+				    #"Added Custom10" = Table.AddColumn(#"Removed Columns", "Model Workspace Name - Model ID", each [Model Home Workspace Name]&" - "&[Model ID], type text),
+				    #"Added Custom11" = Table.AddColumn(#"Added Custom10", "Model Name - Model ID", each [Model Name]&" - "&[Model ID], type text),
+				    #"Filtered Rows" = Table.SelectRows(#"Added Custom11", each [UniquePageID] <> null and [UniquePageID] <> ""),
+				    #"Merged Queries2" = Table.NestedJoin(#"Filtered Rows", {"ReportID"}, #"Power BI Reports", {"ReportId"}, "Power BI Reports", JoinKind.LeftOuter),
+				    #"Expanded Power BI Reports" = Table.ExpandTableColumn(#"Merged Queries2", "Power BI Reports", {"ReportDescription", "ReportFormat"}, {"Report Description", "Report Format"})
+				in
+				    #"Expanded Power BI Reports"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

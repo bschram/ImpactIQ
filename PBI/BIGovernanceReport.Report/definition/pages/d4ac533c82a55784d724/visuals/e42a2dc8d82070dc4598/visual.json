@@ -1,0 +1,2068 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.8.0/schema.json",
+  "name": "e42a2dc8d82070dc4598",
+  "position": {
+    "x": 588.76938237547984,
+    "y": 73.596172796934979,
+    "z": 9000,
+    "height": 323.05852474498727,
+    "width": 691.03938872966216,
+    "tabOrder": 4000
+  },
+  "visual": {
+    "visualType": "pivotTable",
+    "query": {
+      "queryState": {
+        "Rows": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Workspace Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Workspace Name",
+              "nativeQueryRef": "Workspace - Report",
+              "active": true,
+              "displayName": "Workspace - Report"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Report Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Report Name",
+              "nativeQueryRef": "Report Name",
+              "active": true
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "Report Hierarchy"
+                    }
+                  },
+                  "Property": "Page Name"
+                }
+              },
+              "queryRef": "Report Hierarchy.Page Name",
+              "nativeQueryRef": "Page Name",
+              "active": false
+            }
+          ]
+        },
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Report Objects Distinct Count"
+                }
+              },
+              "queryRef": "All Visual Objects.Visual Objects Distinct Count",
+              "nativeQueryRef": "Report Objects Count",
+              "displayName": "Report Objects Count"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Page Count"
+                }
+              },
+              "queryRef": "All Visual Objects.Page Count",
+              "nativeQueryRef": "Page Count"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Visual Distinct Count"
+                }
+              },
+              "queryRef": "All Visual Objects.Visual Count",
+              "nativeQueryRef": "Visual Count",
+              "displayName": "Visual Count"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Bookmark Distinct Count"
+                }
+              },
+              "queryRef": "All Visual Objects.Bookmark Count",
+              "nativeQueryRef": "Bookmark Count",
+              "displayName": "Bookmark Count"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Filter Distinct Count"
+                }
+              },
+              "queryRef": "All Visual Objects.Filter Distinct Count",
+              "nativeQueryRef": "Filter Count",
+              "displayName": "Filter Count"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Filter Distinct Count - Page Filters"
+                }
+              },
+              "queryRef": "All Visual Objects.Filter Distinct Count - Page Filters",
+              "nativeQueryRef": "Page Filters",
+              "displayName": "Page Filters"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Filter Distinct Count - Report Filters"
+                }
+              },
+              "queryRef": "All Visual Objects.Filter Distinct Count - Report Filters",
+              "nativeQueryRef": "Report Filters",
+              "displayName": "Report Filters"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Reports"
+                    }
+                  },
+                  "Property": "Filter Distinct Count - Visual Filters"
+                }
+              },
+              "queryRef": "All Visual Objects.Filter Distinct Count - Visual Filters",
+              "nativeQueryRef": "Visual Filters",
+              "displayName": "Visual Filters"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "All Models"
+                    }
+                  },
+                  "Property": "Report Level Measure Count"
+                }
+              },
+              "queryRef": "All Models.Report Level Measure Count",
+              "nativeQueryRef": "Report Level Measures",
+              "displayName": "Report Level Measures"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Report Hierarchy"
+                  }
+                },
+                "Property": "Workspace Name"
+              }
+            },
+            "direction": "Ascending"
+          },
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "Report Hierarchy"
+                  }
+                },
+                "Property": "Report Name"
+              }
+            },
+            "direction": "Ascending"
+          }
+        ]
+      }
+    },
+    "expansionStates": [
+      {
+        "roles": [
+          "Rows"
+        ],
+        "levels": [
+          {
+            "queryRefs": [
+              "Report Hierarchy.Workspace Name"
+            ],
+            "isPinned": true
+          },
+          {
+            "queryRefs": [
+              "Report Hierarchy.Report Name"
+            ],
+            "isCollapsed": true,
+            "isPinned": true
+          },
+          {
+            "queryRefs": [
+              "Report Hierarchy.Page Name"
+            ],
+            "isCollapsed": true,
+            "isPinned": true
+          }
+        ],
+        "root": {}
+      }
+    ],
+    "objects": {
+      "values": [
+        {
+          "properties": {
+            "valuesOnRow": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            },
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnHeaders": [
+        {
+          "properties": {
+            "titleAlignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 0,
+                      "Percent": 0
+                    }
+                  }
+                }
+              }
+            },
+            "backColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#5A82AA'"
+                    }
+                  }
+                }
+              }
+            },
+            "autoSizeColumnWidth": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "columnWidth": [
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "43.6709640367069D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Page Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "58.98560645720995D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Bookmark Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "44.64428774980187D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Visual Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "77.83813374854738D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Visual Objects Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "49.68408087136031D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Filter Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "51.62360584841187D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Filter Distinct Count - Page Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "50.00658920595307D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Filter Distinct Count - Report Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "52.34001907462103D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Filter Distinct Count - Visual Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "169.42947643818187D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "Report Hierarchy.Workspace Name"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "112D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Community Influenced ARR Dashboard Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Visual Objects Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "65D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Community Influenced ARR Dashboard Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Page Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "70D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Community Influenced ARR Dashboard Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Visual Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "90D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Community Influenced ARR Dashboard Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Bookmark Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "66D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Community Influenced ARR Dashboard Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "65D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Community Influenced ARR Dashboard Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Page Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "73D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Community Influenced ARR Dashboard Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Report Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "70D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Community Influenced ARR Dashboard Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Visual Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "112D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'count validation'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Visual Objects Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "65D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'count validation'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Page Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "70D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'count validation'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Visual Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "90D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'count validation'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Bookmark Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "66D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'count validation'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "65D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'count validation'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Page Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "73D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'count validation'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Report Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "70D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'count validation'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Visual Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "112D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'CS BIllable Utilization Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Visual Objects Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "65D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'CS BIllable Utilization Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Page Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "70D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'CS BIllable Utilization Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Visual Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "90D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'CS BIllable Utilization Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Bookmark Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "66D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'CS BIllable Utilization Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "65D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'CS BIllable Utilization Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Page Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "73D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'CS BIllable Utilization Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Report Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "70D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'CS BIllable Utilization Test'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Filter Distinct Count - Visual Filters"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "112D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Direct Lake Only - New Logos'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Visual Objects Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "65D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Direct Lake Only - New Logos'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Page Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "70D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "data": [
+              {
+                "scopeId": {
+                  "Comparison": {
+                    "ComparisonKind": 0,
+                    "Left": {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Entity": "Report Hierarchy"
+                          }
+                        },
+                        "Property": "Report Name"
+                      }
+                    },
+                    "Right": {
+                      "Literal": {
+                        "Value": "'Direct Lake Only - New Logos'"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "metadata": "All Visual Objects.Visual Count"
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "69.99910347279659D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Models.Report Level Measure Count"
+          }
+        }
+      ],
+      "columnFormatting": [
+        {
+          "properties": {
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Page Count"
+          }
+        },
+        {
+          "properties": {
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Visual Count"
+          }
+        },
+        {
+          "properties": {
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Bookmark Count"
+          }
+        },
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Visual Objects Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Filter Distinct Count"
+          }
+        },
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Filter Distinct Count - Page Filters"
+          }
+        },
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Filter Distinct Count - Report Filters"
+          }
+        },
+        {
+          "properties": {
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            },
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Visual Objects.Filter Distinct Count - Visual Filters"
+          }
+        },
+        {
+          "properties": {
+            "styleTotal": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "styleHeader": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "alignment": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Center'"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "All Models.Report Level Measure Count"
+          }
+        }
+      ],
+      "rowTotal": [
+        {
+          "properties": {
+            "backColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 6,
+                      "Percent": -0.25
+                    }
+                  }
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 0,
+                      "Percent": 0
+                    }
+                  }
+                }
+              }
+            },
+            "applyToHeaders": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "rowHeaders": [
+        {
+          "properties": {
+            "showExpandCollapseButtons": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "wordWrap": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "visualContainerObjects": {
+      "title": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            },
+            "text": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Report Visual Distinct Object Counts'"
+                }
+              }
+            },
+            "fontFamily": {
+              "expr": {
+                "Literal": {
+                  "Value": "'''Segoe UI Semibold'', wf_segoe-ui_semibold, helvetica, arial, sans-serif'"
+                }
+              }
+            },
+            "fontColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "ThemeDataColor": {
+                      "ColorId": 1,
+                      "Percent": 0.4
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "Filter0483dbc6cd25187ec950",
+        "ordinal": 0,
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Page Hidden Flag"
+          }
+        },
+        "type": "Categorical",
+        "howCreated": "User"
+      },
+      {
+        "name": "c39ca7ea0572eb003d38",
+        "ordinal": 1,
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Report Hierarchy"
+              }
+            },
+            "Property": "Workspace Name"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "db47f10801166074626e",
+        "ordinal": 2,
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Report Hierarchy"
+              }
+            },
+            "Property": "Report Name"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "37b779e003634c9cab41",
+        "ordinal": 3,
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Report Hierarchy"
+              }
+            },
+            "Property": "Page Name"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "166aab2a24326ce00733",
+        "ordinal": 4,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Report Objects Distinct Count"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "cb5507871283a742c020",
+        "ordinal": 5,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Page Count"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "066360cfd032c1c15909",
+        "ordinal": 6,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Visual Distinct Count"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "56758228092cc757b1d0",
+        "ordinal": 7,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Bookmark Distinct Count"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "f1e45c654ee45a0b0329",
+        "ordinal": 8,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Filter Distinct Count"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "0551c102e026048709e3",
+        "ordinal": 9,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Filter Distinct Count - Page Filters"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "43b8e8e0cad9ecb7124b",
+        "ordinal": 10,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Filter Distinct Count - Report Filters"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "ab8df05b6930bc393ce5",
+        "ordinal": 11,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Reports"
+              }
+            },
+            "Property": "Filter Distinct Count - Visual Filters"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "3f2f7e15be26e3b7cbd9",
+        "ordinal": 12,
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "All Models"
+              }
+            },
+            "Property": "Report Level Measure Count"
+          }
+        },
+        "type": "Advanced"
+      }
+    ],
+    "filterSortOrder": "Custom"
+  }
+}

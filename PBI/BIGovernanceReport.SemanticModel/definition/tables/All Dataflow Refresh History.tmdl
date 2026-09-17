@@ -1,0 +1,295 @@
+table 'All Dataflow Refresh History'
+	lineageTag: 21808947-2213-40f3-803e-902463645ff2
+
+	measure 'Dataflow Refresh Count' = COUNT('All Dataflow Refresh History'[Refresh ID])
+		formatString: 0
+		lineageTag: 4e6cd57f-a636-4715-8b41-2d001163c008
+
+	measure 'Dataflow Refresh Count - Fail' =
+			CALCULATE(
+			    [Dataflow Refresh Count],
+			    KEEPFILTERS(
+			        'All Dataflow Refresh History'[Refresh Status] IN { "Failed" }
+			    )
+			)
+		formatString: 0
+		lineageTag: ed43efef-b385-49c0-b17e-ccf845614c5b
+
+	measure 'Dataflow Refresh Count - Success' =
+			CALCULATE(
+			    [Dataflow Refresh Count],
+			    KEEPFILTERS(
+			        'All Dataflow Refresh History'[Refresh Status] IN { "Success" }
+			    )
+			)
+		formatString: 0
+		lineageTag: d06b21fb-a521-46ad-8973-8b5b91ee044d
+
+	measure 'Dataflow Refresh Duration' =
+			VAR Hours = INT([Dataflow Refresh Duration (Hours)])
+			VAR Minutes = INT([Dataflow Refresh Duration (Minutes)])
+			VAR Seconds = MOD([Dataflow Refresh Duration (Seconds)], 60)
+			RETURN
+			SWITCH(TRUE(), Seconds=blank(), BLANK(),  FORMAT(Hours, "00") & ":" & FORMAT(Minutes, "00") & ":" & FORMAT(Seconds, "00"))
+		lineageTag: 32d3374d-3d50-4181-b631-c864c5bbde8d
+
+	measure 'Dataflow Refresh Duration - Success' =
+			CALCULATE(
+			    [Dataflow Refresh Duration],
+			    KEEPFILTERS(
+			        'All Dataflow Refresh History'[Refresh Status] IN { "Success" }
+			    )
+			)
+		lineageTag: f2762b7d-7290-452b-9764-e239d8856549
+
+	measure 'Dataflow Refresh Duration (Hours - Success)' =
+			CALCULATE(
+			    [Dataflow Refresh Duration (Hours)],
+			    KEEPFILTERS(
+			        'All Dataflow Refresh History'[Refresh Status] IN { "Success" }
+			    )
+			)
+		lineageTag: b569a4de-1e82-4ea7-98d5-2de5ce380803
+
+	measure 'Dataflow Refresh Duration (Hours)' = DIVIDE([Dataflow Refresh Duration (Seconds)], 3600)
+		lineageTag: 43ae6cf3-a506-4179-ae75-a4552bd54217
+
+	measure 'Dataflow Refresh Duration (Minutes - Success)' =
+			CALCULATE(
+			    [Dataflow Refresh Duration (Minutes)],
+			    KEEPFILTERS(
+			        'All Dataflow Refresh History'[Refresh Status] IN { "Success" }
+			    )
+			)
+		lineageTag: ea1909d1-08f4-49a8-b0cf-ba5c7bb54f8a
+
+	measure 'Dataflow Refresh Duration (Minutes)' = DIVIDE([Dataflow Refresh Duration (Seconds)], 60)
+		lineageTag: b421d920-3429-4e01-9fd8-2b3f83ecce39
+
+	measure 'Dataflow Refresh Duration (Seconds - Success)' =
+			CALCULATE(
+			    [Dataflow Refresh Duration (Seconds)],
+			    KEEPFILTERS(
+			        'All Dataflow Refresh History'[Refresh Status] IN { "Success" }
+			    )
+			)
+		formatString: 0
+		lineageTag: 2ea795d5-71dc-42e2-881f-1b1cbc8fe377
+
+	measure 'Dataflow Refresh Duration (Seconds)' = DATEDIFF([Dataflow Refresh Start Time], [Dataflow Refresh End Time], SECOND)
+		formatString: 0
+		lineageTag: d732b7a2-2a8b-4ab2-950f-f11fe331423c
+
+	measure 'Dataflow Refresh Duration Average' = ```
+			VAR TotalSeconds = [Dataflow Refresh Duration Average (Seconds - Success)]
+			VAR Hours = INT(TotalSeconds / 3600)
+			VAR Minutes = INT(MOD(TotalSeconds, 3600) / 60)
+			VAR Seconds = MOD(TotalSeconds, 60)
+			
+			RETURN
+			SWITCH(
+			    TRUE(), 
+			    ISBLANK(TotalSeconds), BLANK(), 
+			    FORMAT(Hours, "00") & ":" & FORMAT(Minutes, "00") & ":" & FORMAT(Seconds, "00")
+			)
+			```
+		lineageTag: 84fb5c4a-e558-45f3-8ba0-36efa80ad7a2
+
+	measure 'Dataflow Refresh Duration Average (Hours - Success)' =
+			DIVIDE(
+			    [Dataflow Refresh Duration Total (Hours - Success)],
+			    [Dataflow Refresh Count - Success]
+			)
+		formatString: 0
+		lineageTag: f1634d80-8898-417d-be02-25e6215ec423
+
+	measure 'Dataflow Refresh Duration Average (Minutes - Success)' =
+			DIVIDE(
+			    [Dataflow Refresh Duration Total (Minutes - Success)],
+			    [Dataflow Refresh Count - Success]
+			)
+		formatString: 0
+		lineageTag: d06f80a1-5182-4b91-baa7-a7cff61c8545
+
+	measure 'Dataflow Refresh Duration Average (Seconds - Success)' =
+			DIVIDE(
+			    [Dataflow Refresh Duration Total (Seconds - Success)],
+			    [Dataflow Refresh Count - Success]
+			)
+		formatString: 0
+		lineageTag: d6272bf1-5eff-49af-abc6-dd066086bf76
+
+	measure 'Dataflow Refresh Duration Total (Hours - Success)' = SUMX('All Dataflow Refresh History', [Dataflow Refresh Duration (Hours - Success)])
+		formatString: 0
+		lineageTag: c9fd40ef-5081-4f92-811e-dcd2265464ff
+
+	measure 'Dataflow Refresh Duration Total (Minutes - Success)' = SUMX('All Dataflow Refresh History', [Dataflow Refresh Duration (Minutes - Success)])
+		formatString: 0
+		lineageTag: 125b4c59-b5a4-4086-beaf-5ef5142f2445
+
+	measure 'Dataflow Refresh Duration Total (Seconds - Success)' = SUMX('All Dataflow Refresh History', [Dataflow Refresh Duration (Seconds - Success)])
+		formatString: 0
+		lineageTag: a6c6fb2a-8d67-4106-bbdb-fda9713ad3f8
+
+	measure 'Dataflow Refresh End Time' = MAX('All Dataflow Refresh History'[Refresh End Time])
+		formatString: General Date
+		lineageTag: 616ce20b-4cb2-42ed-bd24-7f899506a6d5
+
+	measure 'Dataflow Refresh Start Time' = MAX('All Dataflow Refresh History'[Refresh Start Time])
+		formatString: General Date
+		lineageTag: 64a081e3-dcc1-4db1-b493-f38f581bf429
+
+	measure 'Dataflow Refresh Success Rate' = DIVIDE([Dataflow Refresh Count - Success], [Dataflow Refresh Count])
+		formatString: 0.0%;-0.0%;0.0%
+		lineageTag: b075d6da-c27c-41f3-bf2a-b9d0bded2635
+
+	column 'Workspace ID'
+		dataType: string
+		isHidden
+		lineageTag: d70d0a34-d9af-48ef-a700-67e3c50130f1
+		summarizeBy: none
+		sourceColumn: Workspace ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow ID'
+		dataType: string
+		isHidden
+		lineageTag: 43bae01a-bcd6-4d6d-a753-176becc4d189
+		summarizeBy: none
+		sourceColumn: Dataflow ID
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Request ID'
+		dataType: string
+		lineageTag: 3ded0375-7b9d-49a1-86cf-a895cc7fd2f4
+		summarizeBy: none
+		sourceColumn: Refresh Request ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh ID'
+		dataType: string
+		lineageTag: bd50421e-ffc2-42e5-bfc9-2bbe377d6d2c
+		summarizeBy: none
+		sourceColumn: Refresh ID
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Start Time'
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: d9e8e42a-e8e3-4a7d-b504-f0de8cc00eba
+		summarizeBy: none
+		sourceColumn: Refresh Start Time
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh End Time'
+		dataType: dateTime
+		formatString: General Date
+		lineageTag: 53ad7651-56c6-4531-8e21-5cdbf561a5af
+		summarizeBy: none
+		sourceColumn: Refresh End Time
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Type'
+		dataType: string
+		lineageTag: 19dbecc2-2ab2-4489-8ebf-cd213c354fc9
+		summarizeBy: none
+		sourceColumn: Refresh Type
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Status'
+		dataType: string
+		lineageTag: 2d2cb455-b9c0-4776-ab22-4ac7241ec153
+		summarizeBy: none
+		sourceColumn: Refresh Status
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name - Dataflow Name'
+		dataType: string
+		isHidden
+		lineageTag: 917eecaa-750d-4766-842d-1db05ddffd86
+		summarizeBy: none
+		sourceColumn: Workspace Name - Dataflow Name
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Refresh Duration (HH:MM:SS)'
+		dataType: string
+		lineageTag: 53860fca-35be-4f20-bef0-d3013269c2cc
+		summarizeBy: none
+		sourceColumn: Refresh Duration (HH:MM:SS)
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Workspace Name'
+		dataType: string
+		lineageTag: 56bcbd84-2e9e-4390-a6a9-37b61991fad0
+		summarizeBy: none
+		sourceColumn: Workspace Name
+
+		annotation SummarizationSetBy = Automatic
+
+	column 'Dataflow Name'
+		dataType: string
+		lineageTag: 494b4989-ec1b-46fb-9ea0-eb0f0c6c5d33
+		summarizeBy: none
+		sourceColumn: Dataflow Name
+
+		annotation SummarizationSetBy = Automatic
+
+	partition 'All Dataflow Refresh History' = m
+		mode: import
+		queryGroup: 'Dataflow Layer'
+		source = ```
+				let
+				    // Load dataflow refresh history from the base query
+				    Source = #"Base Dataflow Refresh History",
+				    // Sanitize workspace name using the Clean Name function
+				    #"Invoked Custom Function" = Table.AddColumn(Source, "Clean Name", each #"Clean Name"([WorkspaceName]), type text),
+				    // Sanitize dataflow name using the Clean Name function
+				    #"Invoked Custom Function1" = Table.AddColumn(#"Invoked Custom Function", "Clean Name.1", each #"Clean Name"([DataflowName]), type text),
+				    // Remove the original unsanitized workspace and dataflow name columns
+				    #"Removed Columns" = Table.RemoveColumns(#"Invoked Custom Function1",{"WorkspaceName", "DataflowName"}),
+				    // Rename the sanitized columns back to their original names
+				    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns",{{"Clean Name", "WorkspaceName"}, {"Clean Name.1", "DataflowName"}}),
+				    // Keep only the essential refresh history columns
+				  #"Removed Other columns" = Table.SelectColumns(#"Renamed Columns", {"WorkspaceName", "WorkspaceId", "DataflowName", "DataflowId", "DataflowRefreshRequestId", "DataflowRefreshId", "DataflowRefreshStartTime", "DataflowRefreshEndTime", "DataflowRefreshType", "DataflowRefreshStatus"}),
+				    // Create a composite key combining workspace and dataflow names
+				    #"Added Custom" = Table.AddColumn(#"Removed Other columns", "Workspace Name - Dataflow Name", each [WorkspaceName]&" - "&[DataflowName], type text),
+				    // Rename all columns to user-friendly display names
+				  #"Renamed Columns1" = Table.RenameColumns(#"Added Custom", {{"DataflowId", "Dataflow ID"}, {"DataflowRefreshRequestId", "Refresh Request ID"}, {"DataflowRefreshId", "Refresh ID"}, {"DataflowRefreshStartTime", "Refresh Start Time"}, {"DataflowRefreshEndTime", "Refresh End Time"}, {"DataflowRefreshType", "Refresh Type"}, {"DataflowRefreshStatus", "Refresh Status"}, {"WorkspaceName", "Workspace Name"}, {"DataflowName", "Dataflow Name"}, {"WorkspaceId", "Workspace ID"}}),
+				    // Calculate refresh duration in HH:MM:SS format from start and end times
+				    #"Added Custom1" = Table.AddColumn(#"Renamed Columns1", "Refresh Duration (HH:MM:SS)", each let
+				            Duration = [Refresh End Time] - [Refresh Start Time],
+				            TotalSeconds = Duration.TotalSeconds(Duration),
+				            Hours = Number.IntegerDivide(TotalSeconds, 3600),
+				            Minutes = Number.IntegerDivide(TotalSeconds - (Hours * 3600), 60),
+				            Seconds = Number.Round(TotalSeconds - (Hours * 3600) - (Minutes * 60), 0),
+				            DurationFormatted = Text.PadStart(Text.From(Hours), 2, "0") & ":" & 
+				                                Text.PadStart(Text.From(Minutes), 2, "0") & ":" & 
+				                                Text.PadStart(Text.From(Seconds), 2, "0")
+				        in
+				            DurationFormatted, type text),
+				    // Replace status code "22" with human-readable "Failed" label
+				    #"Replaced Value" = Table.ReplaceValue(#"Added Custom1","22","Failed",Replacer.ReplaceValue,{"Refresh Status"})
+				in
+				    #"Replaced Value"
+				```
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+
