@@ -78,8 +78,10 @@ table 'Dataflow Hierarchy'
 				    #"Cleaned Text" = Table.TransformColumns(#"Trimmed Text",{{"Workspace Name - Dataflow Name - Query Name", Text.Proper, type text}}),
 				    // Remove duplicate rows based on the standardized composite key
 				    #"Removed Duplicates" = Table.Distinct(#"Cleaned Text", {"Workspace Name - Dataflow Name - Query Name"}),
+				    // A blank key is not allowed on the one side of the relationships (placeholder row of an empty workbook)
+				    #"Removed Blank Keys" = Table.SelectRows(#"Removed Duplicates", each [#"Workspace Name - Dataflow Name - Query Name"] <> null and [#"Workspace Name - Dataflow Name - Query Name"] <> ""),
 				    // Keep only the key dataflow hierarchy columns needed for the dimension
-				    #"Removed Other Columns" = Table.SelectColumns(#"Removed Duplicates",{"Dataflow ID", "Dataflow Name", "Dataflow Query Name", "Workspace Name", "Dataflow ID - Query Name", "Workspace Name - Dataflow Name", "Workspace Name - Dataflow Name - Query Name"})
+				    #"Removed Other Columns" = Table.SelectColumns(#"Removed Blank Keys",{"Dataflow ID", "Dataflow Name", "Dataflow Query Name", "Workspace Name", "Dataflow ID - Query Name", "Workspace Name - Dataflow Name", "Workspace Name - Dataflow Name - Query Name"})
 				in
 				    #"Removed Other Columns"
 				```

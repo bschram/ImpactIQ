@@ -171,3 +171,11 @@ was not affected. Changes (PBIP only; the workbooks are unchanged):
 
 `tests\Pbip.Tests.ps1` asserts the guards and scans every table's M for an unguarded `Text.*([column])`.
 
+Second load (2026-09-17, after the guards above): `All Models` loaded and `Dataflow Hierarchy` failed with "column
+'Workspace Name - Dataflow Name - Query Name' contains blank values ... one side of a many-to-one relationship". The
+tenant has no dataflows, so `Dataflow Detail.xlsx` holds only the placeholder row Assemble writes for an empty sheet
+(every cell blank, as the legacy "dummy row" did); Power Query reads it as a row of nulls and the dimension's key
+became null. `Base Dataflows` and `Base Semantic Models` now drop that row (`Dataflow ID` / `Type` blank) and
+`Dataflow Hierarchy` filters blank keys; `Base Measure Dependencies` already dropped it through its measure-only
+filter and the report-side queries through their `ReportDate` filter. `tests\Pbip.Tests.ps1` asserts all of this.
+

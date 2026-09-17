@@ -31,6 +31,16 @@ Describe 'PBIP Power Query null guards (All Models load error, 2026-09-16)' {
     It 'Report Hierarchy guards [Page Name] before Text.Contains' {
         (Get-TableSource 'Report Hierarchy') | Should -Match ([regex]::Escape('Text.Contains(if [Page Name] = null then "" else [Page Name], "isting")'))
     }
+    It 'the placeholder row of an empty workbook never reaches a relationship key (Dataflow Hierarchy blank-key error, 2026-09-17)' {
+        # Assemble writes one all-blank row when a sheet has no data (as the legacy script did); Power Query reads it as a
+        # row of nulls, and a null key on the one side of a relationship fails the whole load.
+        $expressions = Get-Content -LiteralPath (Join-Path (Get-IQTestRepoRoot) 'PBI/BIGovernanceReport.SemanticModel/definition/expressions.tmdl') -Raw -Encoding UTF8
+        $expressions | Should -Match ([regex]::Escape('#"Removed Placeholder Rows" = Table.SelectRows(#"Changed Type1", each [Dataflow ID] <> null and [Dataflow ID] <> "")'))
+        $expressions | Should -Match ([regex]::Escape('#"Removed Placeholder Rows" = Table.SelectRows(#"Renamed Columns1", each [Type] <> null and [Type] <> "")'))
+        $expressions | Should -Match ([regex]::Escape('each ([ObjectType] = "Measure")')) -Because 'Base Measure Dependencies drops the placeholder row through its measure-only filter'
+        (Get-TableSource 'Dataflow Hierarchy') | Should -Match ([regex]::Escape('[#"Workspace Name - Dataflow Name - Query Name"] <> null'))
+        (Get-TableSource 'Report Hierarchy') | Should -Match ([regex]::Escape('[UniquePageID] <> null'))
+    }
     It 'no table applies a Text.* function directly to a column without a preceding null guard' {
         # Text.From(null) returns null without an error, so it is not scanned. Guards accepted: "[col] <> null and",
         # "if [col] = null then """ or an earlier Table.ReplaceValue(..., null, ..., {"col"}) (All Reports: Page Name / Visual Name).
