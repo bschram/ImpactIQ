@@ -335,3 +335,33 @@ Describe 'XMLA export outcomes for inferred-capacity models and the Fabric API s
         $state.Enabled | Should -BeTrue
     }
 }
+
+Describe 'ModelID convention follows the workspace listing, not the inferred capacity (Measure Lineage blank key, 2026-09-17)' {
+    BeforeAll { $script:Base = Initialize-IQTestContext -Prefix 'models-listed' }
+    AfterAll { Remove-IQTestFolder -Path $script:Base }
+    It 'a dedicated workspace keeps the dataset GUID convention' {
+        $w = New-TestWork -Key $script:Ids.d1 -BaseName 'WS ~ Model' -WorkspaceId $script:Ids.ws1 -Dedicated $true
+        Test-IQModelListedDedicated -Work $w | Should -BeTrue
+    }
+    It 'a Pro workspace uses the file-name convention' {
+        $w = New-TestWork -Key $script:Ids.d1 -BaseName 'WS ~ Model' -WorkspaceId $script:Ids.ws1 -Dedicated $false
+        Test-IQModelListedDedicated -Work $w | Should -BeFalse
+    }
+    It 'a capacity inferred from the large storage format is treated as Pro for the ModelID (the PBIT joins on the workspace flag)' {
+        $w = New-TestWork -Key $script:Ids.d1 -BaseName 'WS ~ Model' -WorkspaceId $script:Ids.ws1 -Dedicated $true
+        $w['CapacityInferred'] = $true
+        Test-IQModelListedDedicated -Work $w | Should -BeFalse
+    }
+    It 'the DAX extractor stamps ModelID = "<CleanWs> ~ <CleanModel>" when told the workspace is not listed dedicated' {
+        Mock Invoke-IQDaxQuery { return @() }
+        Mock Test-IQDaxQueryAccess { return $true }
+        $ds = [pscustomobject]@{ DatasetId = $script:Ids.d1; DatasetName = 'Model'; WorkspaceId = $script:Ids.ws1; WorkspaceName = 'WS'; WorkspaceIsOnDedicatedCapacity = $false; DatasetTargetStorageMode = 'PremiumFiles' }
+        $r = Get-IQModelDetailViaDax -Dataset $ds -OutputFolder (Join-Path $script:Base 'dax') -IsDedicated $false -BaseName 'WS ~ Model' -ModelAsOfDate '2026-09-17'
+        if ($r.Success -and $r.Csv -and (Test-Path -LiteralPath $r.Csv)) {
+            $rows = @(Import-Csv -LiteralPath $r.Csv -Encoding UTF8)
+            if ($rows.Count -gt 0) { $rows[0].ModelID | Should -Be 'WS ~ Model' }
+        }
+        $r.Method | Should -Be 'Dax'
+    }
+}
+

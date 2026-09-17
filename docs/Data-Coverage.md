@@ -102,8 +102,10 @@ export a dedicated-capacity model over XMLA and a Fabric token exists, `ModelBac
 GCC and shared capacity) to obtain the `.bim`. The DAX path uses `INFO.VIEW.TABLES/COLUMNS/MEASURES/RELATIONSHIPS()`
 first (documented for `executeQueries`), then the raw `INFO.*` functions best-effort; parts a tenant rejects are listed
 as "unavailable via REST" in the checkpoint, and measure expressions are blank when the caller lacks Write.
-`ModelName` is always `<CleanWs> ~ <CleanModel>` and `ModelID` the dataset GUID (dedicated) or the file name (Pro), so
-the PBIT joins are unchanged.
+`ModelName` is always `<CleanWs> ~ <CleanModel>` and `ModelID` the dataset GUID when the workspace is **listed** on
+dedicated capacity (`WorkspaceIsOnDedicatedCapacity` on the Workspaces sheet, which is what the PBIT/PBIP join on) or
+the file name otherwise - including a model whose capacity was only inferred from its large storage format, so
+that it still matches its Datasets row.
 
 Blank values: a field the extractor leaves empty (the `Expression` of a table, column, hierarchy or relationship row;
 a measure expression the account cannot read over DAX) is an empty cell in the workbook, because `Export-Excel`
