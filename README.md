@@ -295,7 +295,15 @@ Access. Microsoft is retiring the password grant; expect this to stop working on
 ### Connecting the Power BI Governance Model
 
 `Power BI Governance Model.pbit` reads the four workbooks through the parameters `UseWeb`, `Base Directory`,
-`Base Model File`, `Base Report File`, `Base Environment File` and `Base Dataflow File`.
+`Base Model File`, `Base Report File`, `Base Environment File` and `Base Dataflow File`. The same model is also
+kept as a Power BI Project under `PBI\` (`BIGovernanceReport.pbip`, TMDL) so the queries can be reviewed and
+diffed; there `Base Directory` is a query in the `Base Directory` group rather than a parameter - edit its
+`else` branch to point at the `Outputs` folder.
+
+Blank cells: `Export-Excel` writes an empty string as an empty cell, which Power Query reads as `null`, so a
+table, column or relationship row has a `null` `Expression`, and a measure the account may only view has one too
+(DAX path). Every `Text.*` call in the model on such a column is null-guarded (`tests\Pbip.Tests.ps1` checks
+this); keep the guard when you add steps.
 
 - **Local files (Options A, B)**: `UseWeb = false`, `Base Directory` = the `Outputs` folder (or your `-OutputFolder`). Refresh in Desktop. The
   Service can refresh a local folder only through an on-premises data gateway installed on that machine.

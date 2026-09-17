@@ -731,7 +731,7 @@ table 'All Models'
 				    // Extract the Dataflow ID from the partition Expression using text parsing
 				    #"Added Custom" = Table.AddColumn(#"Renamed Columns", "Custom", each 
 				                let
-				                    text = try Text.From([Expression]) otherwise [Expression],
+				                    text = if [Expression] = null then "" else (try Text.From([Expression]) otherwise ""),
 				                    searchString = "dataflowId=",
 				                    startPos = Text.PositionOf(text, searchString),
 				                    extractedText = if startPos <> -1 then 
@@ -743,7 +743,7 @@ table 'All Models'
 				    // Extract the Dataflow entity (query) name from the partition Expression
 				    #"Added Custom1" = Table.AddColumn(#"Added Custom", "Custom.1", each 
 				    let
-				        text = try Text.From([Expression]) otherwise [Expression],
+				        text = if [Expression] = null then "" else (try Text.From([Expression]) otherwise ""),
 				        searchString = "entity=",
 				        startPos = Text.PositionOf(text, searchString),
 				        extractedText = if startPos <> -1 then 

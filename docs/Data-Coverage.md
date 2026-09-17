@@ -105,6 +105,11 @@ as "unavailable via REST" in the checkpoint, and measure expressions are blank w
 `ModelName` is always `<CleanWs> ~ <CleanModel>` and `ModelID` the dataset GUID (dedicated) or the file name (Pro), so
 the PBIT joins are unchanged.
 
+Blank values: a field the extractor leaves empty (the `Expression` of a table, column, hierarchy or relationship row;
+a measure expression the account cannot read over DAX) is an empty cell in the workbook, because `Export-Excel`
+does not write empty strings. Power Query reads an empty cell as `null`, not `""`, so model queries must guard
+`Text.*` calls on these columns (the PBIP under `PBI\` does; `tests\Pbip.Tests.ps1` checks it).
+
 ## 4. `Dataflow Detail.xlsx` (stage `Dataflows` -> `Assemble`)
 
 | Sheet | Content | Source | Permission |

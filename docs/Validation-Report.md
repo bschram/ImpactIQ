@@ -151,3 +151,23 @@ Remaining gaps in this tenant, none closable in code: no `.bim` for the three la
 no Fabric API), no PBIX for the three scorecard/metrics items (the service refuses the export), empty Fabric-only
 sheets (connections, gateways, Fabric items, dataflow metadata), and blank measure expressions for models the account
 can only view.
+
+## 9. PBIP load failure (2026-09-16): null `Expression` cells
+
+Opening the committed PBIP against the 12:31 workbooks failed on `All Models` with `Expression.Error: We cannot
+convert the value null to type Text` and cancelled every dependent table (`Model Object Hierarchy`, `Measure
+Lineage*`, the hierarchies; the HRESULT `0x80040E4E` rows are the cancellations). Cause: the Dataflow-ID / entity
+parsers call `Text.PositionOf` on `[Expression]`, and `Export-Excel` writes an empty string as an empty cell that
+Power Query reads as `null` - every table, column, hierarchy and relationship row, plus the measures a Viewer
+cannot read over DAX, has one. The `.pbit` in the repository root does not contain these two parser steps, so it
+was not affected. Changes (PBIP only; the workbooks are unchanged):
+
+| Table | Step | Change |
+|---|---|---|
+| `All Models` | `Added Custom`, `Added Custom1` | `text = if [Expression] = null then "" else (try Text.From([Expression]) otherwise "")` |
+| `All Dataflows` | `Filtered Rows` | `[Query Name]` coalesced to `""` before `Text.Contains` |
+| `All Dataflow Sources`, `All Model Sources` | `Added Conditional Column` | connection details coalesced to `""` before the four `Text.Contains` calls |
+| `Report Hierarchy` | `Added Conditional Column` | `[Page Name]` coalesced to `""` before `Text.Contains` |
+
+`tests\Pbip.Tests.ps1` asserts the guards and scans every table's M for an unguarded `Text.*([column])`.
+

@@ -161,7 +161,7 @@ table 'All Dataflows'
 				    // Load all dataflow data from the base query
 				    Source = #"Base Dataflows",
 				    // Filter out system-generated queries (DataDestination, Transform, Staging, etc.)
-				    #"Filtered Rows" = Table.SelectRows(Source, each not Text.Contains([Query Name], "_DataDestination") and not Text.Contains([Query Name], "_TransformForWriteToDataDestination") and not Text.Contains([Query Name], "_WriteToDataDestination") and [Query Name] <> "DefaultDestination" and [Query Name] <> "DefaultStaging"),
+				    #"Filtered Rows" = Table.SelectRows(Source, each let queryName = if [Query Name] = null then "" else [Query Name] in not Text.Contains(queryName, "_DataDestination") and not Text.Contains(queryName, "_TransformForWriteToDataDestination") and not Text.Contains(queryName, "_WriteToDataDestination") and queryName <> "DefaultDestination" and queryName <> "DefaultStaging"),
 				    // Keep only the essential dataflow identification columns
 				    #"Removed Other Columns" = Table.SelectColumns(#"Filtered Rows",{"Dataflow ID", "Dataflow Name", "Query Name", "Query", "Report Date", "Workspace Name - Dataflow Name"}),
 				    // Rename query columns to dataflow-specific names

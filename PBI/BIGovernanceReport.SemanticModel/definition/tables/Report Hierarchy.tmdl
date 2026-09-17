@@ -498,7 +498,7 @@ table 'Report Hierarchy'
 				    // Add a sequential index column for row ordering
 				    #"Added Index" = Table.AddIndexColumn(#"Sorted Rows", "Index", 1, 1, Int64.Type),
 				    // Flag pages whose name contains "isting" (e.g., "Listing") as listing pages
-				    #"Added Conditional Column" = Table.AddColumn(#"Added Index", "Listing Page?", each if Text.Contains([Page Name], "isting") then "true" else "false", type text),
+				    #"Added Conditional Column" = Table.AddColumn(#"Added Index", "Listing Page?", each if Text.Contains(if [Page Name] = null then "" else [Page Name], "isting") then "true" else "false", type text),
 				    // Add a Page Metrics Flag defaulting to "True" for all pages
 				    #"Added Custom" = Table.AddColumn(#"Added Conditional Column", "Page Metrics Flag", each "True", type text),
 				    // Join with Workspace, Model, & Report Mapping to resolve model context
