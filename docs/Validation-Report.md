@@ -179,3 +179,13 @@ became null. `Base Dataflows` and `Base Semantic Models` now drop that row (`Dat
 `Dataflow Hierarchy` filters blank keys; `Base Measure Dependencies` already dropped it through its measure-only
 filter and the report-side queries through their `ReportDate` filter. `tests\Pbip.Tests.ps1` asserts all of this.
 
+Third load (2026-09-17): `Measure Lineage` failed with a blank
+`WorkspaceName - ModelName - ObjectType - TableName - ObjectName` key. The three large-format models are treated as
+dedicated by the tool (capacity inferred from the storage format) and were stamped with `ModelID = <dataset GUID>`,
+but the workspace is listed without capacity, so the model's `Power BI Datasets` query expects `ModelID =
+"<CleanWs> ~ <CleanModel>"` for it: the join found nothing, `Workspace & Model Mapping` dropped the models and every
+key built from their (now null) workspace name was blank. Fix: `Test-IQModelListedDedicated` (Models) makes the
+ModelID convention follow the workspace listing (inferred capacity still drives the XMLA attempt), and
+`Measure Lineage` drops blank keys so an unresolved model can never fail the load again. Re-run
+`-Stages ModelDetail -Force` (or a full run) to restamp the three CSVs.
+

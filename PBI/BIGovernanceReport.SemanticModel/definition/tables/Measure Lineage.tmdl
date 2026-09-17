@@ -349,9 +349,12 @@ table 'Measure Lineage'
 				    // Apply proper casing to the duplicated key for consistent matching
 				    #"Cleaned Text" = Table.TransformColumns(#"Trimmed Text",{{"WorkspaceName - ModelName - ObjectType - TableName - ObjectName", Text.Proper, type text}}),
 				    // Remove duplicate rows based on the cleaned composite key
-				    #"Removed Duplicates" = Table.Distinct(#"Cleaned Text", {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"})
+				    #"Removed Duplicates" = Table.Distinct(#"Cleaned Text", {"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"}),
+				    // A blank key is not allowed on the one side of the relationships: a model the mapping could not resolve (no
+				    // Datasets row with the same ModelID) has no Workspace Name here, so its key is null - drop it rather than fail the load
+				    #"Removed Blank Keys" = Table.SelectRows(#"Removed Duplicates", each [#"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"] <> null and [#"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"] <> "")
 				in
-				    #"Removed Duplicates"
+				    #"Removed Blank Keys"
 
 	annotation PBI_NavigationStepName = Navigation
 

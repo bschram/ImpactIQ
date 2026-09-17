@@ -1151,6 +1151,28 @@ function Get-IQModelDetailPlan {
     return @{ Steps = @($steps); Why = ($why -join '; ') }
 }
 
+function Test-IQModelListedDedicated {
+    <#
+    .SYNOPSIS
+        $true when the work item's workspace is LISTED on dedicated capacity - the flag the PBIT/PBIP decide the ModelID convention by (private).
+    .DESCRIPTION
+        The governance model joins Model Detail to the Datasets sheet on ModelID = DatasetId when the workspace row
+        says WorkspaceIsOnDedicatedCapacity, else on ModelID = "<CleanWs> ~ <CleanModel>". A model whose capacity was
+        only inferred from its large storage format (CapacityInferred) sits in a workspace listed WITHOUT capacity, so
+        its ModelID must follow the Pro convention or the model drops out of every mapping (run 2026-09-17: three
+        such models gave Measure Lineage a blank key and the whole load failed). IsDedicated still decides whether
+        the XMLA export is attempted.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)][hashtable]$Work)
+    $dedicated = $false
+    try { if ($Work.ContainsKey('IsDedicated')) { $dedicated = [bool]$Work.IsDedicated } } catch { $dedicated = $false }
+    if (-not $dedicated) { return $false }
+    try { if ($Work.ContainsKey('CapacityInferred') -and [bool]$Work.CapacityInferred) { return $false } } catch { return $dedicated }
+    return $true
+}
+
 function Invoke-IQModelDetailStage {
     <#
     .SYNOPSIS
@@ -1266,8 +1288,9 @@ function Invoke-IQModelDetailStage {
             $r = $null
             $noteText = ''
             if ($notes.Count -gt 0) { $noteText = ' (' + ($notes -join '; ') + ')' }
+            $listedDedicated = Test-IQModelListedDedicated -Work $w
             $modelId = $w.BaseName
-            if ($w.IsDedicated) { $modelId = $w.DatasetId }
+            if ($listedDedicated) { $modelId = $w.DatasetId }
             switch ($step) {
                 'Bim' {
                     Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Extracting model detail from the .bim with the built-in parser' + $noteText)
@@ -1276,7 +1299,7 @@ function Invoke-IQModelDetailStage {
                 }
                 'Dax' {
                     Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Extracting model detail via DAX INFO.VIEW.*' + $noteText)
-                    try { $r = Get-IQModelDetailViaDax -Dataset $w.Dataset -OutputFolder $runFolder -IsDedicated $w.IsDedicated -BaseName $w.BaseName -ModelAsOfDate $asOfDate -Stage $stage }
+                    try { $r = Get-IQModelDetailViaDax -Dataset $w.Dataset -OutputFolder $runFolder -IsDedicated $listedDedicated -BaseName $w.BaseName -ModelAsOfDate $asOfDate -Stage $stage }
                     catch {
                         $r = @{ Success = $false; Message = ('DAX extraction threw: ' + $_.Exception.Message); Outputs = @() }
                         Write-IQLog -Level Error -Stage $stage -Item $w.Item -Message $r.Message -Exception $_.Exception

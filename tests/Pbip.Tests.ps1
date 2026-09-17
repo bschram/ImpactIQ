@@ -40,6 +40,7 @@ Describe 'PBIP Power Query null guards (All Models load error, 2026-09-16)' {
         $expressions | Should -Match ([regex]::Escape('each ([ObjectType] = "Measure")')) -Because 'Base Measure Dependencies drops the placeholder row through its measure-only filter'
         (Get-TableSource 'Dataflow Hierarchy') | Should -Match ([regex]::Escape('[#"Workspace Name - Dataflow Name - Query Name"] <> null'))
         (Get-TableSource 'Report Hierarchy') | Should -Match ([regex]::Escape('[UniquePageID] <> null'))
+        (Get-TableSource 'Measure Lineage') | Should -Match ([regex]::Escape('#"Removed Blank Keys" = Table.SelectRows(#"Removed Duplicates", each [#"WorkspaceName - ModelName - ObjectType - TableName - ObjectName"] <> null'))
     }
     It 'no table applies a Text.* function directly to a column without a preceding null guard' {
         # Text.From(null) returns null without an error, so it is not scanned. Guards accepted: "[col] <> null and",
