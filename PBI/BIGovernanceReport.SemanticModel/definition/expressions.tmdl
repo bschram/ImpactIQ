@@ -1385,8 +1385,11 @@ expression 'Base Semantic Models' = ```
 		    #"Expanded Power BI Datasets" = Table.ExpandTableColumn(#"Merged Queries", "Power BI Datasets", {"DatasetId"}, {"DatasetId"}),
 		    // Rename ModelID to OriginalModelID and DatasetId to ModelID (use the true Model ID)
 		    #"Renamed Columns1" = Table.RenameColumns(#"Expanded Power BI Datasets",{{"ModelID", "OriginalModelID"}, {"DatasetId", "ModelID"}}),
+		    // Drop the placeholder row the extractor writes when no model detail exists (every cell blank = null),
+		    // so no downstream key on the one side of a relationship is built from it
+		    #"Removed Placeholder Rows" = Table.SelectRows(#"Renamed Columns1", each [Type] <> null and [Type] <> ""),
 		    // Buffer the table in memory for query performance
-		    TableBuffer = Table.Buffer(#"Renamed Columns1")
+		    TableBuffer = Table.Buffer(#"Removed Placeholder Rows")
 		in
 		    TableBuffer
 		```
@@ -2574,8 +2577,11 @@ expression 'Base Dataflows' = ```
 		    #"Changed Type" = Table.TransformColumnTypes(#"Filtered Columns",{{"Dataflow ID", type text}, {"Dataflow Name", type text}, {"Query Name", type text}, {"Query", type text}, {"Report Date", type datetime}, {"Workspace Name - Dataflow Name", type text}, {"RowError", type text}, {"RowState", type text}, {"Table", type text}, {"ItemArray", type text}, {"HasErrors", type text}}, Culture.Current),
 		    // Convert the Report Date column to date type
 		    #"Changed Type1" = Table.TransformColumnTypes(#"Changed Type",{{"Report Date", type date}}, Culture.Current),
+		    // Drop the placeholder row the extractor writes when a run has no dataflow queries (every cell blank = null):
+		    // it would become a blank key on the one side of the Dataflow Hierarchy relationships and fail the load
+		    #"Removed Placeholder Rows" = Table.SelectRows(#"Changed Type1", each [Dataflow ID] <> null and [Dataflow ID] <> ""),
 		    // Buffer the table in memory for query performance
-		    TableBuffer = Table.Buffer(#"Changed Type1")
+		    TableBuffer = Table.Buffer(#"Removed Placeholder Rows")
 		in
 		    TableBuffer
 		```
