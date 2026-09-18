@@ -1,4 +1,0 @@
-"WorkspaceId","WorkspaceName","WorkspaceType","WorkspaceCapacityId","WorkspaceDefaultDatasetStorageFormat","WorkspaceIsReadOnly","WorkspaceIsOnDedicatedCapacity"
-"0626e185-b817-4708-9077-adbf093d912c","DOH-Medical Services Section","Workspace",,,"False","False"
-"7e5a8de5-fd01-49b5-8847-c250cf6cf7e1","DOH-Health Analytics","Workspace",,,"False","False"
-"172d44aa-8bfd-44cd-95e6-0cd4038fd8ab","DOH - Health Statistics & Performance","Workspace",,,"False","False"
