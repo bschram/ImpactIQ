@@ -55,10 +55,18 @@ function Select-IQEnvironmentInteractive {
         as before; pressing Cancel (or closing the window) now returns $null so the caller can stop the run.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $false)][int]$TimeoutSeconds = 60)
+    param(
+        [Parameter(Mandatory = $false)][int]$TimeoutSeconds = 60,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Default
+    )
     Assert-IQInteractiveHost -Dialog 'environment dialog'
 
-    $selectedEnv = Show-EnvironmentSelectionDialog -TimeoutSeconds $TimeoutSeconds
+    # The remembered environment (settings file) is pre-selected and is what the timeout falls back to.
+    $defaultName = 'Public'
+    if (-not [string]::IsNullOrWhiteSpace($Default)) {
+        try { $defaultName = (Get-IQEnvironmentSettings -Environment $Default).Name } catch { $defaultName = 'Public' }
+    }
+    $selectedEnv = Show-EnvironmentSelectionDialog -TimeoutSeconds $TimeoutSeconds -Default $defaultName
     $selectedText = [string]$selectedEnv
 
     if ($selectedText -eq 'Cancelled') {
@@ -66,8 +74,8 @@ function Select-IQEnvironmentInteractive {
         return $null
     }
     if ($selectedText -eq 'Timeout' -or [string]::IsNullOrWhiteSpace($selectedText)) {
-        Write-IQLog -Level Warn -Message 'No environment selected or timeout reached - defaulting to Public'
-        return 'Public'
+        Write-IQLog -Level Warn -Message ("No environment selected or timeout reached - defaulting to {0}" -f $defaultName)
+        return $defaultName
     }
 
     # Extract the environment name from the display text ("EnvironmentName" or "EnvironmentName (Description)")
@@ -693,11 +701,13 @@ function Show-EnvironmentSelectionDialog {
     #>
     [CmdletBinding()]
     param(
-        [int]$TimeoutSeconds = 60
+        [int]$TimeoutSeconds = 60,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Default = 'Public'
     )
 
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
+    if ([string]::IsNullOrWhiteSpace($Default)) { $Default = 'Public' }
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Select Power BI Environment"
@@ -734,13 +744,16 @@ function Show-EnvironmentSelectionDialog {
         [void]$listBox.Items.Add($env)
     }
     
-    # Set default selection to Public
+    # Pre-select the remembered environment (settings file), else Public
     $listBox.SelectedIndex = 0
+    for ($i = 0; $i -lt $environments.Count; $i++) {
+        if (($environments[$i] -replace ' \(.*\)', '').Trim() -ieq $Default) { $listBox.SelectedIndex = $i; break }
+    }
     $form.Controls.Add($listBox)
 
     # Timeout label
     $timeoutLabel = New-Object System.Windows.Forms.Label
-    $timeoutLabel.Text = "Timeout in $TimeoutSeconds seconds (defaults to Public)"
+    $timeoutLabel.Text = "Timeout in $TimeoutSeconds seconds (defaults to $Default)"
     $timeoutLabel.AutoSize = $true
     $timeoutLabel.Location = New-Object System.Drawing.Point(20, 210)
     $timeoutLabel.ForeColor = [System.Drawing.Color]::Gray

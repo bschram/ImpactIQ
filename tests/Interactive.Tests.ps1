@@ -260,3 +260,24 @@ Describe 'Select-IQScopeInteractive input handling' {
         { Select-IQScopeInteractive -Workspaces @() } | Should -Throw -ExpectedMessage 'No workspaces are available for selection*'
     }
 }
+
+Describe 'Environment dialog default from the settings file (recovered-build port 2026-09-18)' {
+    BeforeAll {
+        $script:EnvBase = Initialize-IQTestContext -NoRun -Prefix 'interactive-envdefault'
+        $script:IQ.Interactive = $true
+    }
+    AfterAll { $script:IQ.Interactive = $false; Remove-IQTestFolder -Path $script:EnvBase }
+    It 'a timed-out dialog falls back to the remembered environment, else Public' {
+        Mock Show-EnvironmentSelectionDialog { 'Timeout' }
+        Select-IQEnvironmentInteractive -TimeoutSeconds 1 -Default 'GCC' | Should -Be 'USGov'
+        Select-IQEnvironmentInteractive -TimeoutSeconds 1 | Should -Be 'Public'
+        Select-IQEnvironmentInteractive -TimeoutSeconds 1 -Default 'nonsense' | Should -Be 'Public'
+    }
+    It 'the dialog receives the remembered environment as its default and an explicit pick still wins' {
+        $script:DialogDefault = $null
+        Mock Show-EnvironmentSelectionDialog { $script:DialogDefault = $Default; 'USGovHigh' }
+        Select-IQEnvironmentInteractive -TimeoutSeconds 1 -Default 'USGov' | Should -Be 'USGovHigh'
+        $script:DialogDefault | Should -Be 'USGov'
+    }
+}
+

@@ -1,0 +1,20 @@
+{
+  "_comment": "Copy to ImpactIQ.Settings.json (same folder). Every key is an ImpactIQ.ps1 parameter name; a value here is the default for that parameter when it is not given on the command line or by its environment variable. Environment is only pre-selected in the dialog of an interactive run and is written back after the pick.",
+  "Environment": "USGov",
+  "WorkspaceName": [],
+  "WorkspaceId": [],
+  "ExcludeWorkspaceId": [],
+  "ExcludeWorkspaceName": ["*Sandbox*"],
+  "IncludeMyWorkspace": false,
+  "ModelDetailMethod": "Auto",
+  "MaxParallelExtracts": 2,
+  "MaxRetries": 5,
+  "MetadataTimeoutSec": 90,
+  "TimeBudgetMinutes": 0,
+  "IncludeUsageMetrics": false,
+  "IncludeAdminApis": false,
+  "NoQuarantine": false,
+  "NoKeepAwake": false,
+  "NoWebUiExportFallback": false,
+  "WebUiClusterHost": ""
+}

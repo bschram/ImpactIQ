@@ -97,9 +97,11 @@ The v2 experience: dialogs, browser sign-in, pickers, and the workbooks in the `
 2. **Run the launcher.** Either rename `Final PS Script.txt` to `Final PS Script.ps1` and run it, or open PowerShell in
    the folder and paste the file's contents. PowerShell may offer to install the `ImportExcel` and Power BI modules
    for your user; no admin rights are needed.
-3. **Answer the prompts**: environment (`Public` after 60 seconds; `USGov` for GCC), the tenant if your account can
-   reach more than one (the current one after 60 seconds), sign in, choose whether to run against workspaces,
-   reports or models, then pick them.
+3. **Answer the prompts**: environment (`Public` after 60 seconds the first time; `USGov` for GCC - the environment
+   you pick is remembered in `Config\ImpactIQ.Settings.json` and offered first from then on), the tenant if your
+   account can reach more than one (the current one after 60 seconds), sign in, choose whether to run against
+   workspaces, reports or models, then pick them. `ImpactIQ.bat` in the same folder does the same from a double-click
+   (`ImpactIQ.bat --help` lists its switches).
 4. **Wait.** The console shows each stage and ends with a per-stage summary, the four workbook paths and the log file.
    If the run is interrupted, run the launcher again: finished items are skipped.
 5. **Open `Power BI Governance Model.pbit`**, set `Base Directory` to the `Outputs` folder (for example
@@ -405,6 +407,7 @@ pass arguments (full list in [docs/Headless-and-Resume.md](docs/Headless-and-Res
 | `-NoQuarantine` | | ignore `Config\ReportExportQuarantine.csv` and `State\report-memory.json` for this run (see below) |
 | `-NoKeepAwake` | | do not stop Windows from sleeping during the run (on by default) |
 | `-NoWebUiExportFallback`, `-WebUiClusterHost` | | turn off (or pin the cluster host for) the web-UI export used when the Export API refuses a large-storage-format report |
+| `-SettingsPath` | `IMPACTIQ_SETTINGS_PATH` | settings file; default `Config\ImpactIQ.Settings.json` (see below) |
 | `-Stages`, `-SkipStages` | | `Inventory, ModelBackup, ReportBackup, ReportDetail, ModelDetail, Dataflows, Extras, Assemble` |
 | `-Resume Auto\|Always\|Never`, `-Force`, `-RefreshInventory` | | resume rules |
 | `-TimeBudgetMinutes` | | stop cleanly N minutes after start, exit `3`, resume next run |
@@ -412,6 +415,28 @@ pass arguments (full list in [docs/Headless-and-Resume.md](docs/Headless-and-Res
 | `-IncludeUsageMetrics`, `-IncludeAdminApis`, `-ActivityDays` | | optional extra sheets |
 | `-SkipToolUpdate` | `IMPACTIQ_OFFLINE=1` | no Tabular Editor / pbi-tools downloads |
 | `-Verbose` | `IMPACTIQ_DEBUG=1` | echo Debug lines (always in the log file) |
+
+### Settings file
+
+`Config\ImpactIQ.Settings.json` holds defaults for any parameter you do not want to type every time. Keys are the
+parameter names; precedence is **parameter, then environment variable, then the settings file, then the built-in
+default**. Copy `Config\ImpactIQ.Settings.example.json` to start:
+
+```json
+{ "Environment": "USGov", "WorkspaceName": ["Finance*", "HR"], "ExcludeWorkspaceName": ["*Sandbox*"], "MaxRetries": 7 }
+```
+
+Lists take JSON arrays, switches take `true`/`false`. `BaseFolder`, `SettingsPath`, `Credential`, `TokenCacheKey`,
+`Force` and `RunId` are never read from the file; an unknown key or a value outside a parameter's allowed set is
+reported and ignored. In an interactive run `Environment` only pre-selects the environment dialog (so you can still
+change clouds), and the environment you pick is written back. A scope in the file (`WorkspaceName`, `WorkspaceId`,
+`ReportId`, ...) skips the interactive pickers, exactly like the same parameters on the command line.
+
+`ImpactIQ.bat` wraps all of this for a double-click: `--no-prompts` (no dialogs; scope and cloud from the settings
+file, variables or extra parameters), `--resume`, `--fresh`, `--environment NAME`, `--settings FILE`, `--help`;
+anything else is passed to `ImpactIQ.ps1` unchanged.
+
+### Skip lists
 
 Two files remember what the service will never give you, so later runs do not spend the calls:
 
