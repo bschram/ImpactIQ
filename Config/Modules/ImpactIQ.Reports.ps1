@@ -682,6 +682,262 @@ function Get-IQReportWorkList {
 }
 
 # =====================================================================================================================
+# Quarantine list (Config\ReportExportQuarantine.csv) and cross-run report memory (State\report-memory.json)
+# Port of the recovered build (bschram_updates): reports the service will never export are listed once - by the user
+# (wildcards) or automatically after an export-denied / no-PBIX answer - and skipped without a call on later runs;
+# reports whose PBIX has no embedded model (pbi-tools generate-bim exit code -8) are remembered so the extraction is
+# not repeated every run.
+# =====================================================================================================================
+
+function Get-IQReportQuarantinePath {
+    <#
+    .SYNOPSIS
+    Path of the quarantine CSV: <BaseFolder>\Config\ReportExportQuarantine.csv (private).
+    #>
+    [CmdletBinding()]
+    param()
+    return (Join-Path $script:IQ.ConfigFolder 'ReportExportQuarantine.csv')
+}
+
+function Test-IQReportQuarantineEnabled {
+    <#
+    .SYNOPSIS
+    $false when the run was started with -NoQuarantine (the list is neither read nor written) (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    try { return (-not [bool](Get-IQReportOption -Name 'NoQuarantine' -Default $false)) } catch { return $true }
+}
+
+function Get-IQReportQuarantineList {
+    <#
+    .SYNOPSIS
+    Reads the active entries of Config\ReportExportQuarantine.csv; creates the file with the default row when it is missing.
+    .DESCRIPTION
+    Columns: ReportId, ReportName, WorkspaceName, Reason, IsActive. ReportName and WorkspaceName take -like wildcards;
+    an empty WorkspaceName matches every workspace; IsActive blank or true/1/yes/y keeps the row active. The default
+    file excludes the service's own "Usage Metrics Report" reports (exportable, but noise in the governance model).
+    Returns an empty array with -NoQuarantine or when the file cannot be read (Warn).
+    #>
+    [CmdletBinding()]
+    param()
+    if (-not (Test-IQReportQuarantineEnabled)) { return @() }
+    $path = Get-IQReportQuarantinePath
+    if (-not (Test-Path -LiteralPath $path)) {
+        try {
+            $folder = Split-Path -Path $path -Parent
+            if ($folder -and -not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+            $default = [pscustomobject]@{ ReportId = ''; ReportName = '*Usage Metrics Report*'; WorkspaceName = ''; Reason = 'Exclude the usage metrics reports the service creates'; IsActive = 'true' }
+            $default | Export-Csv -LiteralPath $path -NoTypeInformation -Encoding UTF8 -Force
+            Write-IQLog -Level Info -Stage 'ReportBackup' -Message ("Created the report quarantine list {0} (edit it to exclude reports from the export; wildcards allowed)." -f $path)
+        }
+        catch { Write-IQLog -Level Debug -Stage 'ReportBackup' -Message ("Quarantine list could not be created: " + $_.Exception.Message) }
+    }
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    $entries = New-Object System.Collections.Generic.List[object]
+    try {
+        foreach ($row in @(Import-Csv -LiteralPath $path -Encoding UTF8)) {
+            if ($null -eq $row) { continue }
+            $active = [string](Get-IQReportMember -Object $row -Name 'IsActive')
+            if (-not [string]::IsNullOrWhiteSpace($active) -and $active -notmatch '^(?i:true|1|yes|y)$') { continue }
+            $id = [string](Get-IQReportMember -Object $row -Name 'ReportId')
+            $name = [string](Get-IQReportMember -Object $row -Name 'ReportName')
+            if ([string]::IsNullOrWhiteSpace($id) -and [string]::IsNullOrWhiteSpace($name)) { continue }
+            $entries.Add([pscustomobject]@{
+                    ReportId      = $id.Trim()
+                    ReportName    = $name.Trim()
+                    WorkspaceName = ([string](Get-IQReportMember -Object $row -Name 'WorkspaceName')).Trim()
+                    Reason        = [string](Get-IQReportMember -Object $row -Name 'Reason')
+                    IsActive      = 'true'
+                })
+        }
+    }
+    catch {
+        Write-IQLog -Level Warn -Stage 'ReportBackup' -Message ("Quarantine list {0} could not be read; no report is quarantined this run: {1}" -f $path, $_.Exception.Message)
+        return @()
+    }
+    return $entries.ToArray()
+}
+
+function Test-IQReportPatternMatch {
+    <#
+    .SYNOPSIS
+    Case-insensitive match of a value against a quarantine pattern: -like when the pattern has * or ?, else equality; an empty pattern matches nothing (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Value, [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Pattern)
+    if ([string]::IsNullOrWhiteSpace($Pattern)) { return $false }
+    if ($null -eq $Value) { $Value = '' }
+    if ($Pattern -match '[*?]') { return ($Value -like $Pattern) }
+    return ($Value -ieq $Pattern)
+}
+
+function Get-IQReportQuarantineMatch {
+    <#
+    .SYNOPSIS
+    Returns the first quarantine entry matching the work item (id, or name pattern, within the entry's workspace filter); $null otherwise.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Work,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][object[]]$Entries
+    )
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        $idMatch = (-not [string]::IsNullOrWhiteSpace([string]$entry.ReportId)) -and ([string]$entry.ReportId -ieq [string]$Work.ReportId)
+        $nameMatch = Test-IQReportPatternMatch -Value ([string]$Work.ReportName) -Pattern ([string]$entry.ReportName)
+        if (-not $idMatch -and -not $nameMatch) { continue }
+        $wsFilter = [string]$entry.WorkspaceName
+        if ([string]::IsNullOrWhiteSpace($wsFilter) -or (Test-IQReportPatternMatch -Value ([string]$Work.WorkspaceName) -Pattern $wsFilter)) { return $entry }
+    }
+    return $null
+}
+
+function Add-IQReportQuarantineEntry {
+    <#
+    .SYNOPSIS
+    Appends an auto-learned row (ReportId + name + workspace) to the quarantine CSV; $true when written, $false when disabled, already listed or unwritable.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Work,
+        [Parameter(Mandatory = $true)][string]$Reason,
+        [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup'
+    )
+    if (-not (Test-IQReportQuarantineEnabled)) { return $false }
+    $path = Get-IQReportQuarantinePath
+    try {
+        $rows = @()
+        if (Test-Path -LiteralPath $path) { $rows = @(Import-Csv -LiteralPath $path -Encoding UTF8) }
+        foreach ($row in $rows) {
+            if ([string](Get-IQReportMember -Object $row -Name 'ReportId') -ieq [string]$Work.ReportId) { return $false }
+        }
+        $new = [pscustomobject]@{ ReportId = [string]$Work.ReportId; ReportName = [string]$Work.ReportName; WorkspaceName = [string]$Work.WorkspaceName; Reason = $Reason; IsActive = 'true' }
+        $all = @($rows | ForEach-Object { [pscustomobject]@{ ReportId = [string]$_.ReportId; ReportName = [string]$_.ReportName; WorkspaceName = [string]$_.WorkspaceName; Reason = [string]$_.Reason; IsActive = [string]$_.IsActive } }) + @($new)
+        $folder = Split-Path -Path $path -Parent
+        if ($folder -and -not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+        $all | Export-Csv -LiteralPath $path -NoTypeInformation -Encoding UTF8 -Force
+        Write-IQLog -Level Info -Stage $Stage -Item ([string]$Work.Item) -Message ("Added to the quarantine list ({0}); it is skipped on later runs until the row is removed or set IsActive=false." -f $path)
+        return $true
+    }
+    catch {
+        Write-IQLog -Level Debug -Stage $Stage -Item ([string]$Work.Item) -Message ("Quarantine list could not be updated: " + $_.Exception.Message)
+        return $false
+    }
+}
+
+function Get-IQReportMemoryPath {
+    <#
+    .SYNOPSIS
+    Path of the cross-run report memory: <BaseFolder>\State\report-memory.json (private).
+    #>
+    [CmdletBinding()]
+    param()
+    return (Join-Path $script:IQ.StatePath 'report-memory.json')
+}
+
+function Get-IQReportMemory {
+    <#
+    .SYNOPSIS
+    Loads (once per run) the cross-run report memory: @{ NoEmbeddedModel = @{ <reportId> = @{ ReportName; WorkspaceName; LearnedUtc; Reason } } }.
+    #>
+    [CmdletBinding()]
+    param()
+    if ($script:IQ.ContainsKey('ReportMemory') -and $null -ne $script:IQ['ReportMemory']) { return $script:IQ['ReportMemory'] }
+    $memory = @{ NoEmbeddedModel = @{} }
+    $path = Get-IQReportMemoryPath
+    if (Test-Path -LiteralPath $path) {
+        try {
+            $raw = ConvertFrom-IQJsonFile -Path $path
+            $section = Get-IQReportMember -Object $raw -Name 'NoEmbeddedModel'
+            if ($null -ne $section) {
+                foreach ($p in $section.PSObject.Properties) {
+                    $memory.NoEmbeddedModel[([string]$p.Name).ToLowerInvariant()] = @{
+                        ReportName    = [string](Get-IQReportMember -Object $p.Value -Name 'ReportName')
+                        WorkspaceName = [string](Get-IQReportMember -Object $p.Value -Name 'WorkspaceName')
+                        LearnedUtc    = [string](Get-IQReportMember -Object $p.Value -Name 'LearnedUtc')
+                        Reason        = [string](Get-IQReportMember -Object $p.Value -Name 'Reason')
+                    }
+                }
+            }
+        }
+        catch { Write-IQLog -Level Debug -Stage 'ReportBackup' -Message ("Report memory {0} could not be read; starting empty: {1}" -f $path, $_.Exception.Message) }
+    }
+    $script:IQ['ReportMemory'] = $memory
+    return $memory
+}
+
+function Save-IQReportMemory {
+    <#
+    .SYNOPSIS
+    Writes the cross-run report memory (private).
+    #>
+    [CmdletBinding()]
+    param()
+    $memory = Get-IQReportMemory
+    $out = @{ NoEmbeddedModel = @{} }
+    foreach ($k in @($memory.NoEmbeddedModel.Keys)) { $out.NoEmbeddedModel[$k] = $memory.NoEmbeddedModel[$k] }
+    ConvertTo-IQJsonFile -Object $out -Path (Get-IQReportMemoryPath)
+}
+
+function Test-IQReportKnownNoModel {
+    <#
+    .SYNOPSIS
+    $true when an earlier run learned that this report's PBIX carries no embedded model (pbi-tools generate-bim exit code -8).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$ReportId)
+    if ([string]::IsNullOrWhiteSpace($ReportId)) { return $false }
+    if (-not (Test-IQReportQuarantineEnabled)) { return $false }
+    return (Get-IQReportMemory).NoEmbeddedModel.ContainsKey($ReportId.ToLowerInvariant())
+}
+
+function Add-IQReportKnownNoModel {
+    <#
+    .SYNOPSIS
+    Remembers that this report's PBIX has no embedded model; the extraction is skipped on later runs (delete State\report-memory.json to forget).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Work,
+        [Parameter(Mandatory = $true)][string]$Reason,
+        [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup'
+    )
+    if (-not (Test-IQReportQuarantineEnabled)) { return $false }
+    $id = ([string]$Work.ReportId).ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($id)) { return $false }
+    $memory = Get-IQReportMemory
+    if ($memory.NoEmbeddedModel.ContainsKey($id)) { return $false }
+    $memory.NoEmbeddedModel[$id] = @{ ReportName = [string]$Work.ReportName; WorkspaceName = [string]$Work.WorkspaceName; LearnedUtc = [datetime]::UtcNow.ToString('o'); Reason = $Reason }
+    try { Save-IQReportMemory }
+    catch { Write-IQLog -Level Debug -Stage $Stage -Item ([string]$Work.Item) -Message ("Report memory could not be saved: " + $_.Exception.Message); return $false }
+    Write-IQLog -Level Info -Stage $Stage -Item ([string]$Work.Item) -Message 'Remembered as a report without an embedded model; the pbi-tools extraction is skipped on later runs (delete State\report-memory.json to forget).'
+    return $true
+}
+
+function Test-IQReportExportDenied {
+    <#
+    .SYNOPSIS
+    $true when the last Export API failure was a refusal (HTTP 401/403 or ModelExportActionDenied / ExportActionDenied) rather than a transport or server error (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    if (-not $script:IQ -or -not $script:IQ.ContainsKey('LastExportError') -or $null -eq $script:IQ['LastExportError']) { return $false }
+    $e = $script:IQ['LastExportError']
+    $status = 0
+    try { $status = [int](Get-IQReportMember -Object $e -Name 'StatusCode') } catch { $status = 0 }
+    if ($status -eq 401 -or $status -eq 403) { return $true }
+    $text = [string](Get-IQReportMember -Object $e -Name 'Code') + ' ' + [string](Get-IQReportMember -Object $e -Name 'Message')
+    return ($text -match '(?i)ModelExportActionDenied|ExportActionDenied|unauthorized|forbidden')
+}
+
+# =====================================================================================================================
 # Export API (monolith 2668-2691) and getDefinition fallback (monolith 2693-2859)
 # =====================================================================================================================
 
@@ -1168,6 +1424,12 @@ function Invoke-IQReportModelExtract {
         Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("Model already extracted for report {0}: {1}" -f $Work.ReportId, $destination)
         return $out
     }
+    if (Test-IQReportKnownNoModel -ReportId ([string]$Work.ReportId)) {
+        $learned = (Get-IQReportMemory).NoEmbeddedModel[([string]$Work.ReportId).ToLowerInvariant()]
+        $out.Message = 'model not extracted: an earlier run found no embedded model in this PBIX (learned ' + [string]$learned.LearnedUtc + '; delete State\report-memory.json to retry)'
+        Write-IQLog -Level Info -Stage $Stage -Item $item -Message $out.Message
+        return $out
+    }
     $availability = Test-IQReportPbiToolsAvailable
     if (-not $availability.Available) {
         $out.Message = 'model not extracted: ' + $availability.Reason
@@ -1218,6 +1480,14 @@ function Invoke-IQReportModelExtract {
         $r2 = Invoke-IQProcess -FilePath $pbiTools -ArgumentList $bimArgs -WorkingDirectory $tempRoot -TimeoutMinutes $timeout -LogName ('pbitools-generate-bim-' + $safeKey) -Stage $Stage -Item $item
         if ($r2.TimedOut -or $r2.StartError -or [int]$r2.ExitCode -ne 0) {
             Write-IQLog -Level Warn -Stage $Stage -Item $item -Message ('pbi-tools generate-bim reported: ' + (Get-IQReportProcessSummary -Result $r2))
+        }
+        if (-not $r2.TimedOut -and -not $r2.StartError -and [int]$r2.ExitCode -eq -8) {
+            # Exit code -8 = the PBIX holds no model (live connection to a dataset, scorecard, or a service-authored
+            # report): a fact about the report, remembered across runs (recovered build's KnownNoModel list).
+            $out.Message = 'the PBIX has no embedded model (pbi-tools generate-bim exit code -8: live connection or service-authored report); ModelDetail reads the model over DAX'
+            Write-IQLog -Level Info -Stage $Stage -Item $item -Message $out.Message
+            Add-IQReportKnownNoModel -Work $Work -Reason 'pbi-tools generate-bim exit code -8' -Stage $Stage | Out-Null
+            return $out
         }
         $bimFiles = @(Get-IQReportGeneratedBimFile -ExtractFolder $extractFolder -Target $target -ToolOutput ([string]$r2.StdOut + "`n" + [string]$r2.StdErr))
         if ($bimFiles.Count -eq 0) {
@@ -1546,6 +1816,8 @@ function Invoke-IQReportBackupStage {
     }
 
     $bimOwners = Get-IQReportBimOwnerMap   # .bim path -> DatasetId from this run's checkpoints (updated as models are extracted)
+    $quarantine = @(Get-IQReportQuarantineList)
+    if ($quarantine.Count -gt 0) { Write-IQLog -Level Info -Stage $stage -Message ("Quarantine list: {0} active entr{1} ({2})" -f $quarantine.Count, $(if ($quarantine.Count -eq 1) { 'y' } else { 'ies' }), (Get-IQReportQuarantinePath)) }
     $index = 0
     foreach ($w in $work) {
         $index++
@@ -1564,6 +1836,16 @@ function Invoke-IQReportBackupStage {
             }
             if ($w.NoAccess) {
                 Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $item -Status Skipped -Message 'No workspace access (shared report) - cannot be exported' -Data @{ ReportId = $w.ReportId; ReportName = $w.ReportName; WorkspaceId = $w.WorkspaceId; WorkspaceName = $w.WorkspaceName; DatasetId = $w.DatasetId; ReportType = $w.ReportType; FileName = $w.FileName } | Out-Null
+                $summary.Skipped++
+                continue
+            }
+            $quarantined = Get-IQReportQuarantineMatch -Work $w -Entries $quarantine
+            if ($null -ne $quarantined) {
+                $why = [string]$quarantined.Reason
+                if ([string]::IsNullOrWhiteSpace($why)) { $why = 'no reason recorded' }
+                $qMessage = 'Quarantined: ' + $why + ' (Config\ReportExportQuarantine.csv)'
+                Write-IQLog -Level Info -Stage $stage -Item $item -Message $qMessage
+                Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $item -Status Skipped -Message $qMessage -Data @{ ReportId = $w.ReportId; ReportName = $w.ReportName; WorkspaceId = $w.WorkspaceId; WorkspaceName = $w.WorkspaceName; ReportType = $w.ReportType; Status = 'Skipped'; Quarantined = $true } | Out-Null
                 $summary.Skipped++
                 continue
             }
@@ -1596,6 +1878,18 @@ function Invoke-IQReportBackupStage {
                     # Pro Workspace -> IncludeModel (real .pbix, used for model extraction below)
                     $exported = Export-IQReportUsingApi -WorkspaceId $w.WorkspaceId -ReportId $w.ReportId -OutFilePath $w.FilePath -DownloadType IncludeModel -Item $item -Stage $stage
                     $method = 'IncludeModel'
+                    if (-not $exported -and (Test-IQReportExportDenied)) {
+                        # Recovered build: a refused IncludeModel export (401/403, ModelExportActionDenied) often still
+                        # allows the LiveConnect form, which carries the report layout without the model - enough for
+                        # ReportDetail; ModelDetail then reads the model over DAX.
+                        $deniedCode = [string](Get-IQReportMember -Object $script:IQ['LastExportError'] -Name 'Code')
+                        Write-IQLog -Level Warn -Stage $stage -Item $item -Message ('IncludeModel export refused (' + $deniedCode + '); retrying as LiveConnect (report without the model).')
+                        $exported = Export-IQReportUsingApi -WorkspaceId $w.WorkspaceId -ReportId $w.ReportId -OutFilePath $w.FilePath -DownloadType LiveConnect -Item $item -Stage $stage
+                        if ($exported) {
+                            $method = 'LiveConnect'
+                            $notes += ('IncludeModel export refused (' + $deniedCode + '); exported as LiveConnect without the model')
+                        }
+                    }
                     if (-not $exported) {
                         if ($isGuid) {
                             Write-IQLog -Level Warn -Stage $stage -Item $item -Message 'IncludeModel export failed; falling back to getDefinition.'
@@ -1661,6 +1955,10 @@ function Invoke-IQReportBackupStage {
                     if ($notes.Count -gt 0) { $message += ' (' + ($notes -join '; ') + ')' }
                     $baseData.Status = 'Skipped'
                     Write-IQLog -Level Warn -Stage $stage -Item $item -Message $message
+                    # A refusal or a missing PBIX never changes on a retry: list the report so later runs skip the call.
+                    if (([string]$unsupported.Code + ' ' + [string]$unsupported.Reason) -match '(?i)ModelExportActionDenied|ExportActionDenied|ModelessWorkbookNotFound|no PBIX exists') {
+                        if (Add-IQReportQuarantineEntry -Work $w -Reason ('Auto-added ' + [datetime]::UtcNow.ToString('yyyy-MM-dd') + ': ' + [string]$unsupported.Reason + ' [' + [string]$unsupported.Code + ']') -Stage $stage) { $baseData.Quarantined = $true }
+                    }
                     Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $item -Status Skipped -Method $method -Message $message -Data $baseData | Out-Null
                     try { $summary.Skipped++ } catch { $null = $_.Exception }
                     continue

@@ -85,6 +85,13 @@ Rows are produced offline by the two Tabular Editor 2 C# scripts (`Report Detail
 | `ReportExports` **new** | one row per report: `ReportName, ReportID, ModelID, WorkspaceID, WorkspaceName, ReportDisplayName, ReportType, FileName, ExportMethod (IncludeModel / LiveConnect / getDefinition), Status, Message, FileSizeBytes, DurationSec, DefinitionFormat, ModelExtract, BimPath, ReportDate`. `Status` = `Skipped` with the reason for items the service will never export (scorecards / metrics items: `ModelExportActionDenied`; no PBIX behind the item; large-format models without Fabric) - they are not counted as failures | rebuilt from the `ReportBackup` checkpoints (`Report Backups\<RunId>\ReportExports.txt`) | - |
 | `ExtractErrors` (when present) | per-report extraction errors from the two csx scripts: `ReportName, Script (PBIR / Classic), Stage (unzip / report), Error, ReportDate` | written by the extractors when a report cannot be unzipped or parsed (the other reports are still processed and flushed to the TXT files one report at a time) | - |
 
+Export refusals: an `IncludeModel` download the service refuses (401/403 `ModelExportActionDenied`) is retried as
+`LiveConnect`, so the report layout still reaches `Report Detail.xlsx` (the model is then read over DAX). A report
+refused in both forms, or one with no PBIX behind it, is appended to `Config\ReportExportQuarantine.csv` and skipped
+on later runs without a call; the file ships with a row that excludes the service's `*Usage Metrics Report*` reports.
+Cells: every string cell of every workbook is stripped of characters Excel cannot store (control characters, lone
+surrogates) before it is written; the count is logged per sheet.
+
 ## 3. `Model Detail.xlsx` (stages `ModelBackup` -> `ModelDetail` -> `Assemble`)
 
 | Sheet | Content | Method | Permission / prerequisites |

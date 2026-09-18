@@ -266,3 +266,140 @@ Describe 'pbi-tools model extraction and export classification (run assessment 2
         Get-IQReportUnsupportedExportReason | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Recovered-build ports: quarantine list, LiveConnect fallback, known-no-model memory (2026-09-18)' {
+    BeforeAll {
+        $script:Base = Initialize-IQTestContext -Prefix 'reports-port' -RunId '2026-09-18'
+        $script:RunFolder = Get-IQReportRunFolder
+        $script:Workspaces = @([pscustomobject]@{ WorkspaceId = $script:Ids.ws1; WorkspaceName = 'Finance'; WorkspaceIsOnDedicatedCapacity = $false })
+        Mock Get-IQSelectedWorkspaces { $script:Workspaces }
+        Mock Get-IQSelectedDatasets { @() }
+        Mock Get-IQReportsWithSensitivityLabel { @{} }
+        Mock Export-IQReportDefinitionAsPbix { @{ Success = $false; Format = ''; Message = 'Fabric API not offered' } }
+        function New-PortReport {
+            param([string]$Id, [string]$Name)
+            return [pscustomobject]@{ ReportId = $Id; ReportName = $Name; ReportType = 'PowerBIReport'; ReportWebUrl = 'https://app.powerbi.com/groups/x/reports/y'; WorkspaceId = $script:Ids.ws1; WorkspaceName = 'Finance'; DatasetId = $script:Ids.d1; DatasetName = 'Finance Model'; ReportIsFromPbix = $true }
+        }
+        function Get-QuarantineRows { return @(Import-Csv -LiteralPath (Get-IQReportQuarantinePath) -Encoding UTF8) }
+        function Reset-Checkpoints { param([string]$Key) $p = Join-Path (Join-Path (Join-Path $script:IQ.RunPath 'done') 'ReportBackup') ($Key + '.json'); if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:Base }
+    BeforeEach { $script:Downloads = New-Object System.Collections.Generic.List[string]; $script:IQ['LastExportError'] = $null; $script:IQ['LastHttpError'] = $null; $script:IQ.Options['NoQuarantine'] = $false }
+
+    It 'creates Config\ReportExportQuarantine.csv with the usage-metrics row and skips a matching report without a download' {
+        $r = New-PortReport -Id $script:Ids.r1 -Name 'Usage Metrics Report'
+        Mock Get-IQSelectedReports { @($r) }
+        Mock Invoke-IQDownload { $script:Downloads.Add($Url); Write-TestPbix -Path $OutFile; return $true }
+        $summary = Invoke-IQReportBackupStage
+        (Get-IQReportQuarantinePath) | Should -Exist
+        (Get-QuarantineRows)[0].ReportName | Should -Be '*Usage Metrics Report*'
+        $summary.Skipped | Should -Be 1
+        $summary.Done | Should -Be 0
+        $script:Downloads.Count | Should -Be 0
+        $cp = Get-Checkpoint -Stage ReportBackup -Key $script:Ids.r1
+        $cp.status | Should -Be 'Skipped'
+        $cp.message | Should -Match '^Quarantined: '
+        Reset-Checkpoints -Key $script:Ids.r1
+    }
+    It 'Get-IQReportQuarantineMatch honours id, name wildcards, workspace filters and IsActive' {
+        $w = @{ ReportId = 'abc'; ReportName = 'Sales Report'; WorkspaceName = 'Finance'; Item = 'Finance ~ Sales Report' }
+        $entries = @(
+            [pscustomobject]@{ ReportId = ''; ReportName = 'Sales*'; WorkspaceName = 'HR'; Reason = 'wrong workspace'; IsActive = 'true' },
+            [pscustomobject]@{ ReportId = 'ABC'; ReportName = ''; WorkspaceName = ''; Reason = 'by id'; IsActive = 'true' }
+        )
+        (Get-IQReportQuarantineMatch -Work $w -Entries $entries).Reason | Should -Be 'by id'
+        (Get-IQReportQuarantineMatch -Work $w -Entries @($entries[0])) | Should -BeNullOrEmpty
+        (Get-IQReportQuarantineMatch -Work $w -Entries @([pscustomobject]@{ ReportId = ''; ReportName = 'sales report'; WorkspaceName = 'fin*'; Reason = 'x'; IsActive = '' })).Reason | Should -Be 'x'
+        # IsActive=false rows are dropped by the reader
+        $path = Get-IQReportQuarantinePath
+        @([pscustomobject]@{ ReportId = ''; ReportName = 'Inactive*'; WorkspaceName = ''; Reason = 'off'; IsActive = 'false' }, [pscustomobject]@{ ReportId = ''; ReportName = 'Active*'; WorkspaceName = ''; Reason = 'on'; IsActive = 'yes' }) | Export-Csv -LiteralPath $path -NoTypeInformation -Encoding UTF8 -Force
+        $list = @(Get-IQReportQuarantineList)
+        $list.Count | Should -Be 1
+        $list[0].ReportName | Should -Be 'Active*'
+        $script:IQ.Options['NoQuarantine'] = $true
+        @(Get-IQReportQuarantineList).Count | Should -Be 0 -Because '-NoQuarantine ignores the list'
+        $script:IQ.Options['NoQuarantine'] = $false
+        Remove-Item -LiteralPath $path -Force
+    }
+    It 'a refused IncludeModel export (401 ModelExportActionDenied) is retried as LiveConnect and the report is exported without its model' {
+        $r = New-PortReport -Id $script:Ids.r2 -Name 'Denied Sales'
+        Mock Get-IQSelectedReports { @($r) }
+        Mock Invoke-IQDownload {
+            $script:Downloads.Add($Url)
+            if ($Url -like '*downloadType=IncludeModel*') {
+                $script:IQ['LastHttpError'] = @{ StatusCode = 401; Body = '{"error":{"code":"ModelExportActionDenied","pbi.error":{"code":"ModelExportActionDenied"}}}'; Message = 'HTTP 401'; Url = $Url; Method = 'GET' }
+                return $false
+            }
+            Write-TestPbix -Path $OutFile; return $true
+        }
+        $summary = Invoke-IQReportBackupStage
+        $summary.Done | Should -Be 1
+        $summary.Failed | Should -Be 0
+        @($script:Downloads | Where-Object { $_ -like '*IncludeModel*' }).Count | Should -Be 1
+        @($script:Downloads | Where-Object { $_ -like '*LiveConnect*' }).Count | Should -Be 1
+        $cp = Get-Checkpoint -Stage ReportBackup -Key $script:Ids.r2
+        $cp.status | Should -Be 'Succeeded'
+        $cp.method | Should -Be 'LiveConnect'
+        $cp.message | Should -Match 'refused \(ModelExportActionDenied\); exported as LiveConnect'
+        $cp.data.ModelExtract | Should -Match 'not attempted'
+        @(Get-QuarantineRows | Where-Object { $_.ReportId -eq $script:Ids.r2 }).Count | Should -Be 0 -Because 'an exported report is never quarantined'
+        Reset-Checkpoints -Key $script:Ids.r2
+    }
+    It 'a report refused in both forms is Skipped and auto-added to the quarantine list; the next run skips it without a call' {
+        $r = New-PortReport -Id $script:Ids.r3 -Name 'Scorecard-ish'
+        Mock Get-IQSelectedReports { @($r) }
+        Mock Invoke-IQDownload {
+            $script:Downloads.Add($Url)
+            $script:IQ['LastHttpError'] = @{ StatusCode = 401; Body = '{"error":{"code":"ModelExportActionDenied"}}'; Message = 'HTTP 401'; Url = $Url; Method = 'GET' }
+            return $false
+        }
+        $summary = Invoke-IQReportBackupStage
+        $summary.Skipped | Should -Be 1
+        $summary.Failed | Should -Be 0
+        $script:Downloads.Count | Should -Be 2 -Because 'IncludeModel, then the LiveConnect retry'
+        $row = @(Get-QuarantineRows | Where-Object { $_.ReportId -eq $script:Ids.r3 })
+        $row.Count | Should -Be 1
+        $row[0].Reason | Should -Match '^Auto-added \d{4}-\d{2}-\d{2}: .*\[ModelExportActionDenied\]'
+        $row[0].WorkspaceName | Should -Be 'Finance'
+        (Get-Checkpoint -Stage ReportBackup -Key $script:Ids.r3).data.Quarantined | Should -BeTrue
+        # second run: the checkpoint is gone (new run) but the list stops the export before any call
+        Reset-Checkpoints -Key $script:Ids.r3
+        $script:Downloads.Clear()
+        $summary2 = Invoke-IQReportBackupStage
+        $summary2.Skipped | Should -Be 1
+        $script:Downloads.Count | Should -Be 0
+        (Get-Checkpoint -Stage ReportBackup -Key $script:Ids.r3).message | Should -Match '^Quarantined: Auto-added'
+        Reset-Checkpoints -Key $script:Ids.r3
+    }
+    It 'pbi-tools generate-bim exit code -8 is remembered in State\report-memory.json and the extraction is skipped on the next run' {
+        $pbix = Join-Path $script:RunFolder 'Finance ~ NoModel.pbix'
+        Write-TestPbix -Path $pbix
+        $work = @{ Key = 'nomodel-1'; Item = 'Finance ~ NoModel'; ReportId = '11111111-2222-4333-8444-555555555555'; ReportName = 'NoModel'; WorkspaceName = 'Finance'; DatasetId = ''; FilePath = $pbix; FileName = 'Finance ~ NoModel.pbix'; BimPath = (Join-Path (Get-IQReportModelFolder) 'Finance ~ NoModel.bim'); ModelBaseName = 'Finance ~ NoModel'; ShortKey = 'nomodel1' }
+        $script:IQ.Tools = @{ PbiToolsPath = 'C:\Tools\pbi-tools.exe'; PbiToolsWorks = $true; PbiDesktopFound = $true }
+        Mock Test-IQReportPbiToolsAvailable { @{ Available = $true; Reason = ''; Warning = $null } }
+        $script:ToolCalls = New-Object System.Collections.Generic.List[string]
+        Mock Invoke-IQProcess {
+            $script:ToolCalls.Add([string]$ArgumentList)
+            $code = 0
+            if ([string]$ArgumentList -like 'generate-bim*') { $code = -8 }
+            return @{ ExitCode = $code; TimedOut = $false; StdOut = 'pbi-tools'; StdErr = ''; OutFile = $null; ErrFile = $null; DurationSec = 1; StartError = $null }
+        }
+        $first = Invoke-IQReportModelExtract -Work $work
+        $first.Success | Should -BeFalse
+        $first.Message | Should -Match 'no embedded model .*exit code -8'
+        $script:ToolCalls.Count | Should -Be 2
+        (Get-IQReportMemoryPath) | Should -Exist
+        Test-IQReportKnownNoModel -ReportId $work.ReportId | Should -BeTrue
+        Test-IQReportKnownNoModel -ReportId 'other' | Should -BeFalse
+        # a fresh process reads the file back
+        $script:IQ.Remove('ReportMemory')
+        Test-IQReportKnownNoModel -ReportId $work.ReportId.ToUpperInvariant() | Should -BeTrue
+        $second = Invoke-IQReportModelExtract -Work $work
+        $second.Success | Should -BeFalse
+        $second.Message | Should -Match 'earlier run found no embedded model'
+        $script:ToolCalls.Count | Should -Be 2 -Because 'pbi-tools is not started again'
+        $script:IQ.Options['NoQuarantine'] = $true
+        Test-IQReportKnownNoModel -ReportId $work.ReportId | Should -BeFalse -Because '-NoQuarantine ignores the memory too'
+    }
+}
+

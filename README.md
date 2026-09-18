@@ -401,6 +401,9 @@ pass arguments (full list in [docs/Headless-and-Resume.md](docs/Headless-and-Res
 | `-NonInteractive` | automatic under `TF_BUILD` / `CI` | no dialogs, no browser; no scope = stop |
 | `-AllWorkspaces`, `-WorkspaceName`, `-WorkspaceId`, `-IncludeMyWorkspace` | | scope in `Workspaces` mode (`-WorkspaceName` takes `-like` wildcards) |
 | `-RunMode Reports -ReportId ...`, `-RunMode Models -DatasetId ...` | | scope by report or model; connected objects are added automatically |
+| `-ExcludeWorkspaceId`, `-ExcludeWorkspaceName` | | workspaces never scanned, whatever selects them (ids, or `-like` name patterns) |
+| `-NoQuarantine` | | ignore `Config\ReportExportQuarantine.csv` and `State\report-memory.json` for this run (see below) |
+| `-NoKeepAwake` | | do not stop Windows from sleeping during the run (on by default) |
 | `-Stages`, `-SkipStages` | | `Inventory, ModelBackup, ReportBackup, ReportDetail, ModelDetail, Dataflows, Extras, Assemble` |
 | `-Resume Auto\|Always\|Never`, `-Force`, `-RefreshInventory` | | resume rules |
 | `-TimeBudgetMinutes` | | stop cleanly N minutes after start, exit `3`, resume next run |
@@ -408,6 +411,19 @@ pass arguments (full list in [docs/Headless-and-Resume.md](docs/Headless-and-Res
 | `-IncludeUsageMetrics`, `-IncludeAdminApis`, `-ActivityDays` | | optional extra sheets |
 | `-SkipToolUpdate` | `IMPACTIQ_OFFLINE=1` | no Tabular Editor / pbi-tools downloads |
 | `-Verbose` | `IMPACTIQ_DEBUG=1` | echo Debug lines (always in the log file) |
+
+Two files remember what the service will never give you, so later runs do not spend the calls:
+
+- `Config\ReportExportQuarantine.csv` lists reports that are skipped by the ReportBackup stage. Columns `ReportId,
+  ReportName, WorkspaceName, Reason, IsActive`; `ReportName` and `WorkspaceName` take `-like` wildcards, an empty
+  `WorkspaceName` matches every workspace. It ships with one row that excludes the service's own `*Usage Metrics
+  Report*` reports, and the tool appends a row itself when the Export API refuses a report for good (401/403
+  `ModelExportActionDenied`, or no PBIX behind the item). Set `IsActive` to `false` or delete the row to retry.
+- `State\report-memory.json` remembers reports whose PBIX holds no embedded model (pbi-tools exit code -8: live
+  connection or service-authored report), so the extraction is not repeated. Delete the file to forget.
+
+When the Export API refuses an `IncludeModel` download, the report is retried as `LiveConnect` (layout without the
+model), which keeps ReportDetail working; ModelDetail then reads that model over DAX.
 
 Examples:
 

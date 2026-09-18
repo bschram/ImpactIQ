@@ -224,6 +224,16 @@ Describe 'ConvertTo-IQSheetTable typing, fast paths and Excel limits (ASM-01, AS
         $t.Columns['V'].DataType | Should -Be ([string])
         $t.Rows[0]['V'] | Should -Be '1.5'
     }
+    It 'strips characters Excel cannot store (control characters, lone surrogates) but keeps tabs, newlines and emoji (recovered-build port)' {
+        $bell = [string][char]7
+        $emoji = [char]::ConvertFromUtf32(0x1F600)
+        $lone = [string][char]0xD83D
+        $rows = @([pscustomobject]@{ Expr = ('SUM(' + $bell + 'x)' + "`t" + "line`r`n" + $emoji + $lone) }, [pscustomobject]@{ Expr = 'clean' })
+        $t = ConvertTo-IQSheetTable -Rows $rows -SheetName 'T'
+        [string]$t.Rows[0]['Expr'] | Should -Be ('SUM(x)' + "`t" + "line`r`n" + $emoji)
+        [string]$t.Rows[1]['Expr'] | Should -Be 'clean'
+        [int]$t.ExtendedProperties['Sanitised'] | Should -Be 1
+    }
     It 'truncates cells beyond 32,767 characters and counts them' {
         $t = ConvertTo-IQSheetTable -Rows @([pscustomobject]@{ V = ('x' * 40000) }) -SheetName 'T'
         ([string]$t.Rows[0]['V']).Length | Should -Be 32767
