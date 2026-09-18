@@ -72,6 +72,16 @@
     Report ids (Reports mode). Their datasets and dataset workspaces are included automatically.
 .PARAMETER DatasetId
     Semantic model ids (Models mode). Every accessible report using them is included automatically.
+.PARAMETER ExcludeWorkspaceId
+    Workspace ids never scanned, whatever selects them (-AllWorkspaces, a name pattern, the interactive picker or a
+    resumed run's scope). Comma-separated or repeated.
+.PARAMETER ExcludeWorkspaceName
+    Workspace name patterns (-like wildcards) never scanned; same rules as -ExcludeWorkspaceId.
+.PARAMETER NoQuarantine
+    Ignore Config\ReportExportQuarantine.csv and State\report-memory.json for this run: every report is exported and
+    every PBIX extracted again, and nothing new is recorded in either file.
+.PARAMETER NoKeepAwake
+    Do not stop Windows from sleeping while the run lasts (by default the machine stays awake until ImpactIQ ends).
 .PARAMETER Stages
     Only run these stages (canonical order is kept): Inventory, ModelBackup, ReportBackup, ReportDetail, ModelDetail,
     Dataflows, Extras, Assemble - as an array or one comma/semicolon-separated string (powershell.exe -File form).
@@ -162,6 +172,10 @@ param(
     [Parameter(Mandatory = $false)][switch]$IncludeMyWorkspace,
     [Parameter(Mandatory = $false)][string[]]$ReportId,
     [Parameter(Mandatory = $false)][string[]]$DatasetId,
+    [Parameter(Mandatory = $false)][string[]]$ExcludeWorkspaceId,
+    [Parameter(Mandatory = $false)][string[]]$ExcludeWorkspaceName,
+    [Parameter(Mandatory = $false)][switch]$NoQuarantine,
+    [Parameter(Mandatory = $false)][switch]$NoKeepAwake,
     # No [ValidateSet]: "powershell.exe -File ImpactIQ.ps1 -Stages Inventory,Assemble" (Task Scheduler / runas) binds the
     # comma list as ONE string, which a ValidateSet rejects before the script body runs; Get-IQEntryStageList splits
     # and validates instead (unknown names throw). The completer keeps tab completion for console use.
@@ -714,6 +728,10 @@ try {
         IncludeMyWorkspace      = [bool]$IncludeMyWorkspace
         ReportId                = @($ReportId)
         DatasetId               = @($DatasetId)
+        ExcludeWorkspaceId      = @($ExcludeWorkspaceId)
+        ExcludeWorkspaceName    = @($ExcludeWorkspaceName)
+        NoQuarantine            = [bool]$NoQuarantine
+        NoKeepAwake             = [bool]$NoKeepAwake
         Stages                  = @($Stages)
         SkipStages              = @($SkipStages)
         RunId                   = $RunId
@@ -749,6 +767,7 @@ try {
     Write-IQEntryMessage -Level Info -Message ('ImpactIQ v3 starting. BaseFolder={0} PowerShell={1} Host={2} Interactive={3} AzureDevOps={4}' -f `
             $script:IQ.BaseFolder, $PSVersionTable.PSVersion, $Host.Name, $script:IQ.Interactive, $script:IQ.IsAzureDevOps)
     Write-IQEntryMessage -Level Info -Message ('Log file: {0}' -f $script:IQ.LogFile)
+    if (-not $NoKeepAwake) { Enable-IQKeepAwake | Out-Null }
     if ($script:IQ.BackupFolder -ne $script:IQ.BaseFolder -or $script:IQ.OutputFolder -ne $script:IQ.BaseFolder) {
         Write-IQEntryMessage -Level Info -Message ('Backups: {0} | Workbooks: {1}' -f $script:IQ.BackupFolder, $script:IQ.OutputFolder)
     }
@@ -888,6 +907,7 @@ catch {
     }
 }
 finally {
+    if (Get-Command -Name Disable-IQKeepAwake -ErrorAction SilentlyContinue) { try { Disable-IQKeepAwake } catch { $null = $_ } }
     # The manifest must reflect reality even when we are being torn down.
     if ($script:IQ -and $null -ne $script:IQ.Manifest -and (Get-Command -Name Save-IQManifest -ErrorAction SilentlyContinue)) {
         try {

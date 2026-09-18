@@ -581,3 +581,23 @@ Describe 'Inventory metadata GETs use the short MetadataTimeoutSec (run assessme
         @($script:IQTestTimeouts | Where-Object { $_ -ne 45 }).Count | Should -Be 0 -Because 'the generic 300 s timeout must not apply to small metadata calls'
     }
 }
+
+Describe 'Workspace exclusions (-ExcludeWorkspaceId / -ExcludeWorkspaceName, recovered-build port 2026-09-18)' {
+    It 'excluded ids and name patterns are removed from -AllWorkspaces and logged once' {
+        Initialize-IQTestContext -Options @{ RunMode = 'Workspaces'; AllWorkspaces = $true; ExcludeWorkspaceId = @($script:Ids.ws1); ExcludeWorkspaceName = @('*Analytics') } -Prefix 'inv-exclude' | Out-Null
+        $s = Resolve-IQScope
+        @($s.WorkspaceIds).Count | Should -Be 2
+        @($s.WorkspaceIds) | Should -Not -Contain $script:Ids.ws1
+        @($s.WorkspaceIds) | Should -Not -Contain $script:Ids.ws3
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        ([regex]::Matches($log, 'excluded from the run by id')).Count | Should -Be 1
+        ([regex]::Matches($log, "excluded from the run by name pattern '\*Analytics'")).Count | Should -Be 1
+        Remove-IQTestFolder -Path $script:IQ.BaseFolder
+    }
+    It 'an explicitly selected workspace that is also excluded stays out' {
+        Initialize-IQTestContext -Options @{ RunMode = 'Workspaces'; WorkspaceId = @($script:Ids.ws1, $script:Ids.ws2); ExcludeWorkspaceId = @($script:Ids.ws2) } -Prefix 'inv-exclude2' | Out-Null
+        @((Resolve-IQScope).WorkspaceIds) | Should -Be @($script:Ids.ws1)
+        Remove-IQTestFolder -Path $script:IQ.BaseFolder
+    }
+}
+

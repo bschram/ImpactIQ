@@ -189,3 +189,24 @@ ModelID convention follow the workspace listing (inferred capacity still drives 
 `Measure Lineage` drops blank keys so an unresolved model can never fail the load again. Re-run
 `-Stages ModelDetail -Force` (or a full run) to restamp the three CSVs.
 
+## 10. Port from the recovered build (branch `bschram_updates`, 2026-09-18)
+
+The recovered fork of the first upstream monolith was compared feature by feature with v3 (it has no common git
+ancestor). Already covered by v3: checkpoints and resume, the sovereign-cloud endpoint table, Fabric skipping in
+GCC, pbi-tools extraction with the subst drive letter and Raw serialisation, exit code -8 handling, the
+Database.Name/ID rename, scorecard and export-denied classification, per-item failure records, retry wrappers and
+token refresh (silent through Az.Accounts in v3). Ported in this round:
+
+| # | Feature | Where |
+|---|---|---|
+| 2 | `IncludeModel` refused (401/403, `ModelExportActionDenied`) -> retried as `LiveConnect` | `Invoke-IQReportBackupStage`, `Test-IQReportExportDenied` |
+| 3 | Excel-safe text: characters illegal in XML are removed from every string cell (valid surrogate pairs kept), counted per sheet | `$script:IQXmlUnsafeRegex`, `ConvertTo-IQXmlSafeText` (Common), `ConvertTo-IQSheetTable` (Assemble) |
+| 4 | Quarantine list `Config\ReportExportQuarantine.csv` (wildcards, workspace filter, IsActive; auto-append after a permanent refusal) and `State\report-memory.json` (PBIX without an embedded model, exit -8) | `Get-IQReportQuarantineList` / `-Match` / `Add-IQReportQuarantineEntry`, `Test-IQReportKnownNoModel` / `Add-IQReportKnownNoModel`; `-NoQuarantine` |
+| 5 | `-ExcludeWorkspaceId` / `-ExcludeWorkspaceName` applied before the scope is resolved (also on resume and to the picker) | `Remove-IQScopeExcludedWorkspace` (Inventory) |
+| 6 | Keep-awake (`SetThreadExecutionState` ES_SYSTEM_REQUIRED) for the whole run on Windows, `-NoKeepAwake` to opt out | `Enable-IQKeepAwake` / `Disable-IQKeepAwake` (Common), entry point |
+
+Not ported, and why: re-auth email/SMS notifications and the pause-and-wait loop (v3 mints tokens silently and a
+failed item resumes on the next start), workbook append mode (unbounded growth; dated `Outputs` folders keep history),
+runspace-pool parallel inventory (429 risk for a stage that takes minutes), the report change-detection fingerprint
+(hashes ids and URLs only, so it is "exported once, never again").
+

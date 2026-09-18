@@ -517,6 +517,97 @@ function Get-IQDateFolder {
     return $best.FullName
 }
 
+function Enable-IQKeepAwake {
+    <#
+    .SYNOPSIS
+        Keeps Windows from sleeping while the run lasts (SetThreadExecutionState ES_SYSTEM_REQUIRED); returns $true when enabled.
+    .DESCRIPTION
+        Port of the recovered build's Set-ExecutionKeepAwake: a workstation that sleeps or locks mid-run drops the
+        network and the run ends CompletedWithErrors. Only the system-required flag is set (the display may still
+        turn off); a compile or P/Invoke failure (constrained language mode, non-Windows) is logged at Debug and the
+        run continues. Disable-IQKeepAwake restores the default at the end of the run.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    if (-not $script:IQ -or -not $script:IQ.IsWindows) { return $false }
+    try {
+        if (-not ('ImpactIQ.NativePower' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace ImpactIQ {
+    public static class NativePower {
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern uint SetThreadExecutionState(uint esFlags);
+    }
+}
+'@ -ErrorAction Stop
+        }
+        [uint32]$continuous = 2147483648   # ES_CONTINUOUS
+        [uint32]$systemRequired = 1        # ES_SYSTEM_REQUIRED
+        $previous = [ImpactIQ.NativePower]::SetThreadExecutionState($continuous -bor $systemRequired)
+        if ($previous -eq 0) { Write-IQLog -Level Debug -Message 'SetThreadExecutionState returned 0; sleep prevention not enabled.'; return $false }
+        $script:IQ['KeepAwake'] = $true
+        Write-IQLog -Level Info -Message 'Sleep prevention enabled for this run (the machine stays awake until ImpactIQ finishes).'
+        return $true
+    }
+    catch {
+        Write-IQLog -Level Debug -Message ('Sleep prevention not available: ' + $_.Exception.Message)
+        return $false
+    }
+}
+
+function Disable-IQKeepAwake {
+    <#
+    .SYNOPSIS
+        Clears the sleep prevention set by Enable-IQKeepAwake (no-op when it was never enabled).
+    #>
+    [CmdletBinding()]
+    param()
+    if (-not $script:IQ -or -not $script:IQ.ContainsKey('KeepAwake') -or -not $script:IQ['KeepAwake']) { return }
+    try {
+        if ('ImpactIQ.NativePower' -as [type]) { [void][ImpactIQ.NativePower]::SetThreadExecutionState([uint32]2147483648) }
+        $script:IQ['KeepAwake'] = $false
+        Write-IQLog -Level Debug -Message 'Sleep prevention cleared.'
+    }
+    catch { Write-IQLog -Level Debug -Message ('Sleep prevention could not be cleared: ' + $_.Exception.Message) }
+}
+
+# Characters that XML 1.0 (and therefore a worksheet cell) cannot hold: C0 controls other than TAB/LF/CR, the two
+# non-characters U+FFFE/U+FFFF, and lone surrogates. Valid surrogate PAIRS (emoji) are kept.
+$script:IQXmlUnsafeRegex = New-Object System.Text.RegularExpressions.Regex -ArgumentList @('[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]', [System.Text.RegularExpressions.RegexOptions]::Compiled)
+
+function Test-IQXmlUnsafeText {
+    <#
+    .SYNOPSIS
+        $true when the text contains a character that is illegal in XML 1.0 (see $script:IQXmlUnsafeRegex).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $false }
+    return $script:IQXmlUnsafeRegex.IsMatch($Text)
+}
+
+function ConvertTo-IQXmlSafeText {
+    <#
+    .SYNOPSIS
+        Removes the characters that are illegal in XML 1.0 (and therefore in a worksheet cell); valid surrogate pairs (emoji) are kept.
+    .DESCRIPTION
+        Port of the recovered build's Convert-ToExcelSafeText. A single control character in a measure expression or a
+        description makes EPPlus throw for the whole sheet, and Write-IQWorkbook then writes that sheet header-only, so
+        every string cell goes through this before Export-Excel (ConvertTo-IQSheetTable). TAB, LF and CR are legal
+        and kept.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    if (-not $script:IQXmlUnsafeRegex.IsMatch($Text)) { return $Text }
+    return $script:IQXmlUnsafeRegex.Replace($Text, '')
+}
+
 function Test-IQInteractive {
     <#
     .SYNOPSIS

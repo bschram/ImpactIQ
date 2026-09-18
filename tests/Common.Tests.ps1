@@ -418,3 +418,24 @@ Describe 'Test-IQDedicatedCapacity (run assessment 2026-09-15, fix 5)' {
         Test-IQDedicatedCapacity -Workspace ([pscustomobject]@{ WorkspaceName = 'x' }) | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Keep-awake and XML-safe text helpers (recovered-build port 2026-09-18)' {
+    It 'ConvertTo-IQXmlSafeText removes only the characters XML cannot hold' {
+        $bell = [string][char]7
+        $emoji = [char]::ConvertFromUtf32(0x1F602)
+        Test-IQXmlUnsafeText -Text 'plain' | Should -BeFalse
+        Test-IQXmlUnsafeText -Text ('a' + $bell) | Should -BeTrue
+        Test-IQXmlUnsafeText -Text $emoji | Should -BeFalse -Because 'a valid surrogate pair is legal'
+        Test-IQXmlUnsafeText -Text ([string][char]0xDC00) | Should -BeTrue -Because 'a lone low surrogate is not'
+        ConvertTo-IQXmlSafeText -Text ('x' + $bell + "`t" + $emoji + [string][char]0xFFFF) | Should -Be ('x' + "`t" + $emoji)
+        ConvertTo-IQXmlSafeText -Text '' | Should -Be ''
+        ConvertTo-IQXmlSafeText -Text $null | Should -BeNullOrEmpty
+    }
+    It 'Enable-IQKeepAwake is a logged no-op off Windows and Disable-IQKeepAwake never throws' {
+        if ($script:IQ.IsWindows) { Set-ItResult -Skipped -Because 'this assertion targets non-Windows hosts'; return }
+        Enable-IQKeepAwake | Should -BeFalse
+        $script:IQ.ContainsKey('KeepAwake') | Should -BeFalse
+        { Disable-IQKeepAwake } | Should -Not -Throw
+    }
+}
+

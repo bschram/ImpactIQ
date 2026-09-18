@@ -829,6 +829,41 @@ function Write-IQScopeSummary {
     }
 }
 
+function Remove-IQScopeExcludedWorkspace {
+    <#
+    .SYNOPSIS
+        Drops the workspaces named by Options.ExcludeWorkspaceId (exact ids) / Options.ExcludeWorkspaceName (-like patterns) from a workspace list; logs each exclusion once per run.
+    .DESCRIPTION
+        Port of the recovered build's ExcludeWorkspaceIds setting. Exclusions apply before the scope is resolved, so an
+        excluded workspace is neither scanned, offered by the interactive picker, nor re-added by a resumed run's
+        persisted scope. My Workspace is governed by -IncludeMyWorkspace only.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyCollection()][array]$Workspaces)
+    $ids = @(ConvertTo-IQIdList -Value (Get-IQInventoryOption -Name 'ExcludeWorkspaceId'))
+    $names = @(ConvertTo-IQIdList -Value (Get-IQInventoryOption -Name 'ExcludeWorkspaceName') -NoSplit)
+    if ($ids.Count -eq 0 -and $names.Count -eq 0) { return @($Workspaces) }
+    $kept = New-Object System.Collections.Generic.List[object]
+    foreach ($w in @($Workspaces)) {
+        if ($null -eq $w) { continue }
+        $id = [string](Get-IQMemberValue -Object $w -Name 'WorkspaceId')
+        $name = [string](Get-IQMemberValue -Object $w -Name 'WorkspaceName')
+        $why = $null
+        foreach ($x in $ids) { if ($id -ieq $x) { $why = 'id ' + $x; break } }
+        if ($null -eq $why) { foreach ($p in $names) { if ($name -like $p) { $why = "name pattern '" + $p + "'"; break } } }
+        if ($null -ne $why) {
+            $key = 'ExcludedWorkspaceLogged:' + $id.ToLowerInvariant()
+            if (-not $script:IQ.ContainsKey($key)) {
+                $script:IQ[$key] = $true
+                Write-IQLog -Level Info -Stage Inventory -Message ("Workspace '{0}' ({1}) excluded from the run by {2}." -f $name, $id, $why)
+            }
+            continue
+        }
+        $kept.Add($w)
+    }
+    return $kept.ToArray()
+}
+
 function Resolve-IQScope {
     <#
     .SYNOPSIS
@@ -894,6 +929,7 @@ function Resolve-IQScope {
                 if ($null -eq $Workspaces) { $Workspaces = @(Get-IQWorkspaceList) }
                 $real = @((Select-IQScopeWorkspace -Workspaces $Workspaces -Ids $persisted.WorkspaceIds).Selected)
             }
+            $real = @(Remove-IQScopeExcludedWorkspace -Workspaces $real)
             $persisted.Workspaces = @($real)
             if ($real.Count -gt 0) {
                 $persisted.WorkspaceIds = @($real | ForEach-Object { [string]$_.WorkspaceId })
@@ -907,7 +943,7 @@ function Resolve-IQScope {
 
     # ---- list workspaces (throws when the listing fails: no scope can be resolved without it, audit C4-03) ----
     if ($null -eq $Workspaces) { $Workspaces = @(Get-IQWorkspaceList) }
-    $Workspaces = @($Workspaces)
+    $Workspaces = @(Remove-IQScopeExcludedWorkspace -Workspaces @($Workspaces))
 
     $source = 'Parameters'
     if (-not $haveScopeParameters) {

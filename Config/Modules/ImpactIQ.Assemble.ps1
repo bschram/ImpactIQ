@@ -645,6 +645,7 @@ function ConvertTo-IQSheetTable {
     }
 
     $truncated = 0
+    $sanitised = 0
     $cellLimit = [int]$script:IQExcelCellLimit
     for ($ri = 0; $ri -lt $rowNames.Count; $ri++) {
         $names = $rowNames[$ri]; $values = $rowValues[$ri]
@@ -655,6 +656,10 @@ function ConvertTo-IQSheetTable {
             $c = $names[$i]
             if ($isText[$c]) {
                 if ($v -is [string]) { $text = $v } else { $text = ConvertTo-IQAsmCellText -Value $v }
+                # A character that is illegal in XML (control char, lone surrogate) would make EPPlus reject the whole
+                # sheet; strip it here (recovered build's Convert-ToExcelSafeText). The IsMatch pre-check keeps the
+                # common clean cell on the fast path.
+                if ($text.Length -gt 0 -and $script:IQXmlUnsafeRegex.IsMatch($text)) { $text = $script:IQXmlUnsafeRegex.Replace($text, ''); $sanitised++ }
                 if ($text.Length -gt $cellLimit) { $text = $text.Substring(0, $cellLimit); $truncated++ }
                 $dr[$ordinal[$c]] = $text
                 continue
@@ -669,6 +674,10 @@ function ConvertTo-IQSheetTable {
         $table.Rows.Add($dr)
     }
     $table.ExtendedProperties['Truncated'] = $truncated
+    $table.ExtendedProperties['Sanitised'] = $sanitised
+    if ($sanitised -gt 0) {
+        Write-IQLog -Level Info -Stage 'Assemble' -Item $SheetName -Message ("{0} cell(s) contained characters that Excel cannot store (control characters or lone surrogates); they were removed." -f $sanitised)
+    }
     $table.ExtendedProperties['TruncatedRows'] = $truncatedRows
     $table.ExtendedProperties['SourceRows'] = $rowNames.Count + $truncatedRows
     if ($truncated -gt 0) {
