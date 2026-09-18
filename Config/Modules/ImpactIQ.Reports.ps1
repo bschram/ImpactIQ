@@ -1034,6 +1034,201 @@ function Export-IQReportUsingApi {
     }
 }
 
+# =====================================================================================================================
+# Web-UI export endpoint (port of the recovered build): the Export API refuses a report whose model uses the large
+# semantic model storage format (HTTP 400 ...PremiumFiles...), but the endpoint app.powerbi.com itself uses for
+# "Download this file" still serves it: GET https://<wabi cluster>/export/v202402/reports/{id}/pbix?downloadType=0,
+# polled until it answers a SAS url, then the file is downloaded from that url. The cluster host is the host the
+# report URL redirects to (wabi-<region>-redirect.analysis.<cloud>). This endpoint is NOT a documented API: it is
+# used only after that specific refusal, -NoWebUiExportFallback turns it off, -WebUiClusterHost pins the host.
+# =====================================================================================================================
+
+function Test-IQReportWebUiFallbackEnabled {
+    <#
+    .SYNOPSIS
+    $false when the run was started with -NoWebUiExportFallback (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    try { return (-not [bool](Get-IQReportOption -Name 'NoWebUiExportFallback' -Default $false)) } catch { return $true }
+}
+
+function Test-IQReportPremiumFilesRefusal {
+    <#
+    .SYNOPSIS
+    $true when the last Export API failure was the large-storage-format refusal (...PremiumFiles...) (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    if (-not $script:IQ -or -not $script:IQ.ContainsKey('LastExportError') -or $null -eq $script:IQ['LastExportError']) { return $false }
+    $e = $script:IQ['LastExportError']
+    $text = [string](Get-IQReportMember -Object $e -Name 'Code') + ' ' + [string](Get-IQReportMember -Object $e -Name 'Message')
+    return ($text -match '(?i)PremiumFiles')
+}
+
+function Get-IQReportClusterHostFromLocation {
+    <#
+    .SYNOPSIS
+    Extracts the wabi cluster host from a redirect target (absolute or relative to -BaseUrl); $null when it is not a wabi host (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Location,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$BaseUrl
+    )
+    if ([string]::IsNullOrWhiteSpace($Location)) { return $null }
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($Location, [System.UriKind]::Absolute, [ref]$uri)) {
+        $base = $null
+        if (-not [string]::IsNullOrWhiteSpace($BaseUrl) -and [System.Uri]::TryCreate($BaseUrl, [System.UriKind]::Absolute, [ref]$base)) {
+            if (-not [System.Uri]::TryCreate($base, $Location, [ref]$uri)) { $uri = $null }
+        }
+    }
+    if ($null -eq $uri) { return $null }
+    if ($uri.Host -match '(?i)^wabi-[a-z0-9-]+\.analysis\.') { return $uri.Host.ToLowerInvariant() }
+    return $null
+}
+
+function Resolve-IQReportClusterHost {
+    <#
+    .SYNOPSIS
+    Finds the wabi cluster host serving a report: -WebUiClusterHost, else the redirect of the report URL (cached per workspace); $null when unknown.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Work,
+        [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup'
+    )
+    $pinned = ''
+    try { $pinned = [string](Get-IQReportOption -Name 'WebUiClusterHost' -Default '') } catch { $pinned = '' }
+    if (-not [string]::IsNullOrWhiteSpace($pinned)) { return $pinned.Trim().ToLowerInvariant() }
+    if (-not $script:IQ.ContainsKey('ReportClusterHosts') -or $null -eq $script:IQ['ReportClusterHosts']) { $script:IQ['ReportClusterHosts'] = @{} }
+    $cache = $script:IQ['ReportClusterHosts']
+    $wsKey = ([string]$Work.WorkspaceId).ToLowerInvariant()
+    if ($cache.ContainsKey($wsKey)) { return $cache[$wsKey] }
+    $webPrefix = ''
+    try { $webPrefix = [string]$script:IQ.Endpoints.WebPrefix } catch { $webPrefix = '' }
+    $candidates = @()
+    $reportUrl = [string](Get-IQReportMember -Object $Work.Report -Name 'ReportWebUrl')
+    if (-not [string]::IsNullOrWhiteSpace($reportUrl)) { $candidates += $reportUrl }
+    if (-not [string]::IsNullOrWhiteSpace($webPrefix) -and (Test-IQReportGuid -Value ([string]$Work.WorkspaceId))) { $candidates += ($webPrefix.TrimEnd('/') + '/groups/' + [string]$Work.WorkspaceId + '/reports/' + [string]$Work.ReportId) }
+    $token = $null
+    try { $token = Get-IQHttpBearerToken -Api PowerBI } catch { $token = $null }
+    $found = $null
+    foreach ($candidate in @($candidates | Select-Object -Unique)) {
+        $headers = @{ Accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'; Referer = ($webPrefix.TrimEnd('/') + '/') }
+        if ($token) { $headers['Authorization'] = 'Bearer ' + $token }
+        $location = $null
+        try {
+            $response = Invoke-WebRequest -Uri $candidate -Method Head -Headers $headers -MaximumRedirection 0 -UseBasicParsing -TimeoutSec 60 -UserAgent 'ImpactIQ/3.0' -ErrorAction Stop
+            try { $location = [string]$response.Headers['Location'] } catch { $location = $null }
+            if ([string]::IsNullOrWhiteSpace($location)) { try { if ($response.BaseResponse.ResponseUri) { $location = [string]$response.BaseResponse.ResponseUri } } catch { $null = $_ } }
+        }
+        catch {
+            # 5.1 throws on a 3xx with -MaximumRedirection 0 (WebException), 7 throws HttpResponseException: the
+            # redirect target is on the response either way.
+            $resp = $null
+            try { $resp = $_.Exception.Response } catch { $resp = $null }
+            if ($null -ne $resp) {
+                try { $location = [string]$resp.Headers['Location'] } catch { $location = $null }
+                if ([string]::IsNullOrWhiteSpace($location)) { try { $location = [string]$resp.Headers.Location } catch { $location = $null } }
+            }
+            if ([string]::IsNullOrWhiteSpace($location)) { Write-IQLog -Level Debug -Stage $Stage -Item ([string]$Work.Item) -Message ("Cluster host probe {0}: {1}" -f $candidate, $_.Exception.Message) }
+        }
+        $found = Get-IQReportClusterHostFromLocation -Location $location -BaseUrl $candidate
+        if ($found) { break }
+    }
+    if ($found) {
+        $cache[$wsKey] = $found
+        Write-IQLog -Level Info -Stage $Stage -Item ([string]$Work.Item) -Message ("Report cluster host for workspace {0}: {1}" -f [string]$Work.WorkspaceName, $found)
+    }
+    else { Write-IQLog -Level Debug -Stage $Stage -Item ([string]$Work.Item) -Message 'No wabi cluster host found in the report URL redirect (use -WebUiClusterHost to pin one).' }
+    return $found
+}
+
+function Export-IQReportUsingWebUi {
+    <#
+    .SYNOPSIS
+    Exports a report through the web-UI export endpoint of its cluster (poll for a SAS url, then download); returns @{ Success; Message }.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Work,
+        [Parameter(Mandatory = $true)][string]$ClusterHost,
+        [Parameter(Mandatory = $true)][string]$OutFilePath,
+        [Parameter(Mandatory = $false)][int]$DownloadType = 0,
+        [Parameter(Mandatory = $false)][int]$MaxWaitSeconds = 300,
+        [Parameter(Mandatory = $false)][int]$PollIntervalSeconds = 5,
+        [Parameter(Mandatory = $false)][int]$MaxConflictRetries = 4,
+        [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup'
+    )
+    $item = [string]$Work.Item
+    $exportUrl = 'https://' + $ClusterHost.Trim('/') + '/export/v202402/reports/' + [string]$Work.ReportId + '/pbix?downloadType=' + $DownloadType
+    $webPrefix = ''
+    try { $webPrefix = [string]$script:IQ.Endpoints.WebPrefix } catch { $webPrefix = '' }
+    if ($MaxWaitSeconds -lt 10) { $MaxWaitSeconds = 10 }
+    if ($PollIntervalSeconds -lt 1) { $PollIntervalSeconds = 1 }
+    $partial = $OutFilePath + '.partial'
+    $elapsed = 0
+    $conflicts = 0
+    $sasUrl = $null
+    $lastStatus = ''
+    try {
+        Remove-IQReportPath -Path $partial
+        while ($true) {
+            $token = $null
+            try { $token = Get-IQHttpBearerToken -Api PowerBI } catch { $token = $null }
+            if ([string]::IsNullOrEmpty($token)) { return @{ Success = $false; Message = 'no Power BI access token for the web-UI export' } }
+            $headers = @{ Authorization = ('Bearer ' + $token); Accept = 'application/json, text/plain, */*'; Origin = $webPrefix.TrimEnd('/'); Referer = ($webPrefix.TrimEnd('/') + '/') }
+            $response = $null
+            try {
+                $response = Invoke-RestMethod -Method Get -Uri $exportUrl -Headers $headers -UseBasicParsing -TimeoutSec 120 -UserAgent 'ImpactIQ/3.0' -ErrorAction Stop
+            }
+            catch {
+                $info = Get-IQHttpErrorInfo -ErrorRecord $_
+                if ($info.StatusCode -eq 409 -and $conflicts -lt $MaxConflictRetries) {
+                    $conflicts++
+                    $wait = [math]::Min(20, 5 * $conflicts)
+                    Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("Web-UI export answered HTTP 409 (another export in progress); retry {0}/{1} in {2} s" -f $conflicts, $MaxConflictRetries, $wait)
+                    Start-Sleep -Seconds $wait
+                    $elapsed += $wait
+                    continue
+                }
+                $statusText = 'no response'
+                if ($null -ne $info.StatusCode) { $statusText = 'HTTP ' + $info.StatusCode }
+                $snippet = ([string]$info.Body -replace '\s+', ' ').Trim()
+                if ($snippet.Length -gt 300) { $snippet = $snippet.Substring(0, 300) + '...' }
+                return @{ Success = $false; Message = ('web-UI export endpoint refused (' + $statusText + '): ' + [string]$info.Message + $(if ($snippet) { ' ' + $snippet } else { '' })) }
+            }
+            $url = [string](Get-IQReportMember -Object $response -Name 'url')
+            if (-not [string]::IsNullOrWhiteSpace($url)) { $sasUrl = $url; break }
+            $lastStatus = [string](Get-IQReportMember -Object $response -Name 'status')
+            $elapsed += $PollIntervalSeconds
+            if ($elapsed -ge $MaxWaitSeconds) {
+                return @{ Success = $false; Message = ('web-UI export did not produce a download url within ' + $MaxWaitSeconds + ' s (last status: ' + $lastStatus + ')') }
+            }
+            Start-Sleep -Seconds $PollIntervalSeconds
+        }
+        $ok = Invoke-IQDownload -Url $sasUrl -OutFile $partial -Api PowerBI -NoAuth -TimeoutSec 600 -Stage $Stage
+        if ($ok -and (Test-IQReportFileHasContent -Path $partial)) {
+            Remove-IQReportPath -Path $OutFilePath
+            Move-Item -LiteralPath $partial -Destination $OutFilePath -Force -ErrorAction Stop
+            Write-IQLog -Level Debug -Stage $Stage -Item $item -Message ("Web-UI export wrote {0:N0} bytes" -f (Get-IQReportFileSize -Path $OutFilePath))
+            return @{ Success = $true; Message = 'exported through the web-UI endpoint' }
+        }
+        Remove-IQReportPath -Path $partial
+        return @{ Success = $false; Message = 'the web-UI export download produced an empty or missing file' }
+    }
+    catch {
+        Remove-IQReportPath -Path $partial
+        return @{ Success = $false; Message = ('web-UI export failed: ' + $_.Exception.Message) }
+    }
+}
+
 function Export-IQReportDefinitionAsPbix {
     <#
     .SYNOPSIS
@@ -1378,7 +1573,8 @@ function Invoke-IQReportModelExtract {
     param(
         [Parameter(Mandatory = $true)][hashtable]$Work,
         [Parameter(Mandatory = $false)][string]$Stage = 'ReportBackup',
-        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$BimOwners
+        [Parameter(Mandatory = $false)][AllowNull()][hashtable]$BimOwners,
+        [Parameter(Mandatory = $false)][switch]$NoLearn
     )
     $out = @{ Success = $false; BimPath = $null; Message = ''; Reused = $false; Renamed = $false }
     $item = [string]$Work.Item
@@ -1486,7 +1682,7 @@ function Invoke-IQReportModelExtract {
             # report): a fact about the report, remembered across runs (recovered build's KnownNoModel list).
             $out.Message = 'the PBIX has no embedded model (pbi-tools generate-bim exit code -8: live connection or service-authored report); ModelDetail reads the model over DAX'
             Write-IQLog -Level Info -Stage $Stage -Item $item -Message $out.Message
-            Add-IQReportKnownNoModel -Work $Work -Reason 'pbi-tools generate-bim exit code -8' -Stage $Stage | Out-Null
+            if (-not $NoLearn) { Add-IQReportKnownNoModel -Work $Work -Reason 'pbi-tools generate-bim exit code -8' -Stage $Stage | Out-Null }
             return $out
         }
         $bimFiles = @(Get-IQReportGeneratedBimFile -ExtractFolder $extractFolder -Target $target -ToolOutput ([string]$r2.StdOut + "`n" + [string]$r2.StdErr))
@@ -1701,7 +1897,7 @@ function Get-IQReportReusableExport {
     if ($null -eq $meta) { return $null }
     if ([string](Get-IQReportMember -Object $meta -Name 'ReportId') -ne [string]$Work.ReportId) { return $null }
     $method = [string](Get-IQReportMember -Object $meta -Name 'ExportMethod')
-    if ($method -notin @('IncludeModel', 'LiveConnect', 'getDefinition')) { return $null }
+    if ($method -notin @('IncludeModel', 'LiveConnect', 'getDefinition', 'WebUI')) { return $null }
     return $meta
 }
 
@@ -1933,6 +2129,23 @@ function Invoke-IQReportBackupStage {
                 }
             }
 
+            if (-not $exported -and $null -eq $reusable -and $isGuid -and -not $w.IsPaginated -and (Test-IQReportWebUiFallbackEnabled) -and (Test-IQReportPremiumFilesRefusal)) {
+                # Large-storage-format model: the Export API refuses the PBIX (400 PremiumFiles) but the endpoint the
+                # portal itself uses still serves it. Unsupported endpoint; only reached after that exact refusal.
+                $clusterHost = Resolve-IQReportClusterHost -Work $w -Stage $stage
+                if ($clusterHost) {
+                    Write-IQLog -Level Warn -Stage $stage -Item $item -Message ('Export API refused the report (large semantic model storage format); trying the web-UI export endpoint on ' + $clusterHost + ' (unsupported endpoint; -NoWebUiExportFallback disables it).')
+                    $webUi = Export-IQReportUsingWebUi -Work $w -ClusterHost $clusterHost -OutFilePath $w.FilePath -Stage $stage
+                    if ($webUi.Success) {
+                        $exported = $true
+                        $method = 'WebUI'
+                        $definition = $null
+                        $notes += 'Export API refused the large-format model (PremiumFiles); exported through the web-UI endpoint'
+                    }
+                    else { $notes += ('web-UI export failed: ' + [string]$webUi.Message) }
+                }
+                else { $notes += 'web-UI export not attempted: the report cluster host could not be resolved (use -WebUiClusterHost)' }
+            }
             $definitionFormat = ''
             if ($null -ne $definition -and $definition.Success) { $definitionFormat = [string]$definition.Format }
             elseif ($null -ne $reusable) { $definitionFormat = [string](Get-IQReportMember -Object $reusable -Name 'DefinitionFormat') }
@@ -1973,8 +2186,9 @@ function Invoke-IQReportBackupStage {
             $outputs = @([string]$w.FilePath)
             $modelExtract = ''
             $bimPath = $null
-            if (-not $w.IsDedicated -and $method -eq 'IncludeModel' -and -not $w.IsPaginated) {
-                $mx = Invoke-IQReportModelExtract -Work $w -Stage $stage -BimOwners $bimOwners
+            if (-not $w.IsDedicated -and ($method -eq 'IncludeModel' -or $method -eq 'WebUI') -and -not $w.IsPaginated) {
+                # A web-UI PBIX may or may not embed the model, so a "no model" answer from it is not remembered.
+                $mx = Invoke-IQReportModelExtract -Work $w -Stage $stage -BimOwners $bimOwners -NoLearn:($method -eq 'WebUI')
                 $modelExtract = [string]$mx.Message
                 if ($mx.Success) {
                     $bimPath = [string]$mx.BimPath

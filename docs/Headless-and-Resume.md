@@ -39,6 +39,8 @@ Contents: 1 parameters - 2 examples - 3 state layout and manifest - 4 resume rul
 | `-ExcludeWorkspaceName <pattern,...>` | none | same, by `-like` name pattern |
 | `-NoQuarantine` | off | ignore `Config\ReportExportQuarantine.csv` (reports the service refuses; user rows with wildcards + rows the tool adds after a 401/403 / no-PBIX answer) and `State\report-memory.json` (PBIX files without an embedded model, pbi-tools exit -8); nothing is recorded either |
 | `-NoKeepAwake` | off | do not call `SetThreadExecutionState`; by default a Windows host stays awake until the run ends |
+| `-NoWebUiExportFallback` | off | do not retry a report the Export API refused with `PremiumFiles` (large storage format) through the portal's own export endpoint `https://<cluster>/export/v202402/reports/<id>/pbix` (undocumented; polled for a download URL, then downloaded; method `WebUI`) |
+| `-WebUiClusterHost <host>` | from the report URL redirect | pins the `wabi-...analysis...` cluster host used by that fallback |
 | `-MaxRetries <int>` | `5` | HTTP retries for 5xx/network errors (429 has its own 8-retry budget honouring `Retry-After`) |
 | `-MetadataTimeoutSec <int>` | `90` | per-request timeout for the Inventory metadata GETs (minimum 10). They normally answer in a few seconds, so a service-side hang fails fast and is retried instead of waiting the generic 300 s; downloads, `executeQueries` and the admin scanner keep their own longer timeouts |
 | `-DefinitionTimeoutMinutes <int>` | `10` | timeout for Fabric `getDefinition` long-running operations (report, dataflow and semantic-model definitions) |

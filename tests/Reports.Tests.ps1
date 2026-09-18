@@ -403,3 +403,111 @@ Describe 'Recovered-build ports: quarantine list, LiveConnect fallback, known-no
     }
 }
 
+Describe 'Web-UI export fallback for large-storage-format reports (recovered-build port 2026-09-18)' {
+    BeforeAll {
+        $script:Base = Initialize-IQTestContext -Options @{ Environment = 'USGov' } -Prefix 'reports-webui' -RunId '2026-09-18'
+        $script:RunFolder = Get-IQReportRunFolder
+        $script:Workspaces = @([pscustomobject]@{ WorkspaceId = $script:Ids.ws1; WorkspaceName = 'Finance'; WorkspaceIsOnDedicatedCapacity = $false })
+        Mock Get-IQSelectedWorkspaces { $script:Workspaces }
+        Mock Get-IQSelectedDatasets { @() }
+        Mock Get-IQReportsWithSensitivityLabel { @{} }
+        Mock Export-IQReportDefinitionAsPbix { @{ Success = $false; Format = ''; Message = 'Fabric API not offered' } }
+        Mock Get-IQHttpBearerToken { 'pbi-token' }
+        $script:PremiumReport = [pscustomobject]@{ ReportId = $script:Ids.r1; ReportName = 'Large Model Report'; ReportType = 'PowerBIReport'; ReportWebUrl = 'https://app.powerbigov.us/groups/' + $script:Ids.ws1 + '/reports/' + $script:Ids.r1; WorkspaceId = $script:Ids.ws1; WorkspaceName = 'Finance'; DatasetId = $script:Ids.d1; DatasetName = 'Large Model'; ReportIsFromPbix = $true }
+        Mock Get-IQSelectedReports { @($script:PremiumReport) }
+        Mock Invoke-IQDownload {
+            $script:Downloads.Add($Url)
+            if ($Url -like '*downloadType=*') {
+                $script:IQ['LastHttpError'] = @{ StatusCode = 400; Body = '{"error":{"code":"ServerError_PremiumFilesErrors_OperationIsNotSupportedForPremiumFilesModel"}}'; Message = 'HTTP 400'; Url = $Url; Method = 'GET' }
+                return $false
+            }
+            Write-TestPbix -Path $OutFile; return $true   # the SAS download
+        }
+        function Reset-Checkpoints { param([string]$Key) $p = Join-Path (Join-Path (Join-Path $script:IQ.RunPath 'done') 'ReportBackup') ($Key + '.json'); if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:Base }
+    BeforeEach {
+        $script:Downloads = New-Object System.Collections.Generic.List[string]
+        $script:IQ['LastExportError'] = $null; $script:IQ['LastHttpError'] = $null
+        $script:IQ.Options['NoWebUiExportFallback'] = $false; $script:IQ.Options['WebUiClusterHost'] = ''
+        $script:IQ.Remove('ReportClusterHosts')
+        Reset-Checkpoints -Key $script:Ids.r1
+    }
+    It 'Get-IQReportClusterHostFromLocation accepts absolute and relative redirects to a wabi host only' {
+        Get-IQReportClusterHostFromLocation -Location 'https://WABI-US-GOV-IOWA-redirect.analysis.usgovcloudapi.net/reportEmbed?x=1' | Should -Be 'wabi-us-gov-iowa-redirect.analysis.usgovcloudapi.net'
+        Get-IQReportClusterHostFromLocation -Location 'https://login.microsoftonline.com/x' | Should -BeNullOrEmpty
+        Get-IQReportClusterHostFromLocation -Location '/groups/x/reports/y' -BaseUrl 'https://app.powerbigov.us/' | Should -BeNullOrEmpty
+        Get-IQReportClusterHostFromLocation -Location '' | Should -BeNullOrEmpty
+    }
+    It 'Resolve-IQReportClusterHost honours -WebUiClusterHost without a request and caches a probed host per workspace' {
+        $work = @{ Item = 'Finance ~ Large'; WorkspaceId = $script:Ids.ws1; WorkspaceName = 'Finance'; ReportId = $script:Ids.r1; Report = $script:PremiumReport }
+        $script:IQ.Options['WebUiClusterHost'] = 'Wabi-Pinned.analysis.usgovcloudapi.net'
+        Resolve-IQReportClusterHost -Work $work | Should -Be 'wabi-pinned.analysis.usgovcloudapi.net'
+        $script:IQ.Options['WebUiClusterHost'] = ''
+        $script:Probes = 0
+        Mock Invoke-WebRequest { $script:Probes++; return [pscustomobject]@{ Headers = @{ Location = 'https://wabi-us-gov-iowa-redirect.analysis.usgovcloudapi.net/' }; BaseResponse = $null } }
+        Resolve-IQReportClusterHost -Work $work | Should -Be 'wabi-us-gov-iowa-redirect.analysis.usgovcloudapi.net'
+        Resolve-IQReportClusterHost -Work $work | Should -Be 'wabi-us-gov-iowa-redirect.analysis.usgovcloudapi.net'
+        $script:Probes | Should -Be 1 -Because 'the host is cached per workspace'
+    }
+    It 'Export-IQReportUsingWebUi polls past a 409 and a pending status, then downloads the SAS url' {
+        $script:Polls = 0
+        Mock Invoke-RestMethod {
+            $script:Polls++
+            if ($script:Polls -eq 1) { $e = New-Object System.Net.WebException('409'); throw $e }
+            if ($script:Polls -eq 2) { return [pscustomobject]@{ status = 'Running' } }
+            return [pscustomobject]@{ status = 'Succeeded'; url = 'https://blob.example/sas?sig=1' }
+        }
+        Mock Get-IQHttpErrorInfo { @{ StatusCode = 409; Body = ''; Message = 'conflict'; Transient = $false; RetryAfter = $null; WebStatus = $null } }
+        $out = Join-Path $script:RunFolder 'Finance ~ WebUi.pbix'
+        $work = @{ Item = 'Finance ~ WebUi'; ReportId = $script:Ids.r1; WorkspaceId = $script:Ids.ws1 }
+        $r = Export-IQReportUsingWebUi -Work $work -ClusterHost 'wabi-test.analysis.usgovcloudapi.net' -OutFilePath $out -MaxWaitSeconds 30 -PollIntervalSeconds 1
+        $r.Success | Should -BeTrue
+        $out | Should -Exist
+        $script:Polls | Should -Be 3
+        @($script:Downloads | Where-Object { $_ -like 'https://blob.example/sas*' }).Count | Should -Be 1
+    }
+    It 'Export-IQReportUsingWebUi gives up cleanly when no url arrives in time' {
+        Mock Invoke-RestMethod { return [pscustomobject]@{ status = 'Running' } }
+        $out = Join-Path $script:RunFolder 'Finance ~ Slow.pbix'
+        $r = Export-IQReportUsingWebUi -Work @{ Item = 'x'; ReportId = $script:Ids.r1 } -ClusterHost 'wabi-test.analysis.usgovcloudapi.net' -OutFilePath $out -MaxWaitSeconds 10 -PollIntervalSeconds 5
+        $r.Success | Should -BeFalse
+        $r.Message | Should -Match 'did not produce a download url within 10 s'
+        $out | Should -Not -Exist
+    }
+    It 'the stage falls back to the web-UI endpoint after a PremiumFiles refusal and records method WebUI' {
+        Mock Resolve-IQReportClusterHost { 'wabi-test.analysis.usgovcloudapi.net' }
+        Mock Export-IQReportUsingWebUi { Write-TestPbix -Path $OutFilePath; return @{ Success = $true; Message = 'exported through the web-UI endpoint' } }
+        $summary = Invoke-IQReportBackupStage
+        $summary.Done | Should -Be 1
+        $summary.Skipped | Should -Be 0
+        $cp = Get-Checkpoint -Stage ReportBackup -Key $script:Ids.r1
+        $cp.status | Should -Be 'Succeeded'
+        $cp.method | Should -Be 'WebUI'
+        $cp.message | Should -Match 'exported through the web-UI endpoint'
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match 'trying the web-UI export endpoint on wabi-test'
+    }
+    It 'with -NoWebUiExportFallback the report stays Skipped as not exportable and the endpoint is never called' {
+        $script:IQ.Options['NoWebUiExportFallback'] = $true
+        $script:WebUiCalls = 0
+        Mock Resolve-IQReportClusterHost { $script:WebUiCalls++; 'wabi-test.analysis.usgovcloudapi.net' }
+        $summary = Invoke-IQReportBackupStage
+        $summary.Skipped | Should -Be 1
+        $script:WebUiCalls | Should -Be 0
+        (Get-Checkpoint -Stage ReportBackup -Key $script:Ids.r1).message | Should -Match '^Not exportable: the model uses the large semantic model'
+    }
+    It 'an unresolved cluster host or a failed web-UI export leaves the report Skipped with the reason in the message' {
+        Mock Resolve-IQReportClusterHost { $null }
+        $summary = Invoke-IQReportBackupStage
+        $summary.Skipped | Should -Be 1
+        (Get-Checkpoint -Stage ReportBackup -Key $script:Ids.r1).message | Should -Match 'cluster host could not be resolved'
+        Reset-Checkpoints -Key $script:Ids.r1
+        Mock Resolve-IQReportClusterHost { 'wabi-test.analysis.usgovcloudapi.net' }
+        Mock Export-IQReportUsingWebUi { @{ Success = $false; Message = 'web-UI export endpoint refused (HTTP 403): forbidden' } }
+        $summary = Invoke-IQReportBackupStage
+        $summary.Skipped | Should -Be 1
+        (Get-Checkpoint -Stage ReportBackup -Key $script:Ids.r1).message | Should -Match 'web-UI export failed: web-UI export endpoint refused \(HTTP 403\)'
+    }
+}
+
