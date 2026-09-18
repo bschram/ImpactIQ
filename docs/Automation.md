@@ -131,6 +131,7 @@ Every variable is optional; parameters win over variables. Secrets are never log
 | `IMPACTIQ_BACKUP_FOLDER` | where `Model Backups\`, `Report Backups\`, `Dataflow Backups\` are written; default: `<base folder>\Outputs`; a relative value lands under the base folder | `-BackupFolder` |
 | `IMPACTIQ_OUTPUT_FOLDER` | where the four workbooks are written; default: `<base folder>\Outputs` (point the `.pbit`'s `Base Directory` there) | `-OutputFolder` |
 | `IMPACTIQ_ENVIRONMENT` | `Public`, `USGov`, `USGovHigh`, `USGovMil`, `China`, `Germany` (aliases `GCC`, `GCCHigh`, `DoD` accepted) | `-Environment` |
+| `IMPACTIQ_SETTINGS_PATH` | settings JSON (parameter-name keys) used as defaults below parameters and variables; default `<base folder>\Config\ImpactIQ.Settings.json` | `-SettingsPath` |
 | `IMPACTIQ_USERNAME`, `IMPACTIQ_PASSWORD` | `Credential` mode (ROPC). Both set -> `Auto` picks `Credential` | `-Credential` |
 | `IMPACTIQ_PBI_TOKEN` (+ `IMPACTIQ_FABRIC_TOKEN`) | `AccessToken` mode: a bearer token minted elsewhere; no refresh possible | `-AuthMode AccessToken` |
 | `IMPACTIQ_TOKEN_CACHE_KEY` | AES-256 key for `State\auth\token-cache.json` (DeviceCode). Without it Windows uses DPAPI, other OS do not persist | `-TokenCacheKey` |

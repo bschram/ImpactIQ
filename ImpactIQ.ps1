@@ -82,6 +82,14 @@
     every PBIX extracted again, and nothing new is recorded in either file.
 .PARAMETER NoKeepAwake
     Do not stop Windows from sleeping while the run lasts (by default the machine stays awake until ImpactIQ ends).
+.PARAMETER SettingsPath
+    JSON file whose values are the defaults for every parameter not given on the command line (default
+    <BaseFolder>\Config\ImpactIQ.Settings.json, or IMPACTIQ_SETTINGS_PATH). Keys are parameter names, for example
+    {"Environment":"USGov","WorkspaceName":["Finance*"],"ExcludeWorkspaceId":["<guid>"],"MaxRetries":7}. Precedence:
+    parameter, then environment variable, then the settings file, then the built-in default. In an interactive run
+    the file's Environment only pre-selects the environment dialog, and the environment chosen there is written
+    back so the next run offers it first. BaseFolder, SettingsPath, Credential, TokenCacheKey, Force and RunId are
+    never taken from the file.
 .PARAMETER NoWebUiExportFallback
     When the Export API refuses a report because its model uses the large semantic model storage format (HTTP 400
     PremiumFiles), ImpactIQ normally retries through the endpoint the Power BI portal itself uses for "Download this
@@ -186,6 +194,7 @@ param(
     [Parameter(Mandatory = $false)][switch]$NoKeepAwake,
     [Parameter(Mandatory = $false)][switch]$NoWebUiExportFallback,
     [Parameter(Mandatory = $false)][string]$WebUiClusterHost,
+    [Parameter(Mandatory = $false)][string]$SettingsPath,
     # No [ValidateSet]: "powershell.exe -File ImpactIQ.ps1 -Stages Inventory,Assemble" (Task Scheduler / runas) binds the
     # comma list as ONE string, which a ValidateSet rejects before the script body runs; Get-IQEntryStageList splits
     # and validates instead (unknown names throw). The completer keeps tab completion for console use.
@@ -221,6 +230,8 @@ $script:IQ = $null
 $script:IQEntryStageOrder = @('Inventory', 'ModelBackup', 'ReportBackup', 'ReportDetail', 'ModelDetail', 'Dataflows', 'Extras', 'Assemble')
 $script:IQEntryApiStages = @('Inventory', 'ModelBackup', 'ReportBackup', 'ModelDetail', 'Dataflows', 'Extras')
 $script:IQEntryStartUtc = [datetime]::UtcNow
+$script:IQEntryParameterInfo = $MyInvocation.MyCommand.Parameters
+$script:IQEntrySettingsEnvironmentDefault = $null
 
 # =====================================================================================================================
 # Entry-point helpers (private to this file; the modules are dot-sourced below at script level so their functions land
@@ -681,6 +692,132 @@ function Write-IQEntrySummary {
     Write-IQEntryMessage -Level Info -Message ('Total elapsed: {0:00}:{1:00}:{2:00}' -f [math]::Floor($elapsed.TotalHours), $elapsed.Minutes, $elapsed.Seconds)
 }
 
+function Get-IQEntrySettingsPath {
+    <#
+    .SYNOPSIS
+        Resolves the settings file: -SettingsPath, else IMPACTIQ_SETTINGS_PATH, else <BaseFolder>\Config\ImpactIQ.Settings.json.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseFolder,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Requested
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Requested)) { return (Resolve-IQEntryPath -Path $Requested) }
+    if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_SETTINGS_PATH)) { return (Resolve-IQEntryPath -Path $env:IMPACTIQ_SETTINGS_PATH) }
+    return (Join-Path (Join-Path $BaseFolder 'Config') 'ImpactIQ.Settings.json')
+}
+
+function Read-IQEntrySettings {
+    <#
+    .SYNOPSIS
+        Reads the settings JSON into a hashtable (empty when the file is missing; Warn and empty when it cannot be parsed).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $settings = @{}
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $settings }
+    try {
+        $raw = [System.IO.File]::ReadAllText($Path)
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $settings }
+        $obj = ConvertFrom-Json -InputObject $raw
+        foreach ($p in $obj.PSObject.Properties) { $settings[[string]$p.Name] = $p.Value }
+    }
+    catch {
+        Write-IQEntryMessage -Level Warn -Message ("Settings file {0} could not be read and is ignored: {1}" -f $Path, $_.Exception.Message)
+        return @{}
+    }
+    return $settings
+}
+
+function Set-IQEntryDefaultsFromSettings {
+    <#
+    .SYNOPSIS
+        Applies the settings file as defaults for the parameters that were neither given on the command line nor by their environment variable; returns the names applied.
+    .DESCRIPTION
+        Port of the recovered build's ImpactIQ.Settings.json. Values are coerced to the parameter's type (switch ->
+        bool, string[] -> array, int, string) and checked against its ValidateSet; a bad or unknown key is reported
+        and ignored. Environment is treated specially in an interactive run: it only pre-selects the dialog
+        ($script:IQEntrySettingsEnvironmentDefault), so the user can still change clouds.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Settings,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$BoundNames,
+        [Parameter(Mandatory = $false)][switch]$InteractiveLikely
+    )
+    $blocked = @('BaseFolder', 'SettingsPath', 'Credential', 'TokenCacheKey', 'Force', 'RunId', 'PassThru')
+    $envTwins = @{ Environment = 'IMPACTIQ_ENVIRONMENT'; BackupFolder = 'IMPACTIQ_BACKUP_FOLDER'; OutputFolder = 'IMPACTIQ_OUTPUT_FOLDER'; TenantId = 'IMPACTIQ_TENANT_ID'; ClientId = 'IMPACTIQ_CLIENT_ID'; TokenCachePath = 'IMPACTIQ_TOKEN_CACHE_PATH'; DeviceCodeWebhookUrl = 'IMPACTIQ_DEVICECODE_WEBHOOK' }
+    $applied = New-Object System.Collections.Generic.List[string]
+    $common = @([System.Management.Automation.PSCmdlet]::CommonParameters) + @([System.Management.Automation.PSCmdlet]::OptionalCommonParameters)
+    foreach ($key in @($Settings.Keys)) {
+        $name = $null
+        foreach ($p in $script:IQEntryParameterInfo.Keys) { if ($p -ieq [string]$key) { $name = $p; break } }
+        if ($null -eq $name -or $common -contains $name) { Write-IQEntryMessage -Level Warn -Message ("Settings file: unknown setting '{0}' ignored." -f $key); continue }
+        if ($blocked -contains $name) { Write-IQEntryMessage -Level Warn -Message ("Settings file: '{0}' cannot be set from the file; ignored." -f $name); continue }
+        if ($BoundNames -contains $name) { continue }
+        if ($envTwins.ContainsKey($name) -and -not [string]::IsNullOrWhiteSpace([string](Get-Item -Path ('Env:' + $envTwins[$name]) -ErrorAction SilentlyContinue).Value)) { continue }
+        $value = $Settings[$key]
+        if ($null -eq $value) { continue }
+        $meta = $script:IQEntryParameterInfo[$name]
+        $type = $meta.ParameterType
+        $coerced = $null
+        try {
+            if ($type -eq [switch] -or $type -eq [bool]) { $coerced = [System.Convert]::ToBoolean($value) }
+            elseif ($type -eq [string[]]) {
+                $list = @()
+                foreach ($v in @($value)) { if ($null -ne $v -and -not [string]::IsNullOrWhiteSpace([string]$v)) { $list += [string]$v } }
+                $coerced = [string[]]$list
+            }
+            elseif ($type -eq [int]) { $coerced = [int]$value }
+            else { $coerced = [string]$value }
+        }
+        catch { Write-IQEntryMessage -Level Warn -Message ("Settings file: '{0}' value '{1}' is not a valid {2}; ignored." -f $name, $value, $type.Name); continue }
+        $valid = $null
+        foreach ($a in $meta.Attributes) { if ($a -is [System.Management.Automation.ValidateSetAttribute]) { $valid = @($a.ValidValues) } }
+        if ($null -ne $valid -and $coerced -is [string] -and @($valid | Where-Object { $_ -ieq $coerced }).Count -eq 0) {
+            Write-IQEntryMessage -Level Warn -Message ("Settings file: '{0}' value '{1}' is not one of {2}; ignored." -f $name, $coerced, ($valid -join ', ')); continue
+        }
+        if ($name -eq 'Environment' -and $InteractiveLikely) {
+            $script:IQEntrySettingsEnvironmentDefault = [string]$coerced
+            continue
+        }
+        if ($type -eq [switch]) { $coerced = [switch]$coerced }
+        Set-Variable -Name $name -Value $coerced -Scope 1
+        $applied.Add($name)
+    }
+    return $applied.ToArray()
+}
+
+function Save-IQEntrySetting {
+    <#
+    .SYNOPSIS
+        Writes one value into the settings JSON (creating the file), keeping every other key; failures are a Debug line, never fatal.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $false)][AllowNull()]$Value
+    )
+    try {
+        $obj = $null
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            $raw = [System.IO.File]::ReadAllText($Path)
+            if (-not [string]::IsNullOrWhiteSpace($raw)) { $obj = ConvertFrom-Json -InputObject $raw }
+        }
+        if ($null -eq $obj) { $obj = [pscustomobject]@{} }
+        if ($obj.PSObject.Properties[$Name]) { $obj.$Name = $Value } else { $obj | Add-Member -MemberType NoteProperty -Name $Name -Value $Value }
+        $folder = Split-Path -Path $Path -Parent
+        if ($folder -and -not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
+        [System.IO.File]::WriteAllText($Path, (ConvertTo-Json -InputObject $obj -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+        return $true
+    }
+    catch {
+        Write-IQEntryMessage -Level Debug -Message ("Settings file {0} could not be updated: {1}" -f $Path, $_.Exception.Message)
+        return $false
+    }
+}
+
 function Invoke-IQEntryStageBody {
     <#
     .SYNOPSIS
@@ -709,6 +846,8 @@ $exitCode = 1
 $fatal = $null
 $cancelled = $false
 $runStarted = $false
+$envFromDialog = $false
+$settingsPath = $null
 
 try {
     # ---- 1. base folder and modules --------------------------------------------------------------------------------
@@ -716,6 +855,18 @@ try {
     $resolvedBase = Resolve-IQEntryBaseFolder -Requested $BaseFolder -ScriptRoot $scriptRoot
     $moduleFolder = Resolve-IQEntryModuleFolder -ScriptRoot $scriptRoot -BaseFolder $resolvedBase
     . (Join-Path $moduleFolder 'ImpactIQ.Common.ps1')
+
+    # ---- 1b. settings file: defaults for everything not given on the command line / by environment variable ------
+    $settingsPath = Get-IQEntrySettingsPath -BaseFolder $resolvedBase -Requested $SettingsPath
+    $settings = Read-IQEntrySettings -Path $settingsPath
+    if ($settings.Count -gt 0) {
+        $interactiveLikely = (-not $NonInteractive) -and (Test-IQInteractive)
+        $appliedSettings = @(Set-IQEntryDefaultsFromSettings -Settings $settings -BoundNames @($PSBoundParameters.Keys) -InteractiveLikely:$interactiveLikely)
+        $appliedText = 'nothing (every key is given on the command line or by an environment variable)'
+        if ($appliedSettings.Count -gt 0) { $appliedText = ($appliedSettings -join ', ') }
+        if ($null -ne $script:IQEntrySettingsEnvironmentDefault) { $appliedText += ('; Environment ' + $script:IQEntrySettingsEnvironmentDefault + ' pre-selected in the dialog') }
+        Write-IQEntryMessage -Level Info -Message ('Settings file {0} applied: {1}' -f $settingsPath, $appliedText)
+    }
 
     # ---- 2. context (all entry-point parameters by name; secrets stay out of the options) -------------------------
     $options = @{
@@ -744,6 +895,7 @@ try {
         NoKeepAwake             = [bool]$NoKeepAwake
         NoWebUiExportFallback   = [bool]$NoWebUiExportFallback
         WebUiClusterHost        = $WebUiClusterHost
+        SettingsPath            = $settingsPath
         Stages                  = @($Stages)
         SkipStages              = @($SkipStages)
         RunId                   = $RunId
@@ -809,8 +961,9 @@ try {
         Write-IQEntryMessage -Level Info -Message ("Environment '{0}' taken from IMPACTIQ_ENVIRONMENT." -f $envName)
     }
     elseif ($script:IQ.Interactive) {
-        $envName = Select-IQEnvironmentInteractive -TimeoutSeconds 60
+        $envName = Select-IQEnvironmentInteractive -TimeoutSeconds 60 -Default $script:IQEntrySettingsEnvironmentDefault
         if ($null -eq $envName) { $cancelled = $true; throw 'Run cancelled by user (environment dialog).' }
+        $envFromDialog = $true
     }
     else {
         $envName = 'Public'
@@ -818,6 +971,9 @@ try {
     }
     $endpoints = Set-IQEnvironment -Environment $envName
     $script:IQ.Options['Environment'] = $endpoints.Name
+    if ($envFromDialog -and (Save-IQEntrySetting -Path $settingsPath -Name 'Environment' -Value $endpoints.Name)) {
+        Write-IQEntryMessage -Level Info -Message ("Environment {0} remembered in {1}; the dialog offers it first next time." -f $endpoints.Name, $settingsPath)
+    }
     Write-IQEntryMessage -Level Info -Message ('Environment {0}: API {1}, sign-in {2}, XMLA {3}, Fabric {4}{5}' -f $endpoints.Name, $endpoints.ApiPrefix, $endpoints.Authority, $endpoints.XmlaPrefix, $endpoints.FabricApiPrefix, $(if ($endpoints.ContainsKey('FabricVerified') -and -not [bool]$endpoints.FabricVerified) { ' (unverified; skipped automatically when unreachable)' } else { '' }))
 
     # ---- 5b. early "no scope" check (after the environment is known so the resume peek applies the same environment

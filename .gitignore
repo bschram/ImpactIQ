@@ -19,3 +19,6 @@ Dataflow Detail.xlsx
 Config/TabularEditor/WindowsLaps*
 Config/localhost/
 localhost/
+
+# Per-machine settings (copy Config/ImpactIQ.Settings.example.json to create it; the tool writes the chosen environment back)
+Config/ImpactIQ.Settings.json

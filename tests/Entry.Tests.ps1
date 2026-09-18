@@ -77,7 +77,7 @@ Describe 'ImpactIQ.ps1 parses and declares the headless parameters' -Skip:(-not 
     }
     It 'declares the recovered-build port parameters (exclusions, quarantine, keep-awake)' {
         $params = @($script:Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-        foreach ($p in @('ExcludeWorkspaceId', 'ExcludeWorkspaceName', 'NoQuarantine', 'NoKeepAwake', 'NoWebUiExportFallback', 'WebUiClusterHost')) { $params | Should -Contain $p }
+        foreach ($p in @('ExcludeWorkspaceId', 'ExcludeWorkspaceName', 'NoQuarantine', 'NoKeepAwake', 'NoWebUiExportFallback', 'WebUiClusterHost', 'SettingsPath')) { $params | Should -Contain $p }
         $text = Get-Content -LiteralPath $script:Entry -Raw
         $text | Should -Match 'Enable-IQKeepAwake'
         $text | Should -Match 'Disable-IQKeepAwake'
@@ -190,3 +190,34 @@ Describe '-Stages Assemble on a prepared state folder' -Skip:(-not ($script:HasE
         $text | Should -Match "ValidateSet\('Public', 'Commercial', 'Global', 'Germany', 'USGov', 'GCC', 'China', 'USGovHigh', 'GCCHigh', 'USGovMil', 'DoD'\)"
     }
 }
+
+Describe 'Settings file defaults (Config\ImpactIQ.Settings.json, recovered-build port 2026-09-18)' -Skip:(-not $script:HasEntry) {
+    BeforeAll {
+        $script:Base5 = New-EntryBase -Prefix 'entry-settings'
+        $json = '{ "Environment": "USGov", "MaxRetries": 7, "RunMode": "Bogus", "ExcludeWorkspaceName": ["*Analytics"], "NoKeepAwake": true, "Unknown": 1, "BaseFolder": "C:\\nope" }'
+        [System.IO.File]::WriteAllText((Join-Path (Join-Path $script:Base5 'Config') 'ImpactIQ.Settings.json'), $json)
+        # -Stages Assemble without a previous run fails on purpose AFTER the settings and the environment are reported
+        $script:RunSettings = Invoke-Entry -Base $script:Base5 -Parameters @{ BaseFolder = $script:Base5; NonInteractive = $true; AuthMode = 'AccessToken'; SkipToolUpdate = $true; Stages = 'Assemble' }
+        $script:RunOverride = Invoke-Entry -Base $script:Base5 -Parameters @{ BaseFolder = $script:Base5; NonInteractive = $true; AuthMode = 'AccessToken'; SkipToolUpdate = $true; Stages = 'Assemble'; Environment = 'Public'; MaxRetries = 3 }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:Base5 }
+    It 'applies the file as defaults, reports what it applied and takes the environment from it in a headless run' {
+        $script:RunSettings.Output | Should -Match 'Settings file .*ImpactIQ\.Settings\.json applied: '
+        $script:RunSettings.Output | Should -Match 'applied: [^\r\n]*MaxRetries'
+        $script:RunSettings.Output | Should -Match 'applied: [^\r\n]*ExcludeWorkspaceName'
+        $script:RunSettings.Output | Should -Match 'applied: [^\r\n]*NoKeepAwake'
+        $script:RunSettings.Output | Should -Match 'Environment USGov: API https://api\.powerbigov\.us'
+    }
+    It 'reports and ignores unknown keys, blocked keys and values outside a ValidateSet' {
+        $script:RunSettings.Output | Should -Match "unknown setting 'Unknown' ignored"
+        $script:RunSettings.Output | Should -Match "'BaseFolder' cannot be set from the file"
+        $script:RunSettings.Output | Should -Match "'RunMode' value 'Bogus' is not one of"
+        $script:RunSettings.Output | Should -Not -Match 'applied: [^\r\n]*RunMode'
+    }
+    It 'a command-line parameter wins over the file' {
+        $script:RunOverride.Output | Should -Match 'Environment Public: API https://api\.powerbi\.com'
+        $script:RunOverride.Output | Should -Not -Match 'applied: [^\r\n]*MaxRetries'
+        $script:RunOverride.Output | Should -Match 'applied: [^\r\n]*ExcludeWorkspaceName'
+    }
+}
+
