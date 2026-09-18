@@ -1,0 +1,59 @@
+﻿{
+    "IncludeReportIds":  [
+
+                         ],
+    "WorkbookMode":  "overwrite",
+    "ResumeMode":  "fresh",
+    "EnablePhase1EnvDetail": true,
+    "EnablePhase2ModelBackup": true,
+    "EnablePhase3ReportBackup": true,
+    "EnablePhase4ReportDetail": true,
+    "EnablePhase5ModelDetail": true,
+    "EnablePhase6Dataflow": true,
+    "SkipFabricCallsInUSGov": true,
+    "EnableReportChangeDetection": true,
+    "EnableControlledParallelism": true,
+    "ControlledParallelismMaxThreads": 4,
+    "KnownNoModelReportIds": [],
+    "KnownNoModelReportNames": [],
+    "IncludeWorkspaceIds":  [
+                                "172d44aa-8bfd-44cd-95e6-0cd4038fd8ab",
+                                "df79e3d9-7c63-4c16-a103-30110fba7302",
+                                "0626e185-b817-4708-9077-adbf093d912c",
+                                "033d46a0-e2e2-4ab9-9405-552ad7fcd3be",
+                                "143c548e-6a8f-440c-ba0f-0aac7881a9a4",
+                                "8c51e69e-fdf2-46f5-8ab7-d02ef0bc912d",
+                                "7e5a8de5-fd01-49b5-8847-c250cf6cf7e1",
+                                "e22d3b5d-fc1f-4e7f-ab97-ee365c2a45a6",
+                                "133a4bce-010e-4e8c-b875-d6c8e33b6573"
+                            ],
+    "Notifications":  {
+                          "Enabled":  false,
+                          "Method":  "SMTP",
+                          "EmailRecipients":  [
+
+                                              ],
+                          "SmsRecipients":  [
+
+                                            ],
+                          "Subject":  "[ImpactIQ] Power BI re-authentication required",
+                          "RenotifyMinutes":  15,
+                          "Smtp":  {
+                                       "Server":  "smtp.office365.com",
+                                       "Port":  587,
+                                       "UseSsl":  true,
+                                       "From":  "",
+                                       "Username":  "",
+                                       "Password":  ""
+                                   }
+                      },
+    "IncludeMyWorkspace":  false,
+    "BaseFolderPath":  "C:\\PowerBIGovernance",
+    "ExcludeWorkspaceIds":  [
+                                "2af197a8-3f04-446f-b2a7-cc0ca1ab91f4"
+                            ],
+    "LastEnvironment":  "USGov",
+    "IncludeReportNames":  [
+
+                           ]
+}
