@@ -404,6 +404,7 @@ pass arguments (full list in [docs/Headless-and-Resume.md](docs/Headless-and-Res
 | `-ExcludeWorkspaceId`, `-ExcludeWorkspaceName` | | workspaces never scanned, whatever selects them (ids, or `-like` name patterns) |
 | `-NoQuarantine` | | ignore `Config\ReportExportQuarantine.csv` and `State\report-memory.json` for this run (see below) |
 | `-NoKeepAwake` | | do not stop Windows from sleeping during the run (on by default) |
+| `-NoWebUiExportFallback`, `-WebUiClusterHost` | | turn off (or pin the cluster host for) the web-UI export used when the Export API refuses a large-storage-format report |
 | `-Stages`, `-SkipStages` | | `Inventory, ModelBackup, ReportBackup, ReportDetail, ModelDetail, Dataflows, Extras, Assemble` |
 | `-Resume Auto\|Always\|Never`, `-Force`, `-RefreshInventory` | | resume rules |
 | `-TimeBudgetMinutes` | | stop cleanly N minutes after start, exit `3`, resume next run |
@@ -424,6 +425,14 @@ Two files remember what the service will never give you, so later runs do not sp
 
 When the Export API refuses an `IncludeModel` download, the report is retried as `LiveConnect` (layout without the
 model), which keeps ReportDetail working; ModelDetail then reads that model over DAX.
+
+When the Export API refuses a report because its model uses the **large semantic model storage format** (HTTP 400
+`PremiumFiles`) and Fabric `getDefinition` is not available either (GCC), ImpactIQ retries through the endpoint the
+Power BI portal itself uses for *Download this file*: `https://<report cluster>/export/v202402/reports/<id>/pbix`,
+polled until it hands out a download URL. The cluster host comes from the report URL's redirect
+(`wabi-<region>-redirect.analysis.<cloud>`); `-WebUiClusterHost` pins it. This is not a documented API, so it is used
+only after that exact refusal and `-NoWebUiExportFallback` turns it off. Exports made this way are recorded with
+method `WebUI`.
 
 Examples:
 

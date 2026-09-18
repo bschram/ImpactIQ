@@ -77,7 +77,7 @@ Describe 'ImpactIQ.ps1 parses and declares the headless parameters' -Skip:(-not 
     }
     It 'declares the recovered-build port parameters (exclusions, quarantine, keep-awake)' {
         $params = @($script:Ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-        foreach ($p in @('ExcludeWorkspaceId', 'ExcludeWorkspaceName', 'NoQuarantine', 'NoKeepAwake')) { $params | Should -Contain $p }
+        foreach ($p in @('ExcludeWorkspaceId', 'ExcludeWorkspaceName', 'NoQuarantine', 'NoKeepAwake', 'NoWebUiExportFallback', 'WebUiClusterHost')) { $params | Should -Contain $p }
         $text = Get-Content -LiteralPath $script:Entry -Raw
         $text | Should -Match 'Enable-IQKeepAwake'
         $text | Should -Match 'Disable-IQKeepAwake'

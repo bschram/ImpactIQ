@@ -199,6 +199,7 @@ token refresh (silent through Az.Accounts in v3). Ported in this round:
 
 | # | Feature | Where |
 |---|---|---|
+| 1 | Web-UI export fallback: after a `PremiumFiles` refusal, the report cluster host is read from the report URL redirect and `https://<cluster>/export/v202402/reports/<id>/pbix?downloadType=0` is polled for a SAS url, then downloaded (method `WebUI`; the model is still extracted from the file when present, without learning "no model" from it). Undocumented endpoint: `-NoWebUiExportFallback` turns it off, `-WebUiClusterHost` pins the host | `Resolve-IQReportClusterHost`, `Export-IQReportUsingWebUi`, `Test-IQReportPremiumFilesRefusal` (Reports) |
 | 2 | `IncludeModel` refused (401/403, `ModelExportActionDenied`) -> retried as `LiveConnect` | `Invoke-IQReportBackupStage`, `Test-IQReportExportDenied` |
 | 3 | Excel-safe text: characters illegal in XML are removed from every string cell (valid surrogate pairs kept), counted per sheet | `$script:IQXmlUnsafeRegex`, `ConvertTo-IQXmlSafeText` (Common), `ConvertTo-IQSheetTable` (Assemble) |
 | 4 | Quarantine list `Config\ReportExportQuarantine.csv` (wildcards, workspace filter, IsActive; auto-append after a permanent refusal) and `State\report-memory.json` (PBIX without an embedded model, exit -8) | `Get-IQReportQuarantineList` / `-Match` / `Add-IQReportQuarantineEntry`, `Test-IQReportKnownNoModel` / `Add-IQReportKnownNoModel`; `-NoQuarantine` |

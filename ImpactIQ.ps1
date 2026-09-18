@@ -82,6 +82,14 @@
     every PBIX extracted again, and nothing new is recorded in either file.
 .PARAMETER NoKeepAwake
     Do not stop Windows from sleeping while the run lasts (by default the machine stays awake until ImpactIQ ends).
+.PARAMETER NoWebUiExportFallback
+    When the Export API refuses a report because its model uses the large semantic model storage format (HTTP 400
+    PremiumFiles), ImpactIQ normally retries through the endpoint the Power BI portal itself uses for "Download this
+    file" (https://<report cluster>/export/v202402/reports/<id>/pbix). That endpoint is not a documented API; this
+    switch turns the fallback off.
+.PARAMETER WebUiClusterHost
+    Pins the report cluster host for the web-UI export fallback (for example
+    wabi-us-gov-iowa-redirect.analysis.usgovcloudapi.net) instead of reading it from the report URL's redirect.
 .PARAMETER Stages
     Only run these stages (canonical order is kept): Inventory, ModelBackup, ReportBackup, ReportDetail, ModelDetail,
     Dataflows, Extras, Assemble - as an array or one comma/semicolon-separated string (powershell.exe -File form).
@@ -176,6 +184,8 @@ param(
     [Parameter(Mandatory = $false)][string[]]$ExcludeWorkspaceName,
     [Parameter(Mandatory = $false)][switch]$NoQuarantine,
     [Parameter(Mandatory = $false)][switch]$NoKeepAwake,
+    [Parameter(Mandatory = $false)][switch]$NoWebUiExportFallback,
+    [Parameter(Mandatory = $false)][string]$WebUiClusterHost,
     # No [ValidateSet]: "powershell.exe -File ImpactIQ.ps1 -Stages Inventory,Assemble" (Task Scheduler / runas) binds the
     # comma list as ONE string, which a ValidateSet rejects before the script body runs; Get-IQEntryStageList splits
     # and validates instead (unknown names throw). The completer keeps tab completion for console use.
@@ -732,6 +742,8 @@ try {
         ExcludeWorkspaceName    = @($ExcludeWorkspaceName)
         NoQuarantine            = [bool]$NoQuarantine
         NoKeepAwake             = [bool]$NoKeepAwake
+        NoWebUiExportFallback   = [bool]$NoWebUiExportFallback
+        WebUiClusterHost        = $WebUiClusterHost
         Stages                  = @($Stages)
         SkipStages              = @($SkipStages)
         RunId                   = $RunId
