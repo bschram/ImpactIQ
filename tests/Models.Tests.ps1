@@ -305,9 +305,13 @@ Describe 'XMLA export outcomes for inferred-capacity models and the Fabric API s
         if ($script:IQ.ContainsKey('FabricApi')) { $script:IQ.Remove('FabricApi') }
     }
     AfterAll { if ($script:IQ.ContainsKey('FabricApi')) { $script:IQ.Remove('FabricApi') } }
-    It 'the MSOLAP connection string uses the access-token form with an explicit empty User ID' {
-        $source = Get-Content -LiteralPath (Join-Path (Join-Path (Join-Path (Get-IQTestRepoRoot) 'Config') 'Modules') 'ImpactIQ.Models.ps1') -Raw
-        $source | Should -Match 'Provider=MSOLAP;Data Source=\{0\};User ID=;Password=\{1\}'
+    It 'the MSOLAP connection string uses the access-token form with an explicit empty User ID (and a Password-only form for the probe)' {
+        $w = @{ WorkspaceName = 'Fin; "Prod"'; DatasetName = 'Model'; BimPath = '/out/m.bim' }
+        $a = New-IQModelXmlaArgumentList -Work $w -Token 'TOK' -ScriptPath '/s.cs'
+        $a | Should -Be '"Provider=MSOLAP;Data Source=powerbi://api.powerbi.com/v1.0/myorg/Fin%3B%20%22Prod%22;User ID=;Password=TOK" "Model" -S "/s.cs" -B "/out/m.bim"'
+        $b = New-IQModelXmlaArgumentList -Work $w -Token 'TOK' -ScriptPath '/s.cs' -Form PasswordOnly
+        $b | Should -Match ';Password=TOK" "Model"'
+        $b | Should -Not -Match 'User ID'
     }
     It 'an XMLA failure of a model whose capacity was only inferred from its storage format is Skipped with the reason' {
         Complete-IQModelBackupJob -Entry @{ ItemKey = 'inf-1'; Result = (New-TestProcessResult -ExitCode 1) } -WorkMap $script:Map
@@ -362,6 +366,127 @@ Describe 'ModelID convention follows the workspace listing, not the inferred cap
             if ($rows.Count -gt 0) { $rows[0].ModelID | Should -Be 'WS ~ Model' }
         }
         $r.Method | Should -Be 'Dax'
+    }
+}
+
+Describe 'XMLA connection probe, system datasets and permission classification (run assessment 2026-09-18)' {
+    BeforeAll {
+        $script:Base = Initialize-IQTestContext -Options @{ Environment = 'USGov'; MaxParallelExtracts = 1 } -Prefix 'models-xmla-probe'
+        $script:StageIds = Get-IQTestFixtureJson -Relative 'ids.json'
+        $script:IQ.Tools = @{ TabularEditorWorks = $true; TabularEditorPath = (Join-Path $script:Base 'TabularEditor.exe'); TabularEditorPreflight = $null }
+        Mock Test-IQModelTabularEditorAvailable { $true }
+        Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'GOV-TOKEN' }   # no Fabric fallback in these tests
+        Mock Get-IQTokenForResourceUrl { if ($ResourceUrl -like 'https://analysis.windows.net/*') { return 'COMMERCIAL-TOKEN' } return $null }
+        function New-ProbeTeResult { param([bool]$Success = $true, [int]$ExitCode = 0) return @{ ExitCode = $ExitCode; TimedOut = $false; StdOut = ''; StdErr = ''; OutFile = $null; ErrFile = $null; DurationSec = 1; Success = $Success; ErrorLines = @(); FailureReason = $(if ($Success) { '' } else { 'exit ' + $ExitCode }) } }
+        $script:Workspaces = @([pscustomobject]@{ WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true; WorkspaceCapacityId = '72AA2844-F3D6-459A-A19B-D8ECFE5EB068' })
+        Mock Get-IQSelectedWorkspaces { $script:Workspaces }
+        function Write-CompleteBim { param([string]$Path) [System.IO.File]::WriteAllText($Path, '{"name":"m","compatibilityLevel":1567,"model":{"culture":"en-US","tables":[{"name":"T","columns":[{"name":"C","dataType":"string"}]}]}}') }
+        function New-AuthFailedResult { return @{ ExitCode = 1; TimedOut = $false; StdOut = "Tabular Editor 2.29.0`r`nLoading model...`r`nError loading model: Authentication failed for all authenticators`r`n`r`nTechnical Details:`r`nRootActivityId: x"; StdErr = ''; OutFile = $null; ErrFile = $null; DurationSec = 4; StartError = $null } }
+        function Reset-ProbeState { foreach ($k in @('XmlaConnection', 'XmlaProbeDone', 'XmlaProbeTried')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }; $script:IQ.Options['NoXmlaProbe'] = $false; $script:IQ.Options['XmlaTokenResource'] = '' }
+        function Clear-ModelCheckpoints { $p = Join-Path (Join-Path $script:IQ.RunPath 'done') 'ModelBackup'; if (Test-Path -LiteralPath $p) { Get-ChildItem -LiteralPath $p -Filter '*.json' | Remove-Item -Force } }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:Base }
+    BeforeEach { Reset-ProbeState; Clear-ModelCheckpoints; $script:BatchArgs = New-Object System.Collections.Generic.List[string]; $script:ProbeArgs = New-Object System.Collections.Generic.List[string] }
+
+    It 'a system usage-metrics model is Skipped before any XMLA attempt' {
+        Mock Get-IQSelectedDatasets { @([pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'Report Usage Metrics Model'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }) }
+        Mock Invoke-IQProcessBatch { throw 'must not be called' }
+        $summary = Invoke-IQModelBackupStage
+        $summary.Skipped | Should -Be 1
+        $summary.Failed | Should -Be 0
+        (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d1).message | Should -Match 'system-generated usage metrics model'
+        Test-IQModelSystemDataset -Name 'Usage Metrics Report' | Should -BeTrue
+        Test-IQModelSystemDataset -Name 'Sales' | Should -BeFalse
+    }
+    It 'a Discover permission refusal is Skipped as a permission gap with the <euii> tags removed' {
+        $w = New-TestWork -Key $script:StageIds.d2 -BaseName 'Dash ~ Perm' -WorkspaceId $script:StageIds.ws1 -Dedicated $true
+        Set-IQModelXmlaFailure -Work $w -Key $w.Key -Message "XMLA export produced no complete .bim: exit code 1; Error loading model: The '<euii>user@contoso.gov</euii>' user does not have permission to call the Discover method."
+        $cp = Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d2
+        $cp.status | Should -Be 'Skipped'
+        $cp.message | Should -Match '^Skipped: no XMLA permission on this model'
+        $cp.message | Should -Not -Match 'euii'
+        $cp.message | Should -Match "'user@contoso.gov' user does not have permission"
+    }
+    It 'the first authentication failure probes the other variants once; the accepted one is used for the remaining models' {
+        Mock Get-IQSelectedDatasets { @(
+            [pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'First'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true },
+            [pscustomobject]@{ DatasetId = $script:StageIds.d2; DatasetName = 'Second'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }
+        ) }
+        # the batch: the GOV token is refused; the COMMERCIAL token (any form) is accepted
+        Mock Invoke-IQProcessBatch {
+            $out = @()
+            foreach ($j in $Jobs) {
+                $script:BatchArgs.Add([string]$j.ArgumentList)
+                $r = New-AuthFailedResult
+                if ([string]$j.ArgumentList -like '*Password=COMMERCIAL-TOKEN*') { $bim = [regex]::Match([string]$j.ArgumentList, '-B "([^"]+)"').Groups[1].Value; Write-CompleteBim -Path $bim; $r = New-TestProcessResult -ExitCode 0 }
+                $entry = @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = $r }
+                if ($OnJobComplete) { & $OnJobComplete $entry }
+                $out += , $entry
+            }
+            return $out
+        }
+        Mock Invoke-IQTabularEditor {
+            $script:ProbeArgs.Add($ArgumentList)
+            $bim = [regex]::Match($ArgumentList, '-B "([^"]+)"').Groups[1].Value
+            if ($ArgumentList -like '*Password=COMMERCIAL-TOKEN*') { Write-CompleteBim -Path $bim; return (New-ProbeTeResult -Success $true) }
+            $r = New-AuthFailedResult; $r.Success = $false; $r.ErrorLines = @('Error loading model: Authentication failed for all authenticators'); $r.FailureReason = 'exit 1'; return $r
+        }
+        $summary = Invoke-IQModelBackupStage
+        $summary.Done | Should -Be 2
+        $summary.Failed | Should -Be 0
+        # probe order: same audience / other form first (refused), then the commercial audience (accepted on its first form)
+        $script:ProbeArgs.Count | Should -Be 2
+        $script:ProbeArgs[0] | Should -Match 'Data Source=[^"]+;Password=GOV-TOKEN"'
+        $script:ProbeArgs[1] | Should -Match 'User ID=;Password=COMMERCIAL-TOKEN'
+        $conn = Get-IQModelXmlaConnection
+        $conn.ResourceUrl | Should -Be 'https://analysis.windows.net/powerbi/api'
+        $conn.Form | Should -Be 'UserIdEmpty'
+        $conn.Pinned | Should -BeTrue
+        (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d1).message | Should -Match 'XMLA accepted after switching to audience https://analysis.windows.net/powerbi/api'
+        # the second chunk went straight through the batch with the switched token and no further probe
+        $script:BatchArgs.Count | Should -Be 2
+        $script:BatchArgs[1] | Should -Match 'User ID=;Password=COMMERCIAL-TOKEN'
+        (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d2).status | Should -Be 'Succeeded'
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match "Pin it for future runs with -XmlaTokenResource 'https://analysis.windows.net/powerbi/api'"
+    }
+    It 'when no variant is accepted the model fails once with the admin checks in the message and later models are not probed again' {
+        Mock Get-IQSelectedDatasets { @(
+            [pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'First'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true },
+            [pscustomobject]@{ DatasetId = $script:StageIds.d2; DatasetName = 'Second'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }
+        ) }
+        Mock Invoke-IQProcessBatch {
+            $out = @()
+            foreach ($j in $Jobs) { $entry = @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = (New-AuthFailedResult) }; if ($OnJobComplete) { & $OnJobComplete $entry }; $out += , $entry }
+            return $out
+        }
+        Mock Invoke-IQTabularEditor { $script:ProbeArgs.Add($ArgumentList); $r = New-AuthFailedResult; $r.Success = $false; $r.ErrorLines = @('Error loading model: Authentication failed for all authenticators'); $r.FailureReason = 'exit 1'; return $r }
+        $summary = Invoke-IQModelBackupStage
+        $summary.Failed | Should -Be 2
+        $script:ProbeArgs.Count | Should -Be 3 -Because 'three other variants exist for a GCC run (gov/PasswordOnly, commercial/UserIdEmpty, commercial/PasswordOnly) and they are tried once per run'
+        $cp = Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d1
+        $cp.status | Should -Be 'Failed'
+        $cp.message | Should -Match 'refused the access token that every REST call accepts'
+        $cp.message | Should -Match 'Variants tried: '
+        $cp.message | Should -Match 'Test-IQXmlaAccess\.ps1'
+        (Get-IQModelXmlaConnection).ResourceUrl | Should -Be 'https://analysis.usgovcloudapi.net/powerbi/api'
+    }
+    It '-NoXmlaProbe and -XmlaTokenResource: no probing, and the pinned audience is used from the first export' {
+        Mock Get-IQSelectedDatasets { @([pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'First'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }) }
+        Mock Invoke-IQProcessBatch {
+            $out = @()
+            foreach ($j in $Jobs) { $script:BatchArgs.Add([string]$j.ArgumentList); $entry = @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = (New-AuthFailedResult) }; if ($OnJobComplete) { & $OnJobComplete $entry }; $out += , $entry }
+            return $out
+        }
+        Mock Invoke-IQTabularEditor { $script:ProbeArgs.Add($ArgumentList); return (New-ProbeTeResult -Success $false -ExitCode 1) }
+        $script:IQ.Options['NoXmlaProbe'] = $true
+        $script:IQ.Options['XmlaTokenResource'] = 'https://analysis.windows.net/powerbi/api'
+        $summary = Invoke-IQModelBackupStage
+        $summary.Failed | Should -Be 1
+        $script:ProbeArgs.Count | Should -Be 0
+        $script:BatchArgs[0] | Should -Match 'User ID=;Password=COMMERCIAL-TOKEN'
+        (Get-IQModelXmlaConnection).Pinned | Should -BeTrue
+        @(Get-IQModelXmlaVariantList).Count | Should -Be 1 -Because 'a pinned audience leaves only the other form to try'
     }
 }
 

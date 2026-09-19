@@ -403,6 +403,199 @@ function New-IQModelRenameScript {
     return $path
 }
 
+# =====================================================================================================================
+# XMLA connection variants (run assessment 2026-09-18): on a real dedicated capacity every XMLA export answered
+# "Authentication failed for all authenticators" while the same token served every REST call and one model in the
+# same workspace reached a Discover permission error (so a credential did get through). The endpoint may want the
+# commercial Power BI audience even in GCC, or the Password-only connection form; rather than guess, the first
+# authentication failure of a run tries the other combinations once, and the one that works is used for the rest.
+# =====================================================================================================================
+
+$script:IQModelSystemDatasetNames = @('Report Usage Metrics Model', 'Usage Metrics Report', 'Dashboard Usage Metrics Model', 'Report Usage Metrics Report')
+$script:IQModelCommercialPowerBIResource = 'https://analysis.windows.net/powerbi/api'
+
+function Test-IQModelSystemDataset {
+    <#
+    .SYNOPSIS
+    $true for the usage-metrics models the service creates itself: never exportable over XMLA (Discover is refused even for admins).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    foreach ($n in $script:IQModelSystemDatasetNames) { if ($Name.Trim() -ieq $n) { return $true } }
+    return $false
+}
+
+function Get-IQModelXmlaConnection {
+    <#
+    .SYNOPSIS
+    The XMLA connection variant in force: @{ ResourceUrl; Form ('UserIdEmpty' | 'PasswordOnly'); Pinned } (private).
+    .DESCRIPTION
+    Starts as the environment's Power BI audience with the "User ID=;Password=<token>" form; -XmlaTokenResource pins
+    the audience (no audience probing), and a successful probe switches the variant for the rest of the run.
+    #>
+    [CmdletBinding()]
+    param()
+    if ($script:IQ.ContainsKey('XmlaConnection') -and $null -ne $script:IQ['XmlaConnection']) { return $script:IQ['XmlaConnection'] }
+    $resource = ''
+    try { $resource = [string](Get-IQModelOption -Name 'XmlaTokenResource' -Default '') } catch { $resource = '' }
+    $pinned = -not [string]::IsNullOrWhiteSpace($resource)
+    if (-not $pinned) { try { $resource = [string]$script:IQ.Endpoints.PowerBIResource } catch { $resource = '' } }
+    $conn = @{ ResourceUrl = $resource.TrimEnd('/'); Form = 'UserIdEmpty'; Pinned = $pinned }
+    $script:IQ['XmlaConnection'] = $conn
+    return $conn
+}
+
+function Get-IQModelXmlaToken {
+    <#
+    .SYNOPSIS
+    Access token for the XMLA audience in force (the regular Power BI token unless the audience was pinned or switched) (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$ResourceUrl)
+    if ([string]::IsNullOrWhiteSpace($ResourceUrl)) { $ResourceUrl = [string](Get-IQModelXmlaConnection).ResourceUrl }
+    $standard = ''
+    try { $standard = ([string]$script:IQ.Endpoints.PowerBIResource).TrimEnd('/') } catch { $standard = '' }
+    if ([string]::IsNullOrWhiteSpace($ResourceUrl) -or $ResourceUrl.TrimEnd('/') -ieq $standard) { return (Get-IQToken -Resource PowerBI) }
+    if (Get-Command -Name Get-IQTokenForResourceUrl -ErrorAction SilentlyContinue) { return (Get-IQTokenForResourceUrl -ResourceUrl $ResourceUrl) }
+    return $null
+}
+
+function New-IQModelXmlaArgumentList {
+    <#
+    .SYNOPSIS
+    Tabular Editor command line for one export in a given connection form (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Work,
+        [Parameter(Mandatory = $true)][string]$Token,
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [Parameter(Mandatory = $false)][ValidateSet('UserIdEmpty', 'PasswordOnly')][string]$Form = 'UserIdEmpty'
+    )
+    $xmlaPrefix = ([string]$script:IQ.Endpoints.XmlaPrefix).TrimEnd('/')
+    $encodedWorkspace = [System.Uri]::EscapeDataString([string]$Work.WorkspaceName)
+    $dataSource = ('{0}/v1.0/myorg/{1}' -f $xmlaPrefix, $encodedWorkspace)
+    $credential = 'User ID=;Password=' + $Token
+    if ($Form -eq 'PasswordOnly') { $credential = 'Password=' + $Token }
+    return ('"Provider=MSOLAP;Data Source={0};{1}" "{2}" -S "{3}" -B "{4}"' -f $dataSource, $credential, $Work.DatasetName, $ScriptPath, $Work.BimPath)
+}
+
+function Test-IQModelXmlaAuthFailure {
+    <#
+    .SYNOPSIS
+    $true when a Tabular Editor result failed on authentication (the endpoint refused the token), not on permission or content (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $false)][AllowNull()]$Result)
+    if ($null -eq $Result) { return $false }
+    $text = [string](Get-IQModelMember -Object $Result -Name 'StdOut') + "`n" + [string](Get-IQModelMember -Object $Result -Name 'StdErr')
+    return ($text -match '(?i)Authentication failed for all authenticators|AADSTS|token is invalid|invalid_grant|The token|401 Unauthorized')
+}
+
+function Get-IQModelXmlaVariantList {
+    <#
+    .SYNOPSIS
+    The connection variants still worth trying after the current one failed: other form, other audience (commercial for sovereign clouds), both (private).
+    #>
+    [CmdletBinding()]
+    param()
+    $current = Get-IQModelXmlaConnection
+    $audiences = @([string]$current.ResourceUrl)
+    if (-not $current.Pinned) {
+        $commercial = $script:IQModelCommercialPowerBIResource
+        if ($current.ResourceUrl -notlike ($commercial + '*')) { $audiences += $commercial }
+    }
+    $forms = @('UserIdEmpty', 'PasswordOnly')
+    $variants = @()
+    foreach ($url in $audiences) {
+        foreach ($form in $forms) {
+            if ($url -ieq $current.ResourceUrl -and $form -eq $current.Form) { continue }
+            $variants += @{ ResourceUrl = $url; Form = $form }
+        }
+    }
+    return $variants
+}
+
+function Invoke-IQModelXmlaProbe {
+    <#
+    .SYNOPSIS
+    After the first authentication failure of a run: re-runs the same export with every other connection variant; switches the variant in force on success. Returns @{ Success; Result; Variant; Tried }.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Work,
+        [Parameter(Mandatory = $false)][string]$Stage = 'ModelBackup'
+    )
+    $out = @{ Success = $false; Result = $null; Variant = $null; Tried = @() }
+    $script:IQ['XmlaProbeDone'] = $true
+    $variants = @(Get-IQModelXmlaVariantList)
+    if ($variants.Count -eq 0) { return $out }
+    $timeout = 5
+    try { $timeout = [math]::Min(5, [int](Get-IQModelOption -Name 'ToolTimeoutMinutes' -Default 20)) } catch { $timeout = 5 }
+    if ($timeout -lt 1) { $timeout = 1 }
+    $scriptPath = New-IQModelRenameScript -Key $Work.Key -BaseName $Work.BaseName
+    $safeKey = Get-IQSafeKey -Value ([string]$Work.Key)
+    $n = 0
+    Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message ("The XMLA endpoint refused the token; trying {0} other connection variant(s) once for this run (audience / connection-string form)." -f $variants.Count)
+    foreach ($v in $variants) {
+        $n++
+        $label = ('audience ' + $v.ResourceUrl + ', form ' + $v.Form)
+        $token = $null
+        try { $token = Get-IQModelXmlaToken -ResourceUrl $v.ResourceUrl } catch { $token = $null }
+        if ([string]::IsNullOrWhiteSpace($token)) {
+            $out.Tried += ($label + ': no token for that audience from this sign-in')
+            Write-IQLog -Level Debug -Stage $Stage -Item $Work.Item -Message ('XMLA variant skipped (' + $label + '): no token for that audience from this sign-in')
+            continue
+        }
+        if (Test-Path -LiteralPath $Work.BimPath) { Remove-Item -LiteralPath $Work.BimPath -Force -ErrorAction SilentlyContinue }
+        $arguments = New-IQModelXmlaArgumentList -Work $Work -Token $token -ScriptPath $scriptPath -Form $v.Form
+        $r = Invoke-IQTabularEditor -ArgumentList $arguments -TimeoutMinutes $timeout -LogName ('xmla-probe-' + $safeKey + '-' + $n) -Stage $Stage -Item $Work.Item
+        if (Test-IQModelBimComplete -Path $Work.BimPath -RemoveInvalid) {
+            $script:IQ['XmlaConnection'] = @{ ResourceUrl = $v.ResourceUrl; Form = $v.Form; Pinned = $true; Probed = $true }
+            $out.Success = $true; $out.Result = $r; $out.Variant = $v
+            $out.Tried += ($label + ': accepted')
+            Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message ("XMLA accepted the connection with {0}; the remaining models use it. Pin it for future runs with -XmlaTokenResource '{1}' (settings file: XmlaTokenResource)." -f $label, $v.ResourceUrl)
+            return $out
+        }
+        $summary = Get-IQModelResultSummary -Result $r
+        $out.Tried += ($label + ': ' + $summary)
+        Write-IQLog -Level Info -Stage $Stage -Item $Work.Item -Message ('XMLA variant refused (' + $label + '): ' + $summary)
+    }
+    Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message 'No XMLA connection variant was accepted; the remaining exports are not retried. Check the capacity XMLA Endpoint setting (Read or Read Write), the tenant setting "Allow XMLA endpoints and Analyze in Excel with on-premises semantic models", and Build permission on the models; tools\Test-IQXmlaAccess.ps1 reproduces the probe in two minutes.'
+    return $out
+}
+
+function Get-IQModelXmlaFailureClassification {
+    <#
+    .SYNOPSIS
+    Maps a final XMLA failure message to @{ Status ('Skipped' | 'Failed'); Message } (permission refusals and inferred capacities are Skipped) (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Work,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Message
+    )
+    $Message = $Message -replace '</?euii>', ''
+    if ($Message -match '(?i)does not have permission|permission to call the Discover|not authorized|access is denied') {
+        return @{ Status = 'Skipped'; Message = ('Skipped: no XMLA permission on this model - ' + $Message + '. XMLA read needs Build permission and workspace Member/Admin (or dataset Read/ReadWrite); system-generated usage metrics models never grant it.') }
+    }
+    $inferred = $false
+    try { if ($Work.ContainsKey('CapacityInferred')) { $inferred = [bool]$Work.CapacityInferred } } catch { $inferred = $false }
+    if ($inferred) {
+        return @{ Status = 'Skipped'; Message = ($Message + '. The workspace is listed without dedicated capacity (no capacity id), so it may have no XMLA endpoint even though this model keeps the large semantic model storage format; if Workspace settings > License info shows Premium, PPU or Fabric, re-run with -Stages ModelBackup.') }
+    }
+    if ($Message -match '(?i)Authentication failed for all authenticators') {
+        $tried = ''
+        if ($script:IQ.ContainsKey('XmlaProbeTried') -and $script:IQ['XmlaProbeTried']) { $tried = ' Variants tried: ' + [string]$script:IQ['XmlaProbeTried'] + '.' }
+        return @{ Status = 'Failed'; Message = ($Message + '. The XMLA endpoint refused the access token that every REST call accepts.' + $tried + ' Check the capacity XMLA Endpoint setting (Read or Read Write), the tenant setting "Allow XMLA endpoints and Analyze in Excel with on-premises semantic models", and Build permission on the model; tools\Test-IQXmlaAccess.ps1 reproduces this in two minutes; no .bim exported (ModelDetail can still use DAX)') }
+    }
+    return @{ Status = 'Failed'; Message = $Message }
+}
+
 function Complete-IQModelBackupJob {
     <#
     .SYNOPSIS
@@ -446,7 +639,24 @@ function Complete-IQModelBackupJob {
         Write-IQLog -Level Success -Stage 'ModelBackup' -Item $w.Item -Message ("Exported {0} ({1:N0} bytes)" -f $bim, $size)
         return
     }
-    else { $problem = 'XMLA export produced no complete .bim' }
+    else {
+        $problem = 'XMLA export produced no complete .bim'
+        $probeEnabled = $true
+        try { $probeEnabled = -not [bool](Get-IQModelOption -Name 'NoXmlaProbe' -Default $false) } catch { $probeEnabled = $true }
+        if ($probeEnabled -and -not ($script:IQ.ContainsKey('XmlaProbeDone') -and $script:IQ['XmlaProbeDone']) -and (Test-IQModelXmlaAuthFailure -Result $result)) {
+            $probe = Invoke-IQModelXmlaProbe -Work $w -Stage 'ModelBackup'
+            $script:IQ['XmlaProbeTried'] = (@($probe.Tried) -join '; ')
+            if ($probe.Success -and (Test-IQModelBimComplete -Path $bim)) {
+                $size = 0
+                try { $size = (Get-Item -LiteralPath $bim).Length } catch { $size = 0 }
+                $note = ('XMLA accepted after switching to audience ' + $probe.Variant.ResourceUrl + ', form ' + $probe.Variant.Form)
+                Set-IQItemDone -Stage 'ModelBackup' -ItemKey $key -Item $w.Item -Outputs @($bim) -Method 'XMLA' -Message $note -Data @{ BaseName = $w.BaseName; BimPath = $bim; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId; XmlaVariant = $probe.Variant } | Out-Null
+                $w['Checkpointed'] = 'Succeeded'
+                Write-IQLog -Level Success -Stage 'ModelBackup' -Item $w.Item -Message ("Exported {0} ({1:N0} bytes) - {2}" -f $bim, $size, $note)
+                return
+            }
+        }
+    }
     $message = $problem + ': ' + (Get-IQModelResultSummary -Result $result)
     if ($DeferFailure) {
         $w['XmlaFailure'] = $message
@@ -471,16 +681,17 @@ function Set-IQModelXmlaFailure {
         [Parameter(Mandatory = $true)][string]$Key,
         [Parameter(Mandatory = $true)][string]$Message
     )
+    $classified = Get-IQModelXmlaFailureClassification -Work $Work -Message $Message
     $inferred = $false
     try { if ($Work.ContainsKey('CapacityInferred')) { $inferred = [bool]$Work.CapacityInferred } } catch { $inferred = $false }
-    if ($inferred) {
-        $why = $Message + '. The workspace is listed without dedicated capacity (no capacity id), so it may have no XMLA endpoint even though this model keeps the large semantic model storage format; if Workspace settings > License info shows Premium, PPU or Fabric, re-run with -Stages ModelBackup.'
-        Write-IQLog -Level Warn -Stage 'ModelBackup' -Item $Work.Item -Message ('Skipped: ' + $why)
-        Set-IQItemDone -Stage 'ModelBackup' -ItemKey $Key -Item $Work.Item -Status Skipped -Method 'XMLA' -Message $why -Data @{ BaseName = $Work.BaseName; WorkspaceId = $Work.WorkspaceId; DatasetId = $Work.DatasetId; CapacityInferred = $true } | Out-Null
+    if ($classified.Status -eq 'Skipped') {
+        $why = [string]$classified.Message
+        Write-IQLog -Level Warn -Stage 'ModelBackup' -Item $Work.Item -Message $(if ($why -like 'Skipped: *') { $why } else { 'Skipped: ' + $why })
+        Set-IQItemDone -Stage 'ModelBackup' -ItemKey $Key -Item $Work.Item -Status Skipped -Method 'XMLA' -Message $why -Data @{ BaseName = $Work.BaseName; WorkspaceId = $Work.WorkspaceId; DatasetId = $Work.DatasetId; CapacityInferred = $inferred } | Out-Null
         $Work['Checkpointed'] = 'Skipped'
         return
     }
-    Set-IQItemDone -Stage 'ModelBackup' -ItemKey $Key -Item $Work.Item -Status Failed -Method 'XMLA' -Message $Message -Data @{ BaseName = $Work.BaseName; WorkspaceId = $Work.WorkspaceId; DatasetId = $Work.DatasetId } | Out-Null
+    Set-IQItemDone -Stage 'ModelBackup' -ItemKey $Key -Item $Work.Item -Status Failed -Method 'XMLA' -Message ([string]$classified.Message) -Data @{ BaseName = $Work.BaseName; WorkspaceId = $Work.WorkspaceId; DatasetId = $Work.DatasetId } | Out-Null
     $Work['Checkpointed'] = 'Failed'
 }
 
@@ -731,6 +942,13 @@ function Invoke-IQModelBackupStage {
             }
             continue
         }
+        if (Test-IQModelSystemDataset -Name ([string]$w.DatasetName)) {
+            $sysMessage = 'Skipped: system-generated usage metrics model; the service never allows XMLA access to it (Discover is refused even for workspace admins)'
+            Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message $sysMessage
+            Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Skipped -Method 'XMLA' -Message $sysMessage -Data @{ BaseName = $w.BaseName; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId; SystemDataset = $true } | Out-Null
+            $summary.Skipped++
+            continue
+        }
         $blocker = $null
         if (-not $teAvailable) { $blocker = $teReason }
         # The workspace name is URL-encoded in the Data Source (so ';' and '"' are safe); only the positional database
@@ -768,7 +986,8 @@ function Invoke-IQModelBackupStage {
     $tePath = [string]$script:IQ.Tools.TabularEditorPath
     $xmlaPrefix = [string]$script:IQ.Endpoints.XmlaPrefix
     if ([string]::IsNullOrWhiteSpace($xmlaPrefix)) { throw 'Endpoints.XmlaPrefix is not set; call Set-IQEnvironment / Initialize-IQContext with an Environment first.' }
-    Write-IQLog -Level Info -Stage $stage -Message ("Exporting {0} model(s) via Tabular Editor XMLA, {1} in parallel, {2} min timeout each" -f $pending.Count, $maxParallel, $timeout)
+    $xmlaConn = Get-IQModelXmlaConnection
+    Write-IQLog -Level Info -Stage $stage -Message ("Exporting {0} model(s) via Tabular Editor XMLA, {1} in parallel, {2} min timeout each; token audience {3}{4}" -f $pending.Count, $maxParallel, $timeout, $xmlaConn.ResourceUrl, $(if ($xmlaConn.Pinned) { ' (pinned by -XmlaTokenResource)' } else { '' }))
 
     $workMap = @{}
     foreach ($w in $pending) { $workMap[[string]$w.Key] = $w }
@@ -793,7 +1012,8 @@ function Invoke-IQModelBackupStage {
         $scripts = @()
         foreach ($w in $chunk) {
             $token = $null
-            try { $token = Get-IQToken -Resource PowerBI }
+            $xmlaConn = Get-IQModelXmlaConnection
+            try { $token = Get-IQModelXmlaToken -ResourceUrl $xmlaConn.ResourceUrl }
             catch {
                 Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Failed -Method 'XMLA' -Message ('Could not obtain a Power BI token: ' + $_.Exception.Message) | Out-Null
                 $summary.Failed++
@@ -807,12 +1027,8 @@ function Invoke-IQModelBackupStage {
             $scriptPath = New-IQModelRenameScript -Key $w.Key -BaseName $w.BaseName
             $scripts += $scriptPath
             if (Test-Path -LiteralPath $w.BimPath) { Remove-Item -LiteralPath $w.BimPath -Force -ErrorAction SilentlyContinue }
-            $encodedWorkspace = [System.Uri]::EscapeDataString([string]$w.WorkspaceName)
-            $dataSource = ('{0}/v1.0/myorg/{1}' -f $xmlaPrefix.TrimEnd('/'), $encodedWorkspace)
-            # Access-token form of the MSOLAP connection string: an explicit empty User ID with the token as Password.
-            # Without "User ID=" the client library can fall through its authenticator chain and report
-            # "Authentication failed for all authenticators" (run assessment 2026-09-16, section 1).
-            $arguments = ('"Provider=MSOLAP;Data Source={0};User ID=;Password={1}" "{2}" -S "{3}" -B "{4}"' -f $dataSource, $token, $w.DatasetName, $scriptPath, $w.BimPath)
+            # Connection variant in force (audience + "User ID=;Password=" / "Password=" form): see the probe above.
+            $arguments = New-IQModelXmlaArgumentList -Work $w -Token $token -ScriptPath $scriptPath -Form $xmlaConn.Form
             Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Exporting ' + $w.BaseName)
             $jobs += @{ ItemKey = $w.Key; Item = $w.Item; FilePath = $tePath; ArgumentList = $arguments; WorkingDirectory = [string]$script:IQ.BaseFolder; LogName = ('xmla-' + (Get-IQSafeKey -Value $w.Key)) }
         }
@@ -835,12 +1051,9 @@ function Invoke-IQModelBackupStage {
                 if ($w.ContainsKey('XmlaFailure') -and $w.XmlaFailure) {
                     # Deferred XMLA failure: Fabric getDefinition fallback, then one combined checkpoint. A model whose
                     # capacity was only inferred ends Skipped (see Set-IQModelXmlaFailure) when the fallback fails too.
-                    $fallbackStatus = 'Failed'
-                    $fallbackMessage = [string]$w.XmlaFailure
-                    if ($w.ContainsKey('CapacityInferred') -and [bool]$w.CapacityInferred) {
-                        $fallbackStatus = 'Skipped'
-                        $fallbackMessage += '. The workspace is listed without dedicated capacity (no capacity id), so it may have no XMLA endpoint even though this model keeps the large semantic model storage format; if Workspace settings > License info shows Premium, PPU or Fabric, re-run with -Stages ModelBackup'
-                    }
+                    $classified = Get-IQModelXmlaFailureClassification -Work $w -Message ([string]$w.XmlaFailure)
+                    $fallbackStatus = [string]$classified.Status
+                    $fallbackMessage = [string]$classified.Message
                     $status = Complete-IQModelBackupViaFabric -Work $w -FabricState $fabricState -FallbackStatus $fallbackStatus -FallbackMessage $fallbackMessage -FallbackMethod 'XMLA' -Prefix ([string]$w.XmlaFailure)
                     $method = 'FabricDefinition'
                 }

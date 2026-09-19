@@ -90,6 +90,14 @@
     the file's Environment only pre-selects the environment dialog, and the environment chosen there is written
     back so the next run offers it first. BaseFolder, SettingsPath, Credential, TokenCacheKey, Force and RunId are
     never taken from the file.
+.PARAMETER XmlaTokenResource
+    Audience (resource URL) of the access token handed to Tabular Editor for the XMLA export, e.g.
+    https://analysis.windows.net/powerbi/api. Default: the environment's Power BI resource (in GCC
+    https://analysis.usgovcloudapi.net/powerbi/api), or IMPACTIQ_XMLA_RESOURCE. When the XMLA endpoint refuses the
+    token ("Authentication failed for all authenticators") the first failure of a run probes the other audience and
+    the Password-only connection form once and pins what works; this parameter pins the audience up front.
+.PARAMETER NoXmlaProbe
+    Do not probe other XMLA connection variants after an authentication failure.
 .PARAMETER NoWebUiExportFallback
     When the Export API refuses a report because its model uses the large semantic model storage format (HTTP 400
     PremiumFiles), ImpactIQ normally retries through the endpoint the Power BI portal itself uses for "Download this
@@ -195,6 +203,8 @@ param(
     [Parameter(Mandatory = $false)][switch]$NoWebUiExportFallback,
     [Parameter(Mandatory = $false)][string]$WebUiClusterHost,
     [Parameter(Mandatory = $false)][string]$SettingsPath,
+    [Parameter(Mandatory = $false)][string]$XmlaTokenResource,
+    [Parameter(Mandatory = $false)][switch]$NoXmlaProbe,
     # No [ValidateSet]: "powershell.exe -File ImpactIQ.ps1 -Stages Inventory,Assemble" (Task Scheduler / runas) binds the
     # comma list as ONE string, which a ValidateSet rejects before the script body runs; Get-IQEntryStageList splits
     # and validates instead (unknown names throw). The completer keeps tab completion for console use.
@@ -692,6 +702,18 @@ function Write-IQEntrySummary {
     Write-IQEntryMessage -Level Info -Message ('Total elapsed: {0:00}:{1:00}:{2:00}' -f [math]::Floor($elapsed.TotalHours), $elapsed.Minutes, $elapsed.Seconds)
 }
 
+function Resolve-IQEntryXmlaTokenResource {
+    <#
+    .SYNOPSIS
+        -XmlaTokenResource, else IMPACTIQ_XMLA_RESOURCE, else '' (the environment's Power BI resource is used).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Requested)
+    if (-not [string]::IsNullOrWhiteSpace($Requested)) { return $Requested.Trim().TrimEnd('/') }
+    if (-not [string]::IsNullOrWhiteSpace($env:IMPACTIQ_XMLA_RESOURCE)) { return $env:IMPACTIQ_XMLA_RESOURCE.Trim().TrimEnd('/') }
+    return ''
+}
+
 function Get-IQEntrySettingsPath {
     <#
     .SYNOPSIS
@@ -896,6 +918,8 @@ try {
         NoWebUiExportFallback   = [bool]$NoWebUiExportFallback
         WebUiClusterHost        = $WebUiClusterHost
         SettingsPath            = $settingsPath
+        XmlaTokenResource       = (Resolve-IQEntryXmlaTokenResource -Requested $XmlaTokenResource)
+        NoXmlaProbe             = [bool]$NoXmlaProbe
         Stages                  = @($Stages)
         SkipStages              = @($SkipStages)
         RunId                   = $RunId

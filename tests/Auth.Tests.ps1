@@ -784,3 +784,26 @@ Describe 'Headless guards' {
         { Get-IQToken -Resource PowerBI } | Should -Throw
     }
 }
+
+Describe 'Get-IQTokenForResourceUrl (XMLA audience probe, run assessment 2026-09-18)' {
+    BeforeAll {
+        $script:TrBase = Initialize-IQTestContext -Options @{ Environment = 'USGov' } -NoRun -Prefix 'auth-resource-url'
+        $script:IQ.Auth = @{ Mode = 'Interactive'; Provider = 'Az'; Tokens = @{}; Initialized = $true; ClientId = 'cid' }
+        $script:MintedFor = New-Object System.Collections.Generic.List[string]
+        Mock Get-IQAzAccessTokenValue { $script:MintedFor.Add($ResourceUrl); return (New-IQTestJwt -Claims @{ aud = $ResourceUrl } -ExpiresInMinutes 60) }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:TrBase }
+    It 'mints through Az for another audience, caches it, and hands the regular Power BI token back for the environment audience' {
+        $t1 = Get-IQTokenForResourceUrl -ResourceUrl 'https://analysis.windows.net/powerbi/api'
+        $t1 | Should -Not -BeNullOrEmpty
+        (Get-IQTokenForResourceUrl -ResourceUrl 'https://analysis.windows.net/powerbi/api/') | Should -Be $t1
+        @($script:MintedFor | Where-Object { $_ -eq 'https://analysis.windows.net/powerbi/api' }).Count | Should -Be 1 -Because 'the second call is served from the cache'
+        Mock Get-IQToken { 'STANDARD' }
+        Get-IQTokenForResourceUrl -ResourceUrl 'https://analysis.usgovcloudapi.net/powerbi/api' | Should -Be 'STANDARD'
+    }
+    It 'returns $null for a sign-in that cannot mint another audience' {
+        $script:IQ.Auth = @{ Mode = 'AccessToken'; Provider = $null; Tokens = @{}; Initialized = $true }
+        Get-IQTokenForResourceUrl -ResourceUrl 'https://analysis.windows.net/powerbi/api' | Should -BeNullOrEmpty
+    }
+}
+

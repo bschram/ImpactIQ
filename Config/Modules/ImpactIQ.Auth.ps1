@@ -1775,6 +1775,63 @@ function Get-IQToken {
     return $token
 }
 
+function Get-IQTokenForResourceUrl {
+    <#
+    .SYNOPSIS
+        Bearer token for an arbitrary audience (resource URL) through the current sign-in; $null when the provider cannot mint it.
+    .DESCRIPTION
+        Used by the XMLA connection probe (Models) to try the commercial Power BI audience against a sovereign-cloud
+        XMLA endpoint, and by -XmlaTokenResource. Az sign-ins (Interactive via Az.Accounts, AzContext) mint through
+        Get-AzAccessToken; DeviceCode redeems the refresh token with "<resource>/.default"; the Power BI module,
+        Credential and AccessToken modes cannot mint for another audience and return $null (Debug line). Tokens are
+        cached per URL until 5 minutes before expiry. A URL equal to the environment's Power BI resource returns the
+        regular Power BI token.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$ResourceUrl,
+        [Parameter(Mandatory = $false)][switch]$Force
+    )
+    $ResourceUrl = $ResourceUrl.TrimEnd('/')
+    $auth = Get-IQAuthState
+    $standard = $null
+    try { $standard = Get-IQAuthResourceUrl -Resource PowerBI } catch { $standard = $null }
+    if ($standard -and $ResourceUrl -ieq $standard) { return (Get-IQToken -Resource PowerBI -Force:$Force) }
+    if (-not $auth.ContainsKey('ExtraTokens') -or -not ($auth.ExtraTokens -is [hashtable])) { $auth.ExtraTokens = @{} }
+    $cacheKey = $ResourceUrl.ToLowerInvariant()
+    if (-not $Force -and $auth.ExtraTokens.ContainsKey($cacheKey)) {
+        $entry = $auth.ExtraTokens[$cacheKey]
+        if ($null -ne $entry -and [datetime]$entry.ExpiresUtc -gt [datetime]::UtcNow.AddMinutes($script:IQAuthRefreshSkewMinutes)) { return [string]$entry.Token }
+    }
+    $token = $null
+    $mode = [string]$auth.Mode
+    try {
+        if (($mode -eq 'Interactive' -and $auth.Provider -eq 'Az') -or $mode -eq 'AzContext') {
+            $token = Get-IQAzAccessTokenValue -ResourceUrl $ResourceUrl -Quiet
+        }
+        elseif ($mode -eq 'DeviceCode' -and -not [string]::IsNullOrWhiteSpace([string]$auth.RefreshToken)) {
+            $body = @{ grant_type = 'refresh_token'; client_id = [string]$auth.ClientId; scope = ($ResourceUrl + '/.default offline_access'); refresh_token = [string]$auth.RefreshToken }
+            $r = Invoke-IQAuthRequest -Uri (Get-IQAuthEndpoint -Kind Token) -Body $body -MaxAttempts 2 -Description ('refresh-token grant (' + $ResourceUrl + ')')
+            if ($r.Ok) { $token = Get-IQAuthResponseAccessToken -Response $r.Response }
+            else { Write-IQLog -Level Debug -Stage Auth -Message ('Token for ' + $ResourceUrl + ' refused: ' + (Get-IQAuthResultText -Result $r)) }
+        }
+        else {
+            Write-IQLog -Level Debug -Stage Auth -Message ('The ' + $mode + ' sign-in cannot mint a token for another audience (' + $ResourceUrl + ').')
+        }
+    }
+    catch {
+        Write-IQLog -Level Debug -Stage Auth -Message ('Token for ' + $ResourceUrl + ' could not be minted: ' + $_.Exception.Message)
+        $token = $null
+    }
+    if ([string]::IsNullOrWhiteSpace($token)) { return $null }
+    $expires = Get-IQJwtExpiry -Token $token
+    if ($expires -eq [datetime]::MaxValue) { $expires = [datetime]::UtcNow.AddMinutes(55) }
+    $auth.ExtraTokens[$cacheKey] = @{ Token = $token; ExpiresUtc = $expires }
+    Register-IQAuthSecret -Value $token
+    Write-IQLog -Level Debug -Stage Auth -Message ('Token for ' + $ResourceUrl + ' obtained; valid until ' + $expires.ToString('HH:mm') + ' UTC.')
+    return $token
+}
+
 function Get-IQAuthDescription {
     <#
     .SYNOPSIS
