@@ -379,7 +379,18 @@ comes from it, and the run prints the resolved hosts in its first lines.
 | `Germany` (retired cloud, kept for compatibility) | app.powerbi.de | api.powerbi.de | login.microsoftonline.de | powerbi://api.powerbi.de | api.fabric.microsoft.de |
 
 GCC tenants sign in through commercial Entra ID (`login.microsoftonline.com`); only the Power BI hosts change. GCC High
-and DoD use `login.microsoftonline.us` and, for `AzContext`, the `AzureUSGovernment` environment. Where Fabric is not
+and DoD use `login.microsoftonline.us` and, for `AzContext`, the `AzureUSGovernment` environment.
+
+**XMLA token audience.** The token handed to Tabular Editor for XMLA exports is minted for the environment's Power BI
+resource (GCC: `https://analysis.usgovcloudapi.net/powerbi/api`). If the XMLA endpoint answers *Authentication
+failed for all authenticators* although the workspace is on a dedicated capacity, the first such failure of a run
+tries the other combinations once (the commercial audience `https://analysis.windows.net/powerbi/api`, and the
+`Password=` form without `User ID=`) and uses the accepted one for the remaining models, logging the
+`-XmlaTokenResource` value to pin. `tools\Test-IQXmlaAccess.ps1 -Environment USGov -WorkspaceName X -DatasetName Y`
+runs the same probe against one model in about two minutes without a full run. When no variant is accepted, the
+remaining causes are outside the tool: the capacity's **XMLA Endpoint** setting (Read or Read Write), the tenant
+setting *Allow XMLA endpoints and Analyze in Excel with on-premises semantic models*, and Build permission on the
+model. The service's own usage-metrics models are skipped up front (XMLA is never granted on them). Where Fabric is not
 offered, the first refused token or unreachable host marks Fabric unavailable for the run and the Fabric-only sheets
 stay empty; nothing else is affected. Token resources and the full table are in
 [docs/Auth-Options.md](docs/Auth-Options.md) section 3.
@@ -408,6 +419,7 @@ pass arguments (full list in [docs/Headless-and-Resume.md](docs/Headless-and-Res
 | `-NoKeepAwake` | | do not stop Windows from sleeping during the run (on by default) |
 | `-NoWebUiExportFallback`, `-WebUiClusterHost` | | turn off (or pin the cluster host for) the web-UI export used when the Export API refuses a large-storage-format report |
 | `-SettingsPath` | `IMPACTIQ_SETTINGS_PATH` | settings file; default `Config\ImpactIQ.Settings.json` (see below) |
+| `-XmlaTokenResource`, `-NoXmlaProbe` | `IMPACTIQ_XMLA_RESOURCE` | pin the token audience Tabular Editor uses for XMLA exports / do not probe other audiences after an authentication failure (see Clouds and endpoints) |
 | `-Stages`, `-SkipStages` | | `Inventory, ModelBackup, ReportBackup, ReportDetail, ModelDetail, Dataflows, Extras, Assemble` |
 | `-Resume Auto\|Always\|Never`, `-Force`, `-RefreshInventory` | | resume rules |
 | `-TimeBudgetMinutes` | | stop cleanly N minutes after start, exit `3`, resume next run |

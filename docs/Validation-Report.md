@@ -212,3 +212,24 @@ failed item resumes on the next start), workbook append mode (unbounded growth; 
 runspace-pool parallel inventory (429 risk for a stage that takes minutes), the report change-detection fingerprint
 (hashes ids and URLs only, so it is "exported once, never again").
 
+## 11. First full-tenant run (GCC, 2026-09-18 15:25): XMLA refused on a real capacity
+
+43 workspaces, 189 models, 187 reports, 63 dataflows in 2 h 56 m; every stage clean except ModelBackup: 32 XMLA
+failures, all "Authentication failed for all authenticators" (server-side message with RootActivityId), 4 s each, in
+three workspaces that ARE on a dedicated capacity (`72AA2844-...`). The same token served every REST call, and one
+system model in the same workspace answered "user does not have permission to call the Discover method" - so a
+credential did reach the service at least once. Nothing in the run proves which of the remaining causes applies
+(token audience, connection-string form, the capacity's XMLA Endpoint setting, the tenant XMLA setting, Build
+permission), so the tool now finds out by itself:
+
+| Change | Where |
+|---|---|
+| First authentication failure of a run probes the other variants once - the commercial audience `https://analysis.windows.net/powerbi/api` (sovereign clouds only) and the `Password=`-only form - and switches the run to the accepted one; the log names the `-XmlaTokenResource` to pin. `-NoXmlaProbe` disables it. Tokens for another audience come from the Az sign-in or a device-code refresh token (`Get-IQTokenForResourceUrl`) | Models (`Invoke-IQModelXmlaProbe`, `Get-IQModelXmlaConnection`, `New-IQModelXmlaArgumentList`), Auth, entry point |
+| When no variant is accepted the model fails once with the variants tried and the three admin checks in the message; later models are not probed again | `Get-IQModelXmlaFailureClassification` |
+| The service's usage-metrics models (`Report Usage Metrics Model`, `Usage Metrics Report`, ...) are Skipped before any XMLA attempt; a Discover permission refusal on any other model is Skipped as a permission gap (the `<euii>` tags around the user name are removed) | `Test-IQModelSystemDataset`, `Set-IQModelXmlaFailure` |
+| `tools\Test-IQXmlaAccess.ps1`: the same probe against one model, standalone, about two minutes | tools |
+
+Knock-on effects stay until XMLA works: 53 models on the DAX path (no partitions, roles, calculation groups,
+`INFO.CALCDEPENDENCY`), 43 with blank measure expressions, no `.bim` for any capacity-hosted model. ReportBackup at
+~43 s per report is the run's cost driver (`-MaxParallelExtracts`).
+
