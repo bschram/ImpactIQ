@@ -387,8 +387,11 @@ failed for all authenticators* although the workspace is on a dedicated capacity
 tries the other combinations once (the commercial audience `https://analysis.windows.net/powerbi/api`, and the
 `Password=` form without `User ID=`) and uses the accepted one for the remaining models, logging the
 `-XmlaTokenResource` value to pin. `tools\Test-IQXmlaAccess.ps1 -Environment USGov -WorkspaceName X -DatasetName Y`
-runs the same probe against one model in about two minutes without a full run. When no variant is accepted, the
-remaining causes are outside the tool: the capacity's **XMLA Endpoint** setting (Read or Read Write), the tenant
+runs the same probe against one model in about two minutes without a full run. When every variant is refused,
+`tools\Test-IQXmlaAccess-Legacy.ps1` replays the previous build's path (a MicrosoftPowerBIMgmt token from
+`Connect-PowerBIServiceAccount -Environment USGov` in the `Password=` form) against the same model, runs the Az token
+beside it and prints both tokens' claims (audience, client app, tenant, scopes), so a token-source difference is
+separated from a capacity or tenant setting. When that path is refused too, the remaining causes are outside the tool: the capacity's **XMLA Endpoint** setting (Read or Read Write), the tenant
 setting *Allow XMLA endpoints and Analyze in Excel with on-premises semantic models*, and Build permission on the
 model. The service's own usage-metrics models are skipped up front (XMLA is never granted on them). Where Fabric is not
 offered, the first refused token or unreachable host marks Fabric unavailable for the run and the Fabric-only sheets
