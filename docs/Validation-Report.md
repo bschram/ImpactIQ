@@ -228,6 +228,7 @@ permission), so the tool now finds out by itself:
 | When no variant is accepted the model fails once with the variants tried and the three admin checks in the message; later models are not probed again | `Get-IQModelXmlaFailureClassification` |
 | The service's usage-metrics models (`Report Usage Metrics Model`, `Usage Metrics Report`, ...) are Skipped before any XMLA attempt; a Discover permission refusal on any other model is Skipped as a permission gap (the `<euii>` tags around the user name are removed) | `Test-IQModelSystemDataset`, `Set-IQModelXmlaFailure` |
 | `tools\Test-IQXmlaAccess.ps1`: the same probe against one model, standalone, about two minutes | tools |
+| `tools\Test-IQXmlaAccess-Legacy.ps1`: the recovered build's exact path (MicrosoftPowerBIMgmt token, `Password=` form, legacy workspace encoding) against one model, then the Az token for the same audience; both tokens' claims (aud / appid / tid / scp / ver) printed side by side, tokens never printed; verdict names the token source or the admin settings | tools |
 
 Knock-on effects stay until XMLA works: 53 models on the DAX path (no partitions, roles, calculation groups,
 `INFO.CALCDEPENDENCY`), 43 with blank measure expressions, no `.bim` for any capacity-hosted model. ReportBackup at
