@@ -180,6 +180,30 @@ discovery fails, the account's default tenant is used with a log line. Headless 
 `-TenantId <guid>` instead. Unlike the v2 script, GCC uses the commercial `AzureCloud` Az environment here (GCC
 tenants live in commercial Entra); `AzureUSGovernment` is for GCC High and DoD.
 
+### 4.6 The XMLA endpoint token (GCC)
+
+The Power BI REST API accepts every token above. The **XMLA endpoint** on a GCC capacity does not: verified on
+2026-09-22 with `tools\Test-IQXmlaAccess-Legacy.ps1` against a real model, it refuses the token Az.Accounts mints for
+`https://analysis.usgovcloudapi.net/powerbi/api` (client *Microsoft Azure PowerShell*, scope `user_impersonation`)
+with *Authentication failed for all authenticators*, and accepts the token the Power BI PowerShell module obtains
+(`Connect-PowerBIServiceAccount -Environment USGov`, `Get-PowerBIAccessToken`; client `23d8f6bd-1eb0-4cc2-a08c-7bf525c67bcd`
+with the full Power BI service scopes) in both connection-string forms. The v2 script only ever used the module token,
+which is why its model backups worked.
+
+ImpactIQ therefore treats the token source as part of the XMLA connection (`-XmlaTokenSource Auto|SignIn|PowerBIModule`,
+`IMPACTIQ_XMLA_TOKEN_SOURCE`, settings file `XmlaTokenSource`):
+
+| Sign-in | Where the XMLA token comes from in `Auto` |
+|---|---|
+| Interactive with Az.Accounts (the default one-window sign-in) | the sign-in token first; on refusal the module signs in (a second window, MSAL usually completes it silently for the same account) and its token is used for the rest of the run and remembered |
+| Interactive through the module (no Az.Accounts) | the sign-in token already is the module token |
+| Credential | the module signs in with the same credential (`Connect-PowerBIServiceAccount -Credential`) when the sign-in token is refused |
+| DeviceCode, AzContext, AccessToken | no module sign-in is possible headless; a remembered module connection falls back to the sign-in token with a Warn line, and the probe reports that the module token could not be tried |
+
+The accepted connection is written to `State\xmla-connection.json` (environment, audience, form, source) and used from
+the first export of later runs; delete the file to forget it. `-XmlaTokenSource PowerBIModule` pins the module token
+up front (the module is installed when missing) and fails the stage with a clear message when it cannot sign in.
+
 ## 5. The token cache (DeviceCode)
 
 File: `<BaseFolder>\State\auth\token-cache.json` (override with `-TokenCachePath` / `IMPACTIQ_TOKEN_CACHE_PATH`).

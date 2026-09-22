@@ -16,5 +16,6 @@
   "NoQuarantine": false,
   "NoKeepAwake": false,
   "NoWebUiExportFallback": false,
-  "WebUiClusterHost": ""
+  "WebUiClusterHost": "",
+  "XmlaTokenSource": "Auto"
 }

@@ -377,12 +377,13 @@ Describe 'XMLA connection probe, system datasets and permission classification (
         Mock Test-IQModelTabularEditorAvailable { $true }
         Mock Get-IQToken { if ($Resource -eq 'Fabric') { return $null } return 'GOV-TOKEN' }   # no Fabric fallback in these tests
         Mock Get-IQTokenForResourceUrl { if ($ResourceUrl -like 'https://analysis.windows.net/*') { return 'COMMERCIAL-TOKEN' } return $null }
+        Mock Get-IQPowerBIModuleXmlaToken { $null }   # no Power BI module session unless a test says so
         function New-ProbeTeResult { param([bool]$Success = $true, [int]$ExitCode = 0) return @{ ExitCode = $ExitCode; TimedOut = $false; StdOut = ''; StdErr = ''; OutFile = $null; ErrFile = $null; DurationSec = 1; Success = $Success; ErrorLines = @(); FailureReason = $(if ($Success) { '' } else { 'exit ' + $ExitCode }) } }
         $script:Workspaces = @([pscustomobject]@{ WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true; WorkspaceCapacityId = '72AA2844-F3D6-459A-A19B-D8ECFE5EB068' })
         Mock Get-IQSelectedWorkspaces { $script:Workspaces }
         function Write-CompleteBim { param([string]$Path) [System.IO.File]::WriteAllText($Path, '{"name":"m","compatibilityLevel":1567,"model":{"culture":"en-US","tables":[{"name":"T","columns":[{"name":"C","dataType":"string"}]}]}}') }
         function New-AuthFailedResult { return @{ ExitCode = 1; TimedOut = $false; StdOut = "Tabular Editor 2.29.0`r`nLoading model...`r`nError loading model: Authentication failed for all authenticators`r`n`r`nTechnical Details:`r`nRootActivityId: x"; StdErr = ''; OutFile = $null; ErrFile = $null; DurationSec = 4; StartError = $null } }
-        function Reset-ProbeState { foreach ($k in @('XmlaConnection', 'XmlaProbeDone', 'XmlaProbeTried')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }; $script:IQ.Options['NoXmlaProbe'] = $false; $script:IQ.Options['XmlaTokenResource'] = '' }
+        function Reset-ProbeState { foreach ($k in @('XmlaConnection', 'XmlaProbeDone', 'XmlaProbeTried')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }; $script:IQ.Options['NoXmlaProbe'] = $false; $script:IQ.Options['XmlaTokenResource'] = ''; $script:IQ.Options['XmlaTokenSource'] = 'Auto'; $m = Get-IQModelXmlaMemoryPath; if (Test-Path -LiteralPath $m) { Remove-Item -LiteralPath $m -Force } }
         function Clear-ModelCheckpoints { $p = Join-Path (Join-Path $script:IQ.RunPath 'done') 'ModelBackup'; if (Test-Path -LiteralPath $p) { Get-ChildItem -LiteralPath $p -Filter '*.json' | Remove-Item -Force } }
     }
     AfterAll { Remove-IQTestFolder -Path $script:Base }
@@ -442,13 +443,13 @@ Describe 'XMLA connection probe, system datasets and permission classification (
         $conn.ResourceUrl | Should -Be 'https://analysis.windows.net/powerbi/api'
         $conn.Form | Should -Be 'UserIdEmpty'
         $conn.Pinned | Should -BeTrue
-        (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d1).message | Should -Match 'XMLA accepted after switching to audience https://analysis.windows.net/powerbi/api'
+        (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d1).message | Should -Match 'XMLA accepted after switching to sign-in token, audience https://analysis.windows.net/powerbi/api, form UserIdEmpty'
         # the second chunk went straight through the batch with the switched token and no further probe
         $script:BatchArgs.Count | Should -Be 2
         $script:BatchArgs[1] | Should -Match 'User ID=;Password=COMMERCIAL-TOKEN'
         (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d2).status | Should -Be 'Succeeded'
         $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
-        $log | Should -Match "Pin it for future runs with -XmlaTokenResource 'https://analysis.windows.net/powerbi/api'"
+        $log | Should -Match "Pin it explicitly with -XmlaTokenResource 'https://analysis.windows.net/powerbi/api' \(settings file: XmlaTokenResource\)"
     }
     It 'when no variant is accepted the model fails once with the admin checks in the message and later models are not probed again' {
         Mock Get-IQSelectedDatasets { @(
@@ -463,12 +464,16 @@ Describe 'XMLA connection probe, system datasets and permission classification (
         Mock Invoke-IQTabularEditor { $script:ProbeArgs.Add($ArgumentList); $r = New-AuthFailedResult; $r.Success = $false; $r.ErrorLines = @('Error loading model: Authentication failed for all authenticators'); $r.FailureReason = 'exit 1'; return $r }
         $summary = Invoke-IQModelBackupStage
         $summary.Failed | Should -Be 2
-        $script:ProbeArgs.Count | Should -Be 3 -Because 'three other variants exist for a GCC run (gov/PasswordOnly, commercial/UserIdEmpty, commercial/PasswordOnly) and they are tried once per run'
+        $script:ProbeArgs.Count | Should -Be 3 -Because 'three other sign-in variants exist for a GCC run (gov/PasswordOnly, commercial/UserIdEmpty, commercial/PasswordOnly); the two module-token variants are skipped without a module session'
+        $script:IQ['XmlaProbeTried'] | Should -Match 'Power BI PowerShell module token, audience https://analysis.usgovcloudapi.net/powerbi/api, form UserIdEmpty: no Power BI PowerShell module token'
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match 'could not be tried in this run: install MicrosoftPowerBIMgmt and run interactively once'
         $cp = Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d1
         $cp.status | Should -Be 'Failed'
         $cp.message | Should -Match 'refused the access token that every REST call accepts'
         $cp.message | Should -Match 'Variants tried: '
-        $cp.message | Should -Match 'Test-IQXmlaAccess\.ps1'
+        $cp.message | Should -Match 'Test-IQXmlaAccess-Legacy\.ps1'
+        $cp.message | Should -Match '-XmlaTokenSource PowerBIModule'
         (Get-IQModelXmlaConnection).ResourceUrl | Should -Be 'https://analysis.usgovcloudapi.net/powerbi/api'
     }
     It '-NoXmlaProbe and -XmlaTokenResource: no probing, and the pinned audience is used from the first export' {
@@ -486,7 +491,128 @@ Describe 'XMLA connection probe, system datasets and permission classification (
         $script:ProbeArgs.Count | Should -Be 0
         $script:BatchArgs[0] | Should -Match 'User ID=;Password=COMMERCIAL-TOKEN'
         (Get-IQModelXmlaConnection).Pinned | Should -BeTrue
-        @(Get-IQModelXmlaVariantList).Count | Should -Be 1 -Because 'a pinned audience leaves only the other form to try'
+        @(Get-IQModelXmlaVariantList).Count | Should -Be 3 -Because 'a pinned audience leaves the two module-token variants and the other form of the sign-in token'
+    }
+
+    It 'the Power BI module token is tried first after an authentication failure, used for the remaining models when accepted, and remembered for the next run (2026-09-22)' {
+        Mock Get-IQSelectedDatasets { @(
+            [pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'First'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true },
+            [pscustomobject]@{ DatasetId = $script:StageIds.d2; DatasetName = 'Second'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }
+        ) }
+        Mock Get-IQPowerBIModuleXmlaToken { 'MODULE-TOKEN' }
+        Mock Invoke-IQProcessBatch {
+            $out = @()
+            foreach ($j in $Jobs) {
+                $script:BatchArgs.Add([string]$j.ArgumentList)
+                $r = New-AuthFailedResult
+                if ([string]$j.ArgumentList -like '*Password=MODULE-TOKEN*') { $bim = [regex]::Match([string]$j.ArgumentList, '-B "([^"]+)"').Groups[1].Value; Write-CompleteBim -Path $bim; $r = New-TestProcessResult -ExitCode 0 }
+                $entry = @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = $r }
+                if ($OnJobComplete) { & $OnJobComplete $entry }
+                $out += , $entry
+            }
+            return $out
+        }
+        Mock Invoke-IQTabularEditor {
+            $script:ProbeArgs.Add($ArgumentList)
+            $bim = [regex]::Match($ArgumentList, '-B "([^"]+)"').Groups[1].Value
+            if ($ArgumentList -like '*Password=MODULE-TOKEN*') { Write-CompleteBim -Path $bim; return (New-ProbeTeResult -Success $true) }
+            $r = New-AuthFailedResult; $r.Success = $false; $r.ErrorLines = @('Error loading model: Authentication failed for all authenticators'); $r.FailureReason = 'exit 1'; return $r
+        }
+        $summary = Invoke-IQModelBackupStage
+        $summary.Done | Should -Be 2
+        $summary.Failed | Should -Be 0
+        $script:ProbeArgs.Count | Should -Be 1 -Because 'the module token in the standard form is the first variant and it is accepted'
+        $script:ProbeArgs[0] | Should -Match 'Data Source=powerbi://api\.powerbigov\.us/v1\.0/myorg/Dash;User ID=;Password=MODULE-TOKEN"'
+        $conn = Get-IQModelXmlaConnection
+        $conn.TokenSource | Should -Be 'PowerBIModule'
+        $conn.ResourceUrl | Should -Be 'https://analysis.usgovcloudapi.net/powerbi/api'
+        $conn.Form | Should -Be 'UserIdEmpty'
+        (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d1).message | Should -Match 'XMLA accepted after switching to Power BI PowerShell module token'
+        $script:BatchArgs.Count | Should -Be 2
+        $script:BatchArgs[1] | Should -Match 'User ID=;Password=MODULE-TOKEN'
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match 'Pin it explicitly with -XmlaTokenSource PowerBIModule \(settings file: XmlaTokenSource\)'
+        $memory = ConvertFrom-IQJsonFile -Path (Get-IQModelXmlaMemoryPath)
+        $memory.TokenSource | Should -Be 'PowerBIModule'
+        $memory.Environment | Should -Be 'USGov'
+        $memory.Form | Should -Be 'UserIdEmpty'
+    }
+    It 'a remembered connection is used from the first export of the next run; without a module token the run falls back to the sign-in token' {
+        Mock Get-IQSelectedDatasets { @([pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'First'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }) }
+        Mock Invoke-IQProcessBatch {
+            $out = @()
+            foreach ($j in $Jobs) {
+                $script:BatchArgs.Add([string]$j.ArgumentList)
+                $bim = [regex]::Match([string]$j.ArgumentList, '-B "([^"]+)"').Groups[1].Value; Write-CompleteBim -Path $bim
+                $entry = @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = (New-TestProcessResult -ExitCode 0) }
+                if ($OnJobComplete) { & $OnJobComplete $entry }
+                $out += , $entry
+            }
+            return $out
+        }
+        Mock Invoke-IQTabularEditor { $script:ProbeArgs.Add($ArgumentList); return (New-ProbeTeResult -Success $false -ExitCode 1) }
+        Save-IQModelXmlaMemory -Connection @{ ResourceUrl = 'https://analysis.usgovcloudapi.net/powerbi/api'; Form = 'PasswordOnly'; TokenSource = 'PowerBIModule' }
+        foreach ($k in @('XmlaConnection', 'XmlaProbeDone', 'XmlaProbeTried')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }
+        # run A: module token available -> remembered variant from the first export, no probe
+        Mock Get-IQPowerBIModuleXmlaToken { 'MODULE-TOKEN' }
+        (Invoke-IQModelBackupStage).Done | Should -Be 1
+        $script:ProbeArgs.Count | Should -Be 0
+        $script:BatchArgs[0] | Should -Match 'Data Source=[^"]+;Password=MODULE-TOKEN"'
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match 'Using the XMLA connection an earlier run found accepted \(Power BI PowerShell module token, audience https://analysis.usgovcloudapi.net/powerbi/api, form PasswordOnly'
+        # run B (headless, no module session): falls back to the sign-in token with a Warn line instead of failing every model
+        Clear-ModelCheckpoints
+        foreach ($k in @('XmlaConnection', 'XmlaProbeDone', 'XmlaProbeTried')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }
+        $script:BatchArgs.Clear()
+        Mock Get-IQPowerBIModuleXmlaToken { $null }
+        (Invoke-IQModelBackupStage).Done | Should -Be 1
+        $script:BatchArgs[0] | Should -Match 'Data Source=[^"]+;Password=GOV-TOKEN"'
+        (Get-IQModelXmlaConnection).TokenSource | Should -Be 'SignIn'
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match 'remembered XMLA connection uses the Power BI PowerShell module token, which this run cannot obtain; using the sign-in token instead'
+        # a memory for another environment is ignored
+        Save-IQModelXmlaMemory -Connection @{ ResourceUrl = 'https://analysis.windows.net/powerbi/api'; Form = 'UserIdEmpty'; TokenSource = 'SignIn' }
+        $raw = Get-Content -LiteralPath (Get-IQModelXmlaMemoryPath) -Raw
+        [System.IO.File]::WriteAllText((Get-IQModelXmlaMemoryPath), ($raw -replace '"USGov"', '"Public"'))
+        foreach ($k in @('XmlaConnection')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }
+        (Get-IQModelXmlaConnection).ResourceUrl | Should -Be 'https://analysis.usgovcloudapi.net/powerbi/api'
+    }
+    It '-XmlaTokenSource PowerBIModule pins the module token from the first export; a sign-in that went through the module offers no separate module variant' {
+        Mock Get-IQSelectedDatasets { @([pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'First'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }) }
+        Mock Invoke-IQProcessBatch {
+            $out = @()
+            foreach ($j in $Jobs) { $script:BatchArgs.Add([string]$j.ArgumentList); $bim = [regex]::Match([string]$j.ArgumentList, '-B "([^"]+)"').Groups[1].Value; Write-CompleteBim -Path $bim; $entry = @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = (New-TestProcessResult -ExitCode 0) }; if ($OnJobComplete) { & $OnJobComplete $entry }; $out += , $entry }
+            return $out
+        }
+        Mock Get-IQPowerBIModuleXmlaToken { 'MODULE-TOKEN' }
+        $script:IQ.Options['XmlaTokenSource'] = 'PowerBIModule'
+        (Invoke-IQModelBackupStage).Done | Should -Be 1
+        $script:BatchArgs[0] | Should -Match 'User ID=;Password=MODULE-TOKEN'
+        $conn = Get-IQModelXmlaConnection
+        $conn.TokenSource | Should -Be 'PowerBIModule'
+        $conn.SourcePinned | Should -BeTrue
+        @(Get-IQModelXmlaVariantList | ForEach-Object { $_.TokenSource }) | Should -Be @('PowerBIModule') -Because 'a pinned source leaves only the other form of that source'
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match 'Power BI PowerShell module token \(pinned by -XmlaTokenSource\)'
+        # pinned but no module token: a clear error, not "No Power BI token available"
+        foreach ($k in @('XmlaConnection')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }
+        Mock Get-IQPowerBIModuleXmlaToken { $null }
+        { Get-IQModelXmlaToken } | Should -Throw '*pinned to the Power BI PowerShell module*'
+        # -XmlaTokenSource SignIn: no module variants at all
+        foreach ($k in @('XmlaConnection')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }
+        $script:IQ.Options['XmlaTokenSource'] = 'SignIn'
+        @(Get-IQModelXmlaVariantList | Where-Object { $_.TokenSource -eq 'PowerBIModule' }).Count | Should -Be 0
+        @(Get-IQModelXmlaVariantList).Count | Should -Be 3
+        # Auto with a sign-in that already went through the module: the sign-in token IS the module token
+        foreach ($k in @('XmlaConnection')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }
+        $script:IQ.Options['XmlaTokenSource'] = 'Auto'
+        $previousAuth = $script:IQ.Auth
+        try {
+            $script:IQ.Auth = @{ Provider = 'Module'; Initialized = $true }
+            @(Get-IQModelXmlaVariantList | Where-Object { $_.TokenSource -eq 'PowerBIModule' }).Count | Should -Be 0
+            $script:IQ.Auth = @{ Provider = 'Az'; Initialized = $true }
+            @(Get-IQModelXmlaVariantList | ForEach-Object { $_.TokenSource }) | Should -Be @('PowerBIModule', 'PowerBIModule', 'SignIn', 'SignIn', 'SignIn') -Because 'module variants (both forms, environment audience) come first'
+        }
+        finally { $script:IQ.Auth = $previousAuth }
     }
 }
-
