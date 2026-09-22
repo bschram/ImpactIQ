@@ -807,3 +807,40 @@ Describe 'Get-IQTokenForResourceUrl (XMLA audience probe, run assessment 2026-09
     }
 }
 
+Describe 'Get-IQPowerBIModuleXmlaToken (the GCC XMLA endpoint accepts the Power BI PowerShell module token, 2026-09-22)' {
+    BeforeAll {
+        $script:MtBase = Initialize-IQTestContext -Options @{ Environment = 'USGov' } -NoRun -Prefix 'auth-module-xmla'
+        if (-not (Get-Command -Name Get-PowerBIAccessToken -ErrorAction SilentlyContinue)) { function script:Get-PowerBIAccessToken { throw 'Login first with Login-PowerBIServiceAccount' } }
+        Mock Get-IQToken { 'SIGN-IN-TOKEN' }
+        Mock Connect-IQPowerBIModule { if ($Credential) { return 'MODULE-VIA-CREDENTIAL' } return 'MODULE-VIA-BROWSER' }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:MtBase }
+    BeforeEach { $script:IQ.Interactive = $false; $script:IQ.Auth = @{ Mode = 'Interactive'; Provider = 'Az'; Tokens = @{}; Initialized = $true; Credential = $null } }
+    It 'hands the regular token back when the sign-in itself went through the module' {
+        $script:IQ.Auth.Provider = 'Module'
+        Get-IQPowerBIModuleXmlaToken | Should -Be 'SIGN-IN-TOKEN'
+    }
+    It 'returns $null with an Info line when MicrosoftPowerBIMgmt is not installed' {
+        Mock Import-IQAuthModule { $false }
+        Get-IQPowerBIModuleXmlaToken | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'MicrosoftPowerBIMgmt is not installed'
+    }
+    It 'uses an existing module session first (Get-PowerBIAccessToken), stripping "Bearer "' {
+        Mock Import-IQAuthModule { $true }
+        Mock Get-PowerBIAccessToken { @{ Authorization = 'Bearer EXISTING-SESSION' } }
+        Get-IQPowerBIModuleXmlaToken | Should -Be 'EXISTING-SESSION'
+        Should -Invoke Connect-IQPowerBIModule -Times 0
+    }
+    It 'signs in with the stored credential when there is no session, with the browser when interactive, and gives up headless' {
+        Mock Import-IQAuthModule { $true }
+        Mock Get-PowerBIAccessToken { throw 'Login first with Login-PowerBIServiceAccount' }
+        $script:IQ.Auth.Credential = New-Object System.Management.Automation.PSCredential('user@contoso.gov', (ConvertTo-SecureString 'x' -AsPlainText -Force))
+        Get-IQPowerBIModuleXmlaToken | Should -Be 'MODULE-VIA-CREDENTIAL'
+        $script:IQ.Auth.Credential = $null
+        Get-IQPowerBIModuleXmlaToken | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'needs a sign-in this headless run cannot do'
+        $script:IQ.Interactive = $true
+        Get-IQPowerBIModuleXmlaToken | Should -Be 'MODULE-VIA-BROWSER'
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'a second sign-in window'
+    }
+}

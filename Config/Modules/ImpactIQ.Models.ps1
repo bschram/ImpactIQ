@@ -413,6 +413,12 @@ function New-IQModelRenameScript {
 
 $script:IQModelSystemDatasetNames = @('Report Usage Metrics Model', 'Usage Metrics Report', 'Dashboard Usage Metrics Model', 'Report Usage Metrics Report')
 $script:IQModelCommercialPowerBIResource = 'https://analysis.windows.net/powerbi/api'
+# 2026-09-22 (tools\Test-IQXmlaAccess-Legacy.ps1 on the same GCC capacity): the endpoint accepts the token the Power BI
+# PowerShell module obtains (client 23d8f6bd-1eb0-4cc2-a08c-7bf525c67bcd, Power BI service scopes) in both connection
+# forms and refuses the Azure PowerShell token Az.Accounts mints for the same audience. The token SOURCE is therefore a
+# probe dimension too ('SignIn' = the run's sign-in, 'PowerBIModule' = MicrosoftPowerBIMgmt), tried first, and the
+# accepted connection is remembered across runs in State\xmla-connection.json.
+$script:IQModelXmlaTokenSources = @('Auto', 'SignIn', 'PowerBIModule')
 
 function Test-IQModelSystemDataset {
     <#
@@ -427,13 +433,119 @@ function Test-IQModelSystemDataset {
     return $false
 }
 
+function Get-IQModelXmlaTokenSourceOption {
+    <#
+    .SYNOPSIS
+    -XmlaTokenSource in force: 'Auto' (default), 'SignIn' or 'PowerBIModule' (private).
+    #>
+    [CmdletBinding()]
+    param()
+    $v = ''
+    try { $v = [string](Get-IQModelOption -Name 'XmlaTokenSource' -Default 'Auto') } catch { $v = 'Auto' }
+    foreach ($known in $script:IQModelXmlaTokenSources) { if ($v -ieq $known) { return $known } }
+    return 'Auto'
+}
+
+function Get-IQModelXmlaSignInProvider {
+    <#
+    .SYNOPSIS
+    The provider of the run's sign-in ('Az', 'Module', 'Http', 'Static') or '' when authentication is not initialised (private).
+    #>
+    [CmdletBinding()]
+    param()
+    try {
+        $auth = $script:IQ.Auth
+        if ($null -ne $auth -and ($auth -is [System.Collections.IDictionary]) -and $auth.Contains('Provider')) { return [string]$auth['Provider'] }
+    }
+    catch { return '' }
+    return ''
+}
+
+function Get-IQModelXmlaTokenSourceLabel {
+    <#
+    .SYNOPSIS
+    Human label of a token source (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][AllowEmptyString()][string]$TokenSource)
+    if ($TokenSource -eq 'PowerBIModule') { return 'Power BI PowerShell module token' }
+    return 'sign-in token'
+}
+
+function Get-IQModelXmlaVariantLabel {
+    <#
+    .SYNOPSIS
+    Label of a connection variant: "<source>, audience <url>, form <form>" (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Variant)
+    $source = ''
+    try { $source = [string]$Variant.TokenSource } catch { $source = '' }
+    return ((Get-IQModelXmlaTokenSourceLabel -TokenSource $source) + ', audience ' + [string]$Variant.ResourceUrl + ', form ' + [string]$Variant.Form)
+}
+
+function Get-IQModelXmlaMemoryPath {
+    <#
+    .SYNOPSIS
+    Path of the cross-run XMLA connection memory: <BaseFolder>\State\xmla-connection.json (private).
+    #>
+    [CmdletBinding()]
+    param()
+    return (Join-Path $script:IQ.StatePath 'xmla-connection.json')
+}
+
+function Get-IQModelXmlaMemory {
+    <#
+    .SYNOPSIS
+    The connection an earlier run's probe found accepted for this environment: @{ ResourceUrl; Form; TokenSource; LearnedUtc }, or $null (private).
+    #>
+    [CmdletBinding()]
+    param()
+    $path = Get-IQModelXmlaMemoryPath
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $raw = ConvertFrom-IQJsonFile -Path $path
+        $envName = [string](Get-IQModelMember -Object $raw -Name 'Environment')
+        $current = ''
+        try { $current = [string]$script:IQ.Endpoints.Name } catch { $current = '' }
+        if (-not [string]::IsNullOrWhiteSpace($current) -and $envName -ne $current) { return $null }
+        $form = [string](Get-IQModelMember -Object $raw -Name 'Form')
+        if ($form -notin @('UserIdEmpty', 'PasswordOnly')) { $form = 'UserIdEmpty' }
+        $source = [string](Get-IQModelMember -Object $raw -Name 'TokenSource')
+        if ($source -notin @('SignIn', 'PowerBIModule')) { $source = 'SignIn' }
+        $url = ([string](Get-IQModelMember -Object $raw -Name 'ResourceUrl')).TrimEnd('/')
+        if ([string]::IsNullOrWhiteSpace($url)) { return $null }
+        return @{ ResourceUrl = $url; Form = $form; TokenSource = $source; LearnedUtc = [string](Get-IQModelMember -Object $raw -Name 'LearnedUtc') }
+    }
+    catch {
+        Write-IQLog -Level Debug -Stage 'ModelBackup' -Message ("XMLA connection memory {0} could not be read; ignored: {1}" -f $path, $_.Exception.Message)
+        return $null
+    }
+}
+
+function Save-IQModelXmlaMemory {
+    <#
+    .SYNOPSIS
+    Remembers the accepted connection variant for the next runs (delete State\xmla-connection.json to forget) (private).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)]$Connection)
+    $envName = ''
+    try { $envName = [string]$script:IQ.Endpoints.Name } catch { $envName = '' }
+    $out = @{ Environment = $envName; ResourceUrl = [string]$Connection.ResourceUrl; Form = [string]$Connection.Form; TokenSource = [string]$Connection.TokenSource; LearnedUtc = [datetime]::UtcNow.ToString('o') }
+    try { ConvertTo-IQJsonFile -Object $out -Path (Get-IQModelXmlaMemoryPath) }
+    catch { Write-IQLog -Level Debug -Stage 'ModelBackup' -Message ('XMLA connection memory could not be written: ' + $_.Exception.Message) }
+}
+
 function Get-IQModelXmlaConnection {
     <#
     .SYNOPSIS
-    The XMLA connection variant in force: @{ ResourceUrl; Form ('UserIdEmpty' | 'PasswordOnly'); Pinned } (private).
+    The XMLA connection variant in force: @{ ResourceUrl; Form ('UserIdEmpty' | 'PasswordOnly'); TokenSource ('SignIn' | 'PowerBIModule'); Pinned; SourcePinned } (private).
     .DESCRIPTION
-    Starts as the environment's Power BI audience with the "User ID=;Password=<token>" form; -XmlaTokenResource pins
-    the audience (no audience probing), and a successful probe switches the variant for the rest of the run.
+    Starts as the environment's Power BI audience, the "User ID=;Password=<token>" form and the run's sign-in token.
+    -XmlaTokenResource pins the audience (no audience probing), -XmlaTokenSource SignIn|PowerBIModule pins the token
+    source (no source probing); otherwise the connection an earlier run's probe found accepted (State\xmla-connection.json,
+    same environment) is used from the first export, and a successful probe switches the variant for the rest of the run.
     #>
     [CmdletBinding()]
     param()
@@ -442,7 +554,20 @@ function Get-IQModelXmlaConnection {
     try { $resource = [string](Get-IQModelOption -Name 'XmlaTokenResource' -Default '') } catch { $resource = '' }
     $pinned = -not [string]::IsNullOrWhiteSpace($resource)
     if (-not $pinned) { try { $resource = [string]$script:IQ.Endpoints.PowerBIResource } catch { $resource = '' } }
-    $conn = @{ ResourceUrl = $resource.TrimEnd('/'); Form = 'UserIdEmpty'; Pinned = $pinned }
+    $conn = @{ ResourceUrl = $resource.TrimEnd('/'); Form = 'UserIdEmpty'; Pinned = $pinned; TokenSource = 'SignIn'; SourcePinned = $false }
+    $sourceOption = Get-IQModelXmlaTokenSourceOption
+    if ($sourceOption -eq 'PowerBIModule') { $conn.TokenSource = 'PowerBIModule'; $conn.SourcePinned = $true }
+    elseif ($sourceOption -eq 'SignIn') { $conn.SourcePinned = $true }
+    if (-not $pinned -and $sourceOption -eq 'Auto') {
+        $remembered = Get-IQModelXmlaMemory
+        if ($null -ne $remembered) {
+            $conn.ResourceUrl = [string]$remembered.ResourceUrl
+            $conn.Form = [string]$remembered.Form
+            $conn.TokenSource = [string]$remembered.TokenSource
+            $conn.Remembered = $true
+            Write-IQLog -Level Info -Stage 'ModelBackup' -Message ("Using the XMLA connection an earlier run found accepted ({0}; learned {1}; delete State\xmla-connection.json to forget)." -f (Get-IQModelXmlaVariantLabel -Variant $conn), [string]$remembered.LearnedUtc)
+        }
+    }
     $script:IQ['XmlaConnection'] = $conn
     return $conn
 }
@@ -450,11 +575,29 @@ function Get-IQModelXmlaConnection {
 function Get-IQModelXmlaToken {
     <#
     .SYNOPSIS
-    Access token for the XMLA audience in force (the regular Power BI token unless the audience was pinned or switched) (private).
+    Access token for an XMLA connection variant: the sign-in token for the audience in force, or the Power BI PowerShell module token (private).
+    .DESCRIPTION
+    A 'PowerBIModule' source that yields no token: $null for a probe variant (skipped), a fallback to the sign-in token
+    with a Warn line when the source was only remembered from an earlier run, an error when it was pinned with
+    -XmlaTokenSource PowerBIModule.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$ResourceUrl)
-    if ([string]::IsNullOrWhiteSpace($ResourceUrl)) { $ResourceUrl = [string](Get-IQModelXmlaConnection).ResourceUrl }
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$ResourceUrl,
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$TokenSource
+    )
+    $conn = Get-IQModelXmlaConnection
+    if ([string]::IsNullOrWhiteSpace($ResourceUrl)) { $ResourceUrl = [string]$conn.ResourceUrl }
+    if ([string]::IsNullOrWhiteSpace($TokenSource)) { $TokenSource = [string]$conn.TokenSource }
+    if ($TokenSource -eq 'PowerBIModule') {
+        $moduleToken = $null
+        if (Get-Command -Name Get-IQPowerBIModuleXmlaToken -ErrorAction SilentlyContinue) { try { $moduleToken = Get-IQPowerBIModuleXmlaToken } catch { $moduleToken = $null } }
+        if (-not [string]::IsNullOrWhiteSpace($moduleToken)) { return $moduleToken }
+        if ([string]$conn.TokenSource -ne 'PowerBIModule') { return $null }
+        if ($conn.SourcePinned) { throw 'The XMLA token source is pinned to the Power BI PowerShell module (-XmlaTokenSource PowerBIModule) but no module token could be obtained: install MicrosoftPowerBIMgmt and run interactively, or use -AuthMode Credential.' }
+        Write-IQLog -Level Warn -Stage 'ModelBackup' -Message 'The remembered XMLA connection uses the Power BI PowerShell module token, which this run cannot obtain; using the sign-in token instead (the probe runs again if it is refused).'
+        $conn.TokenSource = 'SignIn'
+    }
     $standard = ''
     try { $standard = ([string]$script:IQ.Endpoints.PowerBIResource).TrimEnd('/') } catch { $standard = '' }
     if ([string]::IsNullOrWhiteSpace($ResourceUrl) -or $ResourceUrl.TrimEnd('/') -ieq $standard) { return (Get-IQToken -Resource PowerBI) }
@@ -499,22 +642,36 @@ function Test-IQModelXmlaAuthFailure {
 function Get-IQModelXmlaVariantList {
     <#
     .SYNOPSIS
-    The connection variants still worth trying after the current one failed: other form, other audience (commercial for sovereign clouds), both (private).
+    The connection variants still worth trying after the current one failed, in order: the Power BI PowerShell module token (both forms), then the sign-in token in the other form and, for sovereign clouds, the commercial audience (private).
+    .DESCRIPTION
+    -XmlaTokenSource SignIn|PowerBIModule limits the list to that source; a sign-in that already went through the
+    module offers no separate module variant; -XmlaTokenResource limits the audiences to the pinned one.
     #>
     [CmdletBinding()]
     param()
     $current = Get-IQModelXmlaConnection
+    $standard = ''
+    try { $standard = ([string]$script:IQ.Endpoints.PowerBIResource).TrimEnd('/') } catch { $standard = '' }
     $audiences = @([string]$current.ResourceUrl)
     if (-not $current.Pinned) {
         $commercial = $script:IQModelCommercialPowerBIResource
         if ($current.ResourceUrl -notlike ($commercial + '*')) { $audiences += $commercial }
     }
+    $sourceOption = Get-IQModelXmlaTokenSourceOption
+    $sources = @()
+    if ($sourceOption -ne 'SignIn' -and (Get-IQModelXmlaSignInProvider) -ne 'Module') { $sources += 'PowerBIModule' }
+    if ($sourceOption -ne 'PowerBIModule') { $sources += 'SignIn' }
     $forms = @('UserIdEmpty', 'PasswordOnly')
     $variants = @()
-    foreach ($url in $audiences) {
-        foreach ($form in $forms) {
-            if ($url -ieq $current.ResourceUrl -and $form -eq $current.Form) { continue }
-            $variants += @{ ResourceUrl = $url; Form = $form }
+    foreach ($source in $sources) {
+        # The module token is minted for the environment's Power BI resource; another audience is a sign-in variant.
+        $urls = $audiences
+        if ($source -eq 'PowerBIModule') { $urls = @($(if ($standard) { $standard } else { [string]$current.ResourceUrl })) }
+        foreach ($url in $urls) {
+            foreach ($form in $forms) {
+                if ($url -ieq $current.ResourceUrl -and $form -eq $current.Form -and $source -eq [string]$current.TokenSource) { continue }
+                $variants += @{ ResourceUrl = $url; Form = $form; TokenSource = $source }
+            }
         }
     }
     return $variants
@@ -540,32 +697,40 @@ function Invoke-IQModelXmlaProbe {
     $scriptPath = New-IQModelRenameScript -Key $Work.Key -BaseName $Work.BaseName
     $safeKey = Get-IQSafeKey -Value ([string]$Work.Key)
     $n = 0
-    Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message ("The XMLA endpoint refused the token; trying {0} other connection variant(s) once for this run (audience / connection-string form)." -f $variants.Count)
+    Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message ("The XMLA endpoint refused the token; trying {0} other connection variant(s) once for this run (token source / audience / connection-string form)." -f $variants.Count)
     foreach ($v in $variants) {
         $n++
-        $label = ('audience ' + $v.ResourceUrl + ', form ' + $v.Form)
+        $label = Get-IQModelXmlaVariantLabel -Variant $v
         $token = $null
-        try { $token = Get-IQModelXmlaToken -ResourceUrl $v.ResourceUrl } catch { $token = $null }
+        try { $token = Get-IQModelXmlaToken -ResourceUrl $v.ResourceUrl -TokenSource $v.TokenSource } catch { $token = $null }
         if ([string]::IsNullOrWhiteSpace($token)) {
-            $out.Tried += ($label + ': no token for that audience from this sign-in')
-            Write-IQLog -Level Debug -Stage $Stage -Item $Work.Item -Message ('XMLA variant skipped (' + $label + '): no token for that audience from this sign-in')
+            $why = 'no token for that audience from this sign-in'
+            if ($v.TokenSource -eq 'PowerBIModule') { $why = 'no Power BI PowerShell module token (see the Auth line above)' }
+            $out.Tried += ($label + ': ' + $why)
+            Write-IQLog -Level Debug -Stage $Stage -Item $Work.Item -Message ('XMLA variant skipped (' + $label + '): ' + $why)
             continue
         }
         if (Test-Path -LiteralPath $Work.BimPath) { Remove-Item -LiteralPath $Work.BimPath -Force -ErrorAction SilentlyContinue }
         $arguments = New-IQModelXmlaArgumentList -Work $Work -Token $token -ScriptPath $scriptPath -Form $v.Form
         $r = Invoke-IQTabularEditor -ArgumentList $arguments -TimeoutMinutes $timeout -LogName ('xmla-probe-' + $safeKey + '-' + $n) -Stage $Stage -Item $Work.Item
         if (Test-IQModelBimComplete -Path $Work.BimPath -RemoveInvalid) {
-            $script:IQ['XmlaConnection'] = @{ ResourceUrl = $v.ResourceUrl; Form = $v.Form; Pinned = $true; Probed = $true }
+            $accepted = @{ ResourceUrl = $v.ResourceUrl; Form = $v.Form; TokenSource = $v.TokenSource; Pinned = $true; SourcePinned = $true; Probed = $true }
+            $script:IQ['XmlaConnection'] = $accepted
+            Save-IQModelXmlaMemory -Connection $accepted
             $out.Success = $true; $out.Result = $r; $out.Variant = $v
             $out.Tried += ($label + ': accepted')
-            Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message ("XMLA accepted the connection with {0}; the remaining models use it. Pin it for future runs with -XmlaTokenResource '{1}' (settings file: XmlaTokenResource)." -f $label, $v.ResourceUrl)
+            $pin = ("-XmlaTokenResource '{0}' (settings file: XmlaTokenResource)" -f $v.ResourceUrl)
+            if ($v.TokenSource -eq 'PowerBIModule') { $pin = '-XmlaTokenSource PowerBIModule (settings file: XmlaTokenSource)' }
+            Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message ("XMLA accepted the connection with {0}; the remaining models use it and the next runs start with it (State\xmla-connection.json). Pin it explicitly with {1}." -f $label, $pin)
             return $out
         }
         $summary = Get-IQModelResultSummary -Result $r
         $out.Tried += ($label + ': ' + $summary)
         Write-IQLog -Level Info -Stage $Stage -Item $Work.Item -Message ('XMLA variant refused (' + $label + '): ' + $summary)
     }
-    Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message 'No XMLA connection variant was accepted; the remaining exports are not retried. Check the capacity XMLA Endpoint setting (Read or Read Write), the tenant setting "Allow XMLA endpoints and Analyze in Excel with on-premises semantic models", and Build permission on the models; tools\Test-IQXmlaAccess.ps1 reproduces the probe in two minutes.'
+    $hint = ''
+    if (@($out.Tried | Where-Object { $_ -like 'Power BI PowerShell module token*no Power BI PowerShell module token*' }).Count -gt 0) { $hint = ' The Power BI PowerShell module token, which the GCC XMLA endpoint is known to accept where the Az token is refused, could not be tried in this run: install MicrosoftPowerBIMgmt and run interactively once (the accepted connection is then remembered), or use -AuthMode Credential.' }
+    Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message ('No XMLA connection variant was accepted; the remaining exports are not retried.' + $hint + ' Otherwise check the capacity XMLA Endpoint setting (Read or Read Write), the tenant setting "Allow XMLA endpoints and Analyze in Excel with on-premises semantic models", and Build permission on the models; tools\Test-IQXmlaAccess-Legacy.ps1 reproduces the module-token path against one model in two minutes.')
     return $out
 }
 
@@ -591,7 +756,7 @@ function Get-IQModelXmlaFailureClassification {
     if ($Message -match '(?i)Authentication failed for all authenticators') {
         $tried = ''
         if ($script:IQ.ContainsKey('XmlaProbeTried') -and $script:IQ['XmlaProbeTried']) { $tried = ' Variants tried: ' + [string]$script:IQ['XmlaProbeTried'] + '.' }
-        return @{ Status = 'Failed'; Message = ($Message + '. The XMLA endpoint refused the access token that every REST call accepts.' + $tried + ' Check the capacity XMLA Endpoint setting (Read or Read Write), the tenant setting "Allow XMLA endpoints and Analyze in Excel with on-premises semantic models", and Build permission on the model; tools\Test-IQXmlaAccess.ps1 reproduces this in two minutes; no .bim exported (ModelDetail can still use DAX)') }
+        return @{ Status = 'Failed'; Message = ($Message + '. The XMLA endpoint refused the access token that every REST call accepts.' + $tried + ' The GCC XMLA endpoint accepts the Power BI PowerShell module token where the Az token is refused (-XmlaTokenSource PowerBIModule; an interactive run or -AuthMode Credential can obtain it). Otherwise check the capacity XMLA Endpoint setting (Read or Read Write), the tenant setting "Allow XMLA endpoints and Analyze in Excel with on-premises semantic models", and Build permission on the model; tools\Test-IQXmlaAccess-Legacy.ps1 reproduces this in two minutes; no .bim exported (ModelDetail can still use DAX)') }
     }
     return @{ Status = 'Failed'; Message = $Message }
 }
@@ -649,7 +814,7 @@ function Complete-IQModelBackupJob {
             if ($probe.Success -and (Test-IQModelBimComplete -Path $bim)) {
                 $size = 0
                 try { $size = (Get-Item -LiteralPath $bim).Length } catch { $size = 0 }
-                $note = ('XMLA accepted after switching to audience ' + $probe.Variant.ResourceUrl + ', form ' + $probe.Variant.Form)
+                $note = ('XMLA accepted after switching to ' + (Get-IQModelXmlaVariantLabel -Variant $probe.Variant))
                 Set-IQItemDone -Stage 'ModelBackup' -ItemKey $key -Item $w.Item -Outputs @($bim) -Method 'XMLA' -Message $note -Data @{ BaseName = $w.BaseName; BimPath = $bim; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId; XmlaVariant = $probe.Variant } | Out-Null
                 $w['Checkpointed'] = 'Succeeded'
                 Write-IQLog -Level Success -Stage 'ModelBackup' -Item $w.Item -Message ("Exported {0} ({1:N0} bytes) - {2}" -f $bim, $size, $note)
@@ -987,7 +1152,7 @@ function Invoke-IQModelBackupStage {
     $xmlaPrefix = [string]$script:IQ.Endpoints.XmlaPrefix
     if ([string]::IsNullOrWhiteSpace($xmlaPrefix)) { throw 'Endpoints.XmlaPrefix is not set; call Set-IQEnvironment / Initialize-IQContext with an Environment first.' }
     $xmlaConn = Get-IQModelXmlaConnection
-    Write-IQLog -Level Info -Stage $stage -Message ("Exporting {0} model(s) via Tabular Editor XMLA, {1} in parallel, {2} min timeout each; token audience {3}{4}" -f $pending.Count, $maxParallel, $timeout, $xmlaConn.ResourceUrl, $(if ($xmlaConn.Pinned) { ' (pinned by -XmlaTokenResource)' } else { '' }))
+    Write-IQLog -Level Info -Stage $stage -Message ("Exporting {0} model(s) via Tabular Editor XMLA, {1} in parallel, {2} min timeout each; {5}, token audience {3}{4}" -f $pending.Count, $maxParallel, $timeout, $xmlaConn.ResourceUrl, $(if ($xmlaConn.Pinned) { ' (pinned by -XmlaTokenResource)' } else { '' }), ((Get-IQModelXmlaTokenSourceLabel -TokenSource ([string]$xmlaConn.TokenSource)) + $(if ($xmlaConn.SourcePinned) { ' (pinned by -XmlaTokenSource)' } else { '' })))
 
     $workMap = @{}
     foreach ($w in $pending) { $workMap[[string]$w.Key] = $w }

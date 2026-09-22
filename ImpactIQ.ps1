@@ -96,6 +96,13 @@
     https://analysis.usgovcloudapi.net/powerbi/api), or IMPACTIQ_XMLA_RESOURCE. When the XMLA endpoint refuses the
     token ("Authentication failed for all authenticators") the first failure of a run probes the other audience and
     the Password-only connection form once and pins what works; this parameter pins the audience up front.
+.PARAMETER XmlaTokenSource
+    Where the token handed to Tabular Editor for the XMLA export comes from: Auto (default), SignIn (the run's
+    sign-in, e.g. the Az.Accounts token) or PowerBIModule (MicrosoftPowerBIMgmt, Connect-PowerBIServiceAccount /
+    Get-PowerBIAccessToken). The GCC XMLA endpoint accepts the module token and refuses the Az token for the same
+    audience (verified 2026-09-22), so Auto tries the module token first when the sign-in token is refused, and a
+    connection an earlier run found accepted (State\xmla-connection.json) is used from the first export. PowerBIModule
+    needs an interactive run or -AuthMode Credential (the module has to sign in). IMPACTIQ_XMLA_TOKEN_SOURCE.
 .PARAMETER NoXmlaProbe
     Do not probe other XMLA connection variants after an authentication failure.
 .PARAMETER NoWebUiExportFallback
@@ -204,6 +211,7 @@ param(
     [Parameter(Mandatory = $false)][string]$WebUiClusterHost,
     [Parameter(Mandatory = $false)][string]$SettingsPath,
     [Parameter(Mandatory = $false)][string]$XmlaTokenResource,
+    [Parameter(Mandatory = $false)][ValidateSet('Auto', 'SignIn', 'PowerBIModule')][string]$XmlaTokenSource = 'Auto',
     [Parameter(Mandatory = $false)][switch]$NoXmlaProbe,
     # No [ValidateSet]: "powershell.exe -File ImpactIQ.ps1 -Stages Inventory,Assemble" (Task Scheduler / runas) binds the
     # comma list as ONE string, which a ValidateSet rejects before the script body runs; Get-IQEntryStageList splits
@@ -657,6 +665,10 @@ function Initialize-IQEntryModuleSet {
         if ($predictedMode -eq 'Interactive') { $needed += 'MicrosoftPowerBIMgmt'; $needed += 'Az.Accounts' }
         if ($predictedMode -eq 'AzContext') { $needed += 'Az.Accounts' }
     }
+    # -XmlaTokenSource PowerBIModule: the module signs in for the XMLA token whatever the auth mode.
+    $xmlaSource = ''
+    try { if ($script:IQ.Options -and $script:IQ.Options.ContainsKey('XmlaTokenSource')) { $xmlaSource = [string]$script:IQ.Options['XmlaTokenSource'] } } catch { $xmlaSource = '' }
+    if ($StageList -contains 'ModelBackup' -and $xmlaSource -eq 'PowerBIModule') { $needed += 'MicrosoftPowerBIMgmt' }
     foreach ($name in @($needed | Select-Object -Unique)) { Install-IQEntryModule -Name $name -AllowInstall:$allowInstall | Out-Null }
 }
 
@@ -714,6 +726,27 @@ function Resolve-IQEntryXmlaTokenResource {
     return ''
 }
 
+function Resolve-IQEntryXmlaTokenSource {
+    <#
+    .SYNOPSIS
+        -XmlaTokenSource when given on the command line, else IMPACTIQ_XMLA_TOKEN_SOURCE (Auto | SignIn | PowerBIModule), else the current value (settings file or 'Auto').
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Requested,
+        [Parameter(Mandatory = $false)][switch]$Explicit
+    )
+    $valid = @('Auto', 'SignIn', 'PowerBIModule')
+    if ($Explicit -and -not [string]::IsNullOrWhiteSpace($Requested)) { return $Requested }
+    $fromEnv = [string]$env:IMPACTIQ_XMLA_TOKEN_SOURCE
+    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
+        foreach ($v in $valid) { if ($fromEnv.Trim() -ieq $v) { return $v } }
+        Write-IQEntryMessage -Level Warn -Message ("IMPACTIQ_XMLA_TOKEN_SOURCE '{0}' is not one of {1}; ignored." -f $fromEnv, ($valid -join ', '))
+    }
+    if ([string]::IsNullOrWhiteSpace($Requested)) { return 'Auto' }
+    return $Requested
+}
+
 function Get-IQEntrySettingsPath {
     <#
     .SYNOPSIS
@@ -768,7 +801,7 @@ function Set-IQEntryDefaultsFromSettings {
         [Parameter(Mandatory = $false)][switch]$InteractiveLikely
     )
     $blocked = @('BaseFolder', 'SettingsPath', 'Credential', 'TokenCacheKey', 'Force', 'RunId', 'PassThru')
-    $envTwins = @{ Environment = 'IMPACTIQ_ENVIRONMENT'; BackupFolder = 'IMPACTIQ_BACKUP_FOLDER'; OutputFolder = 'IMPACTIQ_OUTPUT_FOLDER'; TenantId = 'IMPACTIQ_TENANT_ID'; ClientId = 'IMPACTIQ_CLIENT_ID'; TokenCachePath = 'IMPACTIQ_TOKEN_CACHE_PATH'; DeviceCodeWebhookUrl = 'IMPACTIQ_DEVICECODE_WEBHOOK' }
+    $envTwins = @{ Environment = 'IMPACTIQ_ENVIRONMENT'; BackupFolder = 'IMPACTIQ_BACKUP_FOLDER'; OutputFolder = 'IMPACTIQ_OUTPUT_FOLDER'; TenantId = 'IMPACTIQ_TENANT_ID'; ClientId = 'IMPACTIQ_CLIENT_ID'; TokenCachePath = 'IMPACTIQ_TOKEN_CACHE_PATH'; DeviceCodeWebhookUrl = 'IMPACTIQ_DEVICECODE_WEBHOOK'; XmlaTokenResource = 'IMPACTIQ_XMLA_RESOURCE'; XmlaTokenSource = 'IMPACTIQ_XMLA_TOKEN_SOURCE' }
     $applied = New-Object System.Collections.Generic.List[string]
     $common = @([System.Management.Automation.PSCmdlet]::CommonParameters) + @([System.Management.Automation.PSCmdlet]::OptionalCommonParameters)
     foreach ($key in @($Settings.Keys)) {
@@ -919,6 +952,7 @@ try {
         WebUiClusterHost        = $WebUiClusterHost
         SettingsPath            = $settingsPath
         XmlaTokenResource       = (Resolve-IQEntryXmlaTokenResource -Requested $XmlaTokenResource)
+        XmlaTokenSource         = (Resolve-IQEntryXmlaTokenSource -Requested $XmlaTokenSource -Explicit:$PSBoundParameters.ContainsKey('XmlaTokenSource'))
         NoXmlaProbe             = [bool]$NoXmlaProbe
         Stages                  = @($Stages)
         SkipStages              = @($SkipStages)

@@ -1775,6 +1775,49 @@ function Get-IQToken {
     return $token
 }
 
+function Get-IQPowerBIModuleXmlaToken {
+    <#
+    .SYNOPSIS
+        Access token from the Power BI PowerShell module (MicrosoftPowerBIMgmt) for the XMLA endpoint; $null (with an Info line) when it cannot be obtained.
+    .DESCRIPTION
+        Verified 2026-09-22 on a GCC capacity (tools\Test-IQXmlaAccess-Legacy.ps1): the XMLA endpoint accepts the token
+        the Power BI PowerShell module obtains (client 23d8f6bd-1eb0-4cc2-a08c-7bf525c67bcd with the Power BI service
+        scopes) in both connection-string forms, and refuses the Azure PowerShell token Az.Accounts mints for the very
+        same audience. When the sign-in itself went through the module (Provider 'Module') the regular Power BI token
+        already is that token. Otherwise, in order: an existing module session in this process (Get-PowerBIAccessToken,
+        MSAL silent refresh), Connect-PowerBIServiceAccount with the stored credential (Credential mode), the module's
+        own browser sign-in when the run is interactive. A headless run without a credential gets $null.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][switch]$Quiet)
+    $auth = Get-IQAuthState
+    if ([string]$auth.Provider -eq 'Module') { return (Get-IQToken -Resource PowerBI) }
+    if (-not (Import-IQAuthModule -Name 'MicrosoftPowerBIMgmt.Profile')) {
+        if (-not $Quiet) { Write-IQLog -Level Info -Stage Auth -Message 'No XMLA token from the Power BI PowerShell module: MicrosoftPowerBIMgmt is not installed (Install-Module MicrosoftPowerBIMgmt -Scope CurrentUser).' }
+        return $null
+    }
+    $plain = $null
+    try {
+        $token = Get-PowerBIAccessToken -ErrorAction Stop -WarningAction SilentlyContinue 3>$null
+        $plain = ConvertTo-IQPlainTokenValue -Value $token
+    }
+    catch { $plain = $null }
+    if (-not [string]::IsNullOrWhiteSpace($plain)) { return $plain }
+    $credential = $null
+    try { if ($auth.ContainsKey('Credential')) { $credential = $auth.Credential } } catch { $credential = $null }
+    if ($null -ne $credential) {
+        try { return (Connect-IQPowerBIModule -Credential $credential -MaxAttempts 2) }
+        catch { Write-IQLog -Level Warn -Stage Auth -Message ('Power BI module sign-in with the stored credential failed: ' + $_.Exception.Message); return $null }
+    }
+    if (-not $script:IQ.Interactive) {
+        if (-not $Quiet) { Write-IQLog -Level Info -Stage Auth -Message 'No XMLA token from the Power BI PowerShell module: it needs a sign-in this headless run cannot do (use -AuthMode Credential, or run interactively once so the accepted connection is remembered).' }
+        return $null
+    }
+    Write-IQLog -Level Info -Stage Auth -Message 'Signing in through the Power BI PowerShell module for the XMLA endpoint (a second sign-in window: the XMLA endpoint accepts this module token where the Az token is refused).'
+    try { return (Connect-IQPowerBIModule -MaxAttempts 2) }
+    catch { Write-IQLog -Level Warn -Stage Auth -Message ('Power BI module sign-in for the XMLA token failed: ' + $_.Exception.Message); return $null }
+}
+
 function Get-IQTokenForResourceUrl {
     <#
     .SYNOPSIS
