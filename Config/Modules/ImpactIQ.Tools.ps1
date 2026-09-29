@@ -209,7 +209,14 @@ function Complete-IQProcessJob {
         else {
             try { $exitCode = [int]$rawExit } catch { $exitCode = -1 }
         }
-        if ($Job.Started) { $duration = [math]::Round(([datetime]::UtcNow - $Job.Started).TotalSeconds, 1) }
+        if ($Job.Started) {
+            # The pool notices an exit only when its loop runs again; a long OnJobComplete callback (e.g. an interactive
+            # sign-in during the XMLA probe) would otherwise be counted as the process's run time (2026-09-22: 79106 s).
+            $ended = [datetime]::UtcNow
+            if (-not $Job.TimedOut) { try { $ended = $Job.Process.ExitTime.ToUniversalTime() } catch { $ended = [datetime]::UtcNow } }
+            if ($ended -lt $Job.Started) { $ended = [datetime]::UtcNow }
+            $duration = [math]::Round(($ended - $Job.Started).TotalSeconds, 1)
+        }
         try { $Job.Process.Dispose() } catch { $null = $null }
     }
     if ($Job.TimedOut) { $exitCode = -1 }

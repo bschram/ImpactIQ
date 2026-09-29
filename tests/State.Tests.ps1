@@ -152,6 +152,14 @@ Describe 'Resume decisions (brief section 5.2)' {
         Invoke-IQStage -Name 'Assemble' -Body { throw 'assemble always runs' } | Should -Be 'Failed'
         Invoke-IQStage -Name 'Dataflows' -Body { 'ran' } | Should -Be 'Completed' -Because 'a Failed stage is re-run on resume'
     }
+    It 'Auto: a manifest still marked Running names the stage that was cut short (closed window, killed process)' {
+        Set-Clock '2026-09-04T11:30:00Z'
+        $script:IQ.Manifest.status = 'Running'
+        (Get-IQStageEntry -Name 'ReportBackup')['status'] = 'Running'; Save-IQManifest
+        Initialize-IQRun -RunId '2026-09-04' -ResumePolicy Auto | Out-Null
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match "has status 'Running', resuming\. The previous attempt never recorded an end \(no summary, no cleanup\): it was cut short while stage ReportBackup was running"
+    }
     It 'Auto + RefreshInventory re-runs a Completed Inventory stage and clears its checkpoints, ws-*.json / global.json and Inventory failures' {
         # a workspace that disappeared since the original run, and failure entries from Inventory and another stage
         $staleWs = Save-IQInventory -Name 'ws-GONE' -Object @{ WorkspaceId = 'GONE' }

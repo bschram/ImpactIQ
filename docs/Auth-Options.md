@@ -204,6 +204,16 @@ The accepted connection is written to `State\xmla-connection.json` (environment,
 the first export of later runs; delete the file to forget it. `-XmlaTokenSource PowerBIModule` pins the module token
 up front (the module is installed when missing) and fails the stage with a clear message when it cannot sign in.
 
+**When the module signs in.** At start-up, right after the main sign-in, when ModelBackup is planned and either the
+connection in force already names the module (pinned, remembered, or provisionally requested by the previous run) or
+the run is interactive on a sovereign cloud with an Az sign-in (the GCC XMLA endpoint is known to refuse the Az token).
+Only a Public-cloud run whose sign-in token is refused still sees the module window in the middle of the stage. That
+sign-in runs in a separate runspace with a **10-minute limit** (15 at start-up): a window nobody notices no longer
+holds the run (2026-09-22: 22 hours); the run continues with the sign-in token, the models of that run fail with the
+reason, and `State\xmla-connection.json` records the module source provisionally so the next run asks at start-up.
+The refresh of that token (`Get-PowerBIAccessToken`, MSAL silent) is served from the same runspace when the main one
+has no session.
+
 ## 5. The token cache (DeviceCode)
 
 File: `<BaseFolder>\State\auth\token-cache.json` (override with `-TokenCachePath` / `IMPACTIQ_TOKEN_CACHE_PATH`).

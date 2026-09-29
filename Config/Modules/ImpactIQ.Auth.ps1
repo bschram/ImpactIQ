@@ -29,6 +29,7 @@
 # Private helpers are prefixed *-IQAuth* / *-IQJwt* / *-IQTokenCache* and are not part of the contract.
 
 $script:IQAuthDefaultClientId = '1950a258-227b-4e31-a9cf-717495945fc2'   # Azure PowerShell first-party public client
+$script:IQAuthModuleRunspace = $null   # runspace of a bounded Power BI module sign-in (Connect-IQPowerBIModuleBounded)
 $script:IQAuthDeviceGrant = 'urn:ietf:params:oauth:grant-type:device_code'
 $script:IQAuthRefreshSkewMinutes = 5
 $script:IQAuthHttpDefaultsApplied = $false
@@ -1775,6 +1776,117 @@ function Get-IQToken {
     return $token
 }
 
+function Connect-IQPowerBIModuleBounded {
+    <#
+    .SYNOPSIS
+        Connect-PowerBIServiceAccount with a time limit: runs in a separate (STA) runspace of this process and gives up after -TimeoutMinutes (private).
+    .DESCRIPTION
+        Connect-PowerBIServiceAccount has no timeout of its own; a sign-in window nobody notices held a run for 22 hours
+        (2026-09-22). The runspace is kept open in $script:IQAuthModuleRunspace so later Get-PowerBIAccessToken calls
+        (MSAL silent refresh) can be served from the same session when this runspace's session is not visible to the
+        main one. A timeout returns $null and marks Auth.ModuleSignInTimedOut (the pipeline is stopped asynchronously);
+        any other failure of the runspace path falls back to the plain Connect-IQPowerBIModule of the main runspace so
+        the proven path is never lost.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][ValidateRange(0.01, 120)][double]$TimeoutMinutes = 10,
+        [Parameter(Mandatory = $false)][scriptblock]$ScriptOverride
+    )
+    $auth = Get-IQAuthState -AllowUninitialized
+    if ($null -ne $auth -and ($auth -is [hashtable])) { $auth['ModuleSignInTimedOut'] = $false }
+    $envName = [string]$script:IQ.Endpoints.MicrosoftPowerBIMgmtEnvironment
+    $tenant = ''
+    if ($auth -and (Test-IQAuthGuid -Value ([string]$auth.TenantId)) -and (Test-IQAuthConnectSupportsTenant)) { $tenant = [string]$auth.TenantId }
+    $code = {
+        param([string]$EnvironmentName, [string]$TenantId)
+        Import-Module MicrosoftPowerBIMgmt.Profile -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+        $connectArgs = @{ ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+        if (-not [string]::IsNullOrWhiteSpace($EnvironmentName) -and $EnvironmentName -ne 'Public') { $connectArgs.Environment = $EnvironmentName }
+        if (-not [string]::IsNullOrWhiteSpace($TenantId)) { $connectArgs.Tenant = $TenantId }
+        Connect-PowerBIServiceAccount @connectArgs 3>$null | Out-Null
+        $t = Get-PowerBIAccessToken -AsString -ErrorAction Stop -WarningAction SilentlyContinue 3>$null
+        return ([string]$t -replace '^(?i)Bearer\s+', '').Trim()
+    }
+    if ($null -ne $ScriptOverride) { $code = $ScriptOverride }
+    $runspace = $null
+    $ps = $null
+    try {
+        $runspace = [runspacefactory]::CreateRunspace()
+        try { $runspace.ApartmentState = [System.Threading.ApartmentState]::STA } catch { $null = $_.Exception }
+        $runspace.Open()
+        $ps = [powershell]::Create()
+        $ps.Runspace = $runspace
+        $ps.AddScript($code.ToString()).AddParameter('EnvironmentName', $envName).AddParameter('TenantId', $tenant) | Out-Null
+        Write-IQLog -Level Info -Stage Auth -Message ("A Microsoft sign-in window for the Power BI PowerShell module opens now (it may sit behind other windows); the run waits at most {0} minute(s) for it." -f $TimeoutMinutes)
+        $handle = $ps.BeginInvoke()
+        if (-not $handle.AsyncWaitHandle.WaitOne([TimeSpan]::FromMinutes($TimeoutMinutes))) {
+            try { $ps.BeginStop($null, $null) | Out-Null } catch { $null = $_.Exception }
+            if ($null -ne $auth -and ($auth -is [hashtable])) { $auth['ModuleSignInTimedOut'] = $true }
+            Write-IQLog -Level Warn -Stage Auth -Message ("The Power BI PowerShell module sign-in was not completed within {0} minute(s); giving up on it for now (the run continues with the sign-in token)." -f $TimeoutMinutes)
+            return $null
+        }
+        $output = @($ps.EndInvoke($handle))
+        if ($ps.HadErrors -or $ps.Streams.Error.Count -gt 0) {
+            $first = ''
+            try { $first = [string]$ps.Streams.Error[0].Exception.Message } catch { $first = 'unknown error' }
+            throw $first
+        }
+        $token = ''
+        if ($output.Count -gt 0) { $token = [string]$output[$output.Count - 1] }
+        if ([string]::IsNullOrWhiteSpace($token)) { throw 'the module sign-in returned no token' }
+        try { if ($script:IQAuthModuleRunspace) { $script:IQAuthModuleRunspace.Dispose() } } catch { $null = $_.Exception }
+        $script:IQAuthModuleRunspace = $runspace
+        $runspace = $null
+        Write-IQLog -Level Success -Stage Auth -Message 'Connected to Power BI through the Power BI PowerShell module.'
+        return $token
+    }
+    catch {
+        $why = [string]$_.Exception.Message
+        if ($null -ne $_.Exception.InnerException -and -not [string]::IsNullOrWhiteSpace($_.Exception.InnerException.Message)) { $why = [string]$_.Exception.InnerException.Message }
+        Write-IQLog -Level Info -Stage Auth -Message ('The bounded Power BI module sign-in did not work (' + $why + '); using the plain module sign-in instead.')
+        return (Connect-IQPowerBIModule -MaxAttempts 2)
+    }
+    finally {
+        if ($null -ne $ps -and $null -eq $runspace) { try { $ps.Dispose() } catch { $null = $_.Exception } }
+        elseif ($null -ne $runspace -and -not ($null -ne $auth -and ($auth -is [hashtable]) -and $auth['ModuleSignInTimedOut'])) { try { $runspace.Dispose() } catch { $null = $_.Exception } }
+    }
+}
+
+function Get-IQPowerBIModuleSessionToken {
+    <#
+    .SYNOPSIS
+        Get-PowerBIAccessToken from the main runspace, else from the runspace a bounded sign-in left open; $null without a session (private).
+    #>
+    [CmdletBinding()]
+    param()
+    try {
+        $token = Get-PowerBIAccessToken -ErrorAction Stop -WarningAction SilentlyContinue 3>$null
+        $plain = ConvertTo-IQPlainTokenValue -Value $token
+        if (-not [string]::IsNullOrWhiteSpace($plain)) { return $plain }
+    }
+    catch { $null = $_.Exception }
+    $runspace = $script:IQAuthModuleRunspace
+    if ($null -eq $runspace) { return $null }
+    $ps = $null
+    try {
+        if ($runspace.RunspaceStateInfo.State -ne 'Opened') { return $null }
+        $ps = [powershell]::Create()
+        $ps.Runspace = $runspace
+        $refresh = { $t = Get-PowerBIAccessToken -AsString -ErrorAction Stop -WarningAction SilentlyContinue 3>$null; ([string]$t -replace '^(?i)Bearer\s+', '').Trim() }
+        $ps.AddScript($refresh.ToString()) | Out-Null
+        $handle = $ps.BeginInvoke()
+        if (-not $handle.AsyncWaitHandle.WaitOne([TimeSpan]::FromSeconds(90))) { try { $ps.BeginStop($null, $null) | Out-Null } catch { $null = $_.Exception }; return $null }
+        $output = @($ps.EndInvoke($handle))
+        if ($ps.HadErrors -or $output.Count -eq 0) { return $null }
+        $plain = [string]$output[$output.Count - 1]
+        if ([string]::IsNullOrWhiteSpace($plain)) { return $null }
+        return $plain
+    }
+    catch { return $null }
+    finally { if ($null -ne $ps) { try { $ps.Dispose() } catch { $null = $_.Exception } } }
+}
+
 function Get-IQPowerBIModuleXmlaToken {
     <#
     .SYNOPSIS
@@ -1789,20 +1901,22 @@ function Get-IQPowerBIModuleXmlaToken {
         own browser sign-in when the run is interactive. A headless run without a credential gets $null.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $false)][switch]$Quiet)
+    param(
+        [Parameter(Mandatory = $false)][switch]$Quiet,
+        [Parameter(Mandatory = $false)][ValidateRange(0.01, 120)][double]$SignInTimeoutMinutes = 10
+    )
     $auth = Get-IQAuthState
     if ([string]$auth.Provider -eq 'Module') { return (Get-IQToken -Resource PowerBI) }
     if (-not (Import-IQAuthModule -Name 'MicrosoftPowerBIMgmt.Profile')) {
         if (-not $Quiet) { Write-IQLog -Level Info -Stage Auth -Message 'No XMLA token from the Power BI PowerShell module: MicrosoftPowerBIMgmt is not installed (Install-Module MicrosoftPowerBIMgmt -Scope CurrentUser).' }
         return $null
     }
-    $plain = $null
-    try {
-        $token = Get-PowerBIAccessToken -ErrorAction Stop -WarningAction SilentlyContinue 3>$null
-        $plain = ConvertTo-IQPlainTokenValue -Value $token
-    }
-    catch { $plain = $null }
+    $plain = Get-IQPowerBIModuleSessionToken
     if (-not [string]::IsNullOrWhiteSpace($plain)) { return $plain }
+    if ($auth.ContainsKey('ModuleSignInTimedOut') -and $auth.ModuleSignInTimedOut) {
+        if (-not $Quiet) { Write-IQLog -Level Debug -Stage Auth -Message 'The Power BI module sign-in already timed out in this run; not asking again.' }
+        return $null
+    }
     $credential = $null
     try { if ($auth.ContainsKey('Credential')) { $credential = $auth.Credential } } catch { $credential = $null }
     if ($null -ne $credential) {
@@ -1814,7 +1928,7 @@ function Get-IQPowerBIModuleXmlaToken {
         return $null
     }
     Write-IQLog -Level Info -Stage Auth -Message 'Signing in through the Power BI PowerShell module for the XMLA endpoint (a second sign-in window: the XMLA endpoint accepts this module token where the Az token is refused).'
-    try { return (Connect-IQPowerBIModule -MaxAttempts 2) }
+    try { return (Connect-IQPowerBIModuleBounded -TimeoutMinutes $SignInTimeoutMinutes) }
     catch { Write-IQLog -Level Warn -Stage Auth -Message ('Power BI module sign-in for the XMLA token failed: ' + $_.Exception.Message); return $null }
 }
 
