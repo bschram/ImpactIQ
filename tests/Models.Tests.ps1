@@ -384,7 +384,7 @@ Describe 'XMLA connection probe, system datasets and permission classification (
         function Write-CompleteBim { param([string]$Path) [System.IO.File]::WriteAllText($Path, '{"name":"m","compatibilityLevel":1567,"model":{"culture":"en-US","tables":[{"name":"T","columns":[{"name":"C","dataType":"string"}]}]}}') }
         function New-AuthFailedResult { return @{ ExitCode = 1; TimedOut = $false; StdOut = "Tabular Editor 2.29.0`r`nLoading model...`r`nError loading model: Authentication failed for all authenticators`r`n`r`nTechnical Details:`r`nRootActivityId: x"; StdErr = ''; OutFile = $null; ErrFile = $null; DurationSec = 4; StartError = $null } }
         function Reset-ProbeState { foreach ($k in @('XmlaConnection', 'XmlaProbeDone', 'XmlaProbeTried')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }; $script:IQ.Options['NoXmlaProbe'] = $false; $script:IQ.Options['XmlaTokenResource'] = ''; $script:IQ.Options['XmlaTokenSource'] = 'Auto'; $m = Get-IQModelXmlaMemoryPath; if (Test-Path -LiteralPath $m) { Remove-Item -LiteralPath $m -Force } }
-        function Clear-ModelCheckpoints { $p = Join-Path (Join-Path $script:IQ.RunPath 'done') 'ModelBackup'; if (Test-Path -LiteralPath $p) { Get-ChildItem -LiteralPath $p -Filter '*.json' | Remove-Item -Force } }
+        function Clear-ModelCheckpoints { foreach ($stageName in @('ModelBackup', 'ModelDetail')) { $p = Join-Path (Join-Path $script:IQ.RunPath 'done') $stageName; if (Test-Path -LiteralPath $p) { Get-ChildItem -LiteralPath $p -Filter '*.json' | Remove-Item -Force } } }
     }
     AfterAll { Remove-IQTestFolder -Path $script:Base }
     BeforeEach { Reset-ProbeState; Clear-ModelCheckpoints; $script:BatchArgs = New-Object System.Collections.Generic.List[string]; $script:ProbeArgs = New-Object System.Collections.Generic.List[string] }
@@ -614,5 +614,151 @@ Describe 'XMLA connection probe, system datasets and permission classification (
             @(Get-IQModelXmlaVariantList | ForEach-Object { $_.TokenSource }) | Should -Be @('PowerBIModule', 'PowerBIModule', 'SignIn', 'SignIn', 'SignIn') -Because 'module variants (both forms, environment audience) come first'
         }
         finally { $script:IQ.Auth = $previousAuth }
+    }
+
+    It 'a permission refusal with the module token counts as an accepted credential: the model is Skipped on permission, the rest use that connection (run 1, 2026-09-22)' {
+        Mock Get-IQSelectedDatasets { @(
+            [pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'Injury'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true },
+            [pscustomobject]@{ DatasetId = $script:StageIds.d2; DatasetName = 'Second'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }
+        ) }
+        Mock Get-IQPowerBIModuleXmlaToken { 'MODULE-TOKEN' }
+        Mock Invoke-IQProcessBatch {
+            $out = @()
+            foreach ($j in $Jobs) {
+                $script:BatchArgs.Add([string]$j.ArgumentList)
+                $r = New-AuthFailedResult
+                if ([string]$j.ArgumentList -like '*Password=MODULE-TOKEN*') { $bim = [regex]::Match([string]$j.ArgumentList, '-B "([^"]+)"').Groups[1].Value; Write-CompleteBim -Path $bim; $r = New-TestProcessResult -ExitCode 0 }
+                $entry = @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = $r }
+                if ($OnJobComplete) { & $OnJobComplete $entry }
+                $out += , $entry
+            }
+            return $out
+        }
+        Mock Invoke-IQTabularEditor {
+            $script:ProbeArgs.Add($ArgumentList)
+            $r = New-AuthFailedResult; $r.Success = $false; $r.FailureReason = 'exit 1'
+            if ($ArgumentList -like '*Password=MODULE-TOKEN*') { $r.StdOut = "Tabular Editor 2.29.0`r`nLoading model...`r`nError loading model: The '<euii>user@contoso.gov</euii>' user does not have permission to call the Discover method.`r`n"; $r.ErrorLines = @("Error loading model: The '<euii>user@contoso.gov</euii>' user does not have permission to call the Discover method.") }
+            else { $r.ErrorLines = @('Error loading model: Authentication failed for all authenticators') }
+            return $r
+        }
+        $summary = Invoke-IQModelBackupStage
+        $script:ProbeArgs.Count | Should -Be 1 -Because 'the first module variant answers a permission error, which ends the probe as accepted'
+        $summary.Done | Should -Be 1
+        $summary.Skipped | Should -Be 1
+        $summary.Failed | Should -Be 0
+        $cp = Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d1
+        $cp.status | Should -Be 'Skipped'
+        $cp.message | Should -Match '^Skipped: no XMLA permission on this model'
+        $cp.message | Should -Not -Match 'euii'
+        (Get-IQModelXmlaConnection).TokenSource | Should -Be 'PowerBIModule'
+        (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d2).status | Should -Be 'Succeeded'
+        $script:BatchArgs[1] | Should -Match 'User ID=;Password=MODULE-TOKEN'
+        (ConvertFrom-IQJsonFile -Path (Get-IQModelXmlaMemoryPath)).TokenSource | Should -Be 'PowerBIModule'
+        $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+        $log | Should -Match 'XMLA accepted the credential with Power BI PowerShell module token, audience https://analysis.usgovcloudapi.net/powerbi/api, form UserIdEmpty but this model refuses on permission'
+    }
+    It 'an export that started with the old connection while the probe switched it is run again with the accepted one (ReportCardView, 2026-09-22)' {
+        Mock Get-IQSelectedDatasets { @(
+            [pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'MCH FAD Dash'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true },
+            [pscustomobject]@{ DatasetId = $script:StageIds.d2; DatasetName = 'ReportCardView'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }
+        ) }
+        Mock Get-IQPowerBIModuleXmlaToken { 'MODULE-TOKEN' }
+        $script:IQ.Options['MaxParallelExtracts'] = 2
+        try {
+            # both jobs of the chunk start with the GOV token and both fail authentication; the callbacks run in order
+            Mock Invoke-IQProcessBatch {
+                $out = @()
+                $entries = @()
+                foreach ($j in $Jobs) { $script:BatchArgs.Add([string]$j.ArgumentList); $entries += , @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = (New-AuthFailedResult) } }
+                foreach ($entry in $entries) { if ($OnJobComplete) { & $OnJobComplete $entry }; $out += , $entry }
+                return $out
+            }
+            $script:ProbeLogNames = New-Object System.Collections.Generic.List[string]
+            Mock Invoke-IQTabularEditor {
+                $script:ProbeArgs.Add($ArgumentList); $script:ProbeLogNames.Add($LogName)
+                $bim = [regex]::Match($ArgumentList, '-B "([^"]+)"').Groups[1].Value
+                if ($ArgumentList -like '*Password=MODULE-TOKEN*') { Write-CompleteBim -Path $bim; return (New-ProbeTeResult -Success $true) }
+                $r = New-AuthFailedResult; $r.Success = $false; $r.ErrorLines = @('Error loading model: Authentication failed for all authenticators'); $r.FailureReason = 'exit 1'; return $r
+            }
+            $summary = Invoke-IQModelBackupStage
+            $summary.Done | Should -Be 2
+            $summary.Failed | Should -Be 0
+            $script:BatchArgs.Count | Should -Be 2
+            @($script:ProbeLogNames | Where-Object { $_ -like 'xmla-probe-*' }).Count | Should -Be 1
+            @($script:ProbeLogNames | Where-Object { $_ -like 'xmla-rerun-*' }).Count | Should -Be 1
+            (Get-Checkpoint -Stage ModelBackup -Key $script:StageIds.d2).message | Should -Match 'XMLA accepted on the re-run with Power BI PowerShell module token'
+            $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+            $log | Should -Match 'started with a connection the probe has since replaced; running it again with Power BI PowerShell module token'
+        }
+        finally { $script:IQ.Options['MaxParallelExtracts'] = 1 }
+    }
+    It 'a module sign-in that times out mid-stage is remembered provisionally so the next run asks for it at start-up' {
+        Mock Get-IQSelectedDatasets { @([pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'First'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }) }
+        $previousAuth = $script:IQ.Auth
+        try {
+            $script:IQ.Auth = @{ Provider = 'Az'; Initialized = $true; ModuleSignInTimedOut = $false }
+            Mock Get-IQPowerBIModuleXmlaToken { $script:IQ.Auth['ModuleSignInTimedOut'] = $true; return $null }
+            Mock Invoke-IQProcessBatch {
+                $out = @()
+                foreach ($j in $Jobs) { $entry = @{ ItemKey = $j.ItemKey; Item = $j.Item; Result = (New-AuthFailedResult) }; if ($OnJobComplete) { & $OnJobComplete $entry }; $out += , $entry }
+                return $out
+            }
+            Mock Invoke-IQTabularEditor { $script:ProbeArgs.Add($ArgumentList); $r = New-AuthFailedResult; $r.Success = $false; $r.ErrorLines = @('Error loading model: Authentication failed for all authenticators'); $r.FailureReason = 'exit 1'; return $r }
+            (Invoke-IQModelBackupStage).Failed | Should -Be 1
+            $memory = ConvertFrom-IQJsonFile -Path (Get-IQModelXmlaMemoryPath)
+            $memory.TokenSource | Should -Be 'PowerBIModule'
+            $memory.Provisional | Should -BeTrue
+            $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+            $log | Should -Match 'the next run asks for it at start-up'
+            # next run: the provisional connection is in force from the start and Initialize-IQModelXmlaToken fetches the token
+            foreach ($k in @('XmlaConnection', 'XmlaProbeDone', 'XmlaProbeTried')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }
+            $script:IQ.Auth['ModuleSignInTimedOut'] = $false
+            $script:ModuleCalls = 0
+            Mock Get-IQPowerBIModuleXmlaToken { $script:ModuleCalls++; 'MODULE-TOKEN' }
+            Initialize-IQModelXmlaToken
+            (Get-IQModelXmlaConnection).TokenSource | Should -Be 'PowerBIModule'
+            (Get-IQModelXmlaConnection).Provisional | Should -BeTrue
+            $script:ModuleCalls | Should -Be 1
+            $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+            $log | Should -Match 'the previous run asked for but could not verify'
+            $log | Should -Match 'obtaining it now so no sign-in window opens during the stage'
+        }
+        finally { $script:IQ.Auth = $previousAuth }
+    }
+    It 'Initialize-IQModelXmlaToken signs the module in at start-up for an interactive sovereign-cloud run with an Az sign-in, and does nothing headless' {
+        $previousAuth = $script:IQ.Auth
+        try {
+            $script:IQ.Auth = @{ Provider = 'Az'; Initialized = $true }
+            Mock Get-IQPowerBIModuleXmlaToken { 'MODULE-TOKEN' }
+            $script:IQ.Interactive = $false
+            Initialize-IQModelXmlaToken
+            Should -Invoke Get-IQPowerBIModuleXmlaToken -Times 0 -Exactly
+            $script:IQ.Interactive = $true
+            Initialize-IQModelXmlaToken
+            Should -Invoke Get-IQPowerBIModuleXmlaToken -Times 1 -Exactly -ParameterFilter { $SignInTimeoutMinutes -eq 15 }
+            (Get-IQModelXmlaConnection).TokenSource | Should -Be 'SignIn' -Because 'the session is only warmed up; the probe decides after the first refusal'
+            $log = Get-Content -LiteralPath $script:IQ.LogFile -Raw
+            $log | Should -Match 'Sovereign cloud: the XMLA endpoint is known to refuse the Az token'
+            # a sign-in that already went through the module needs nothing
+            foreach ($k in @('XmlaConnection')) { if ($script:IQ.ContainsKey($k)) { $script:IQ.Remove($k) } }
+            $script:IQ.Auth = @{ Provider = 'Module'; Initialized = $true }
+            Initialize-IQModelXmlaToken
+            Should -Invoke Get-IQPowerBIModuleXmlaToken -Times 1 -Exactly
+        }
+        finally { $script:IQ.Auth = $previousAuth; $script:IQ.Interactive = $false }
+    }
+    It 'ModelDetail skips the system usage-metrics models before any DAX call' {
+        Mock Get-IQSelectedDatasets { @([pscustomobject]@{ DatasetId = $script:StageIds.d1; DatasetName = 'Report Usage Metrics Model'; WorkspaceId = $script:StageIds.ws1; WorkspaceName = 'Dash'; WorkspaceIsOnDedicatedCapacity = $true }) }
+        Mock Invoke-IQHttpRequest { throw 'no DAX call expected' }
+        $script:IQ.Options['ModelDetailMethod'] = 'Dax'
+        try {
+            $summary = Invoke-IQModelDetailStage
+            $summary.Skipped | Should -Be 1
+            $summary.Failed | Should -Be 0
+            $cp = Get-Checkpoint -Stage ModelDetail -Key $script:StageIds.d1
+            $cp.status | Should -Be 'Skipped'
+            $cp.message | Should -Match 'system-generated usage metrics model'
+        }
+        finally { $script:IQ.Options['ModelDetailMethod'] = 'Auto' }
     }
 }

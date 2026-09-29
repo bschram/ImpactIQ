@@ -1053,6 +1053,12 @@ try {
         if (-not [string]::IsNullOrWhiteSpace($DeviceCodeWebhookUrl)) { $authArgs['DeviceCodeWebhookUrl'] = $DeviceCodeWebhookUrl }
         $resolvedAuth = Initialize-IQAuth @authArgs
         $script:IQ.Options['AuthModeResolved'] = $resolvedAuth
+        # XMLA token for ModelBackup while the operator is still here (remembered / pinned module source, or a sovereign
+        # cloud whose XMLA endpoint is known to refuse the Az token) - never in the middle of the stage (2026-09-22).
+        if ($stageList -contains 'ModelBackup' -and (Get-Command -Name Initialize-IQModelXmlaToken -ErrorAction SilentlyContinue)) {
+            try { Initialize-IQModelXmlaToken }
+            catch { Write-IQEntryMessage -Level Warn -Message ('Start-up XMLA token: ' + $_.Exception.Message) }
+        }
     }
     else {
         Write-IQEntryMessage -Level Info -Message ('Stages {0} do not call the Power BI API - skipping sign-in.' -f ($stageList -join ', '))

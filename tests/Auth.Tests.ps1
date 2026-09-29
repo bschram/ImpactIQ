@@ -844,3 +844,40 @@ Describe 'Get-IQPowerBIModuleXmlaToken (the GCC XMLA endpoint accepts the Power 
         (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'a second sign-in window'
     }
 }
+
+Describe 'Connect-IQPowerBIModuleBounded (a module sign-in with a time limit, 2026-09-22: 22 hours behind a window)' {
+    BeforeAll {
+        $script:BdBase = Initialize-IQTestContext -Options @{ Environment = 'USGov' } -NoRun -Prefix 'auth-module-bounded'
+        if (-not (Get-Command -Name Get-PowerBIAccessToken -ErrorAction SilentlyContinue)) { function script:Get-PowerBIAccessToken { throw 'Login first with Login-PowerBIServiceAccount' } }
+        Mock Connect-IQPowerBIModule { 'MODULE-VIA-PLAIN' }
+    }
+    AfterAll { Remove-IQTestFolder -Path $script:BdBase }
+    BeforeEach { $script:IQ.Interactive = $true; $script:IQ.Auth = @{ Mode = 'Interactive'; Provider = 'Az'; Tokens = @{}; Initialized = $true; Credential = $null; TenantId = $null } }
+    It 'returns the token of a sign-in that completes in time and serves later refreshes from that runspace' {
+        $override = { param([string]$EnvironmentName, [string]$TenantId) function global:Get-PowerBIAccessToken { param([switch]$AsString) 'Bearer RS-TOKEN' }; 'Bearer BOUNDED-TOKEN' -replace '^Bearer ', '' }
+        Connect-IQPowerBIModuleBounded -TimeoutMinutes 0.5 -ScriptOverride $override | Should -Be 'BOUNDED-TOKEN'
+        $script:IQ.Auth.ModuleSignInTimedOut | Should -BeFalse
+        Mock Get-PowerBIAccessToken { throw 'Login first' }
+        Get-IQPowerBIModuleSessionToken | Should -Be 'RS-TOKEN' -Because 'the main runspace has no session but the sign-in runspace does'
+        Mock Import-IQAuthModule { $true }
+        Get-IQPowerBIModuleXmlaToken | Should -Be 'RS-TOKEN'
+        Should -Invoke Connect-IQPowerBIModule -Times 0
+    }
+    It 'gives up after the time limit, marks it, and does not ask again in the same run' {
+        $override = { param([string]$EnvironmentName, [string]$TenantId) Start-Sleep -Seconds 30; 'LATE' }
+        Connect-IQPowerBIModuleBounded -TimeoutMinutes 0.03 -ScriptOverride $override | Should -BeNullOrEmpty
+        $script:IQ.Auth.ModuleSignInTimedOut | Should -BeTrue
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'was not completed within 0.03 minute'
+        Mock Import-IQAuthModule { $true }
+        Mock Get-IQPowerBIModuleSessionToken { $null }   # no session anywhere (the earlier test's runspace is not this run's)
+        Mock Connect-IQPowerBIModuleBounded { 'SHOULD-NOT-RUN' }
+        Get-IQPowerBIModuleXmlaToken | Should -BeNullOrEmpty
+        Should -Invoke Connect-IQPowerBIModuleBounded -Times 0
+    }
+    It 'falls back to the plain module sign-in when the runspace path itself fails' {
+        $override = { param([string]$EnvironmentName, [string]$TenantId) throw 'no embedded browser here' }
+        Connect-IQPowerBIModuleBounded -TimeoutMinutes 0.5 -ScriptOverride $override | Should -Be 'MODULE-VIA-PLAIN'
+        Should -Invoke Connect-IQPowerBIModule -Times 1
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match 'bounded Power BI module sign-in did not work \(no embedded browser here\)'
+    }
+}

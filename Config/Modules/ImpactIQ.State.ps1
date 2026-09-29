@@ -262,6 +262,30 @@ function ConvertTo-IQDateTimeUtc {
     return $null
 }
 
+function Get-IQCutShortNote {
+    <#
+    .SYNOPSIS
+    Text for a resumed manifest still marked Running: the previous attempt ended without recording an end (closed window, killed process, crash) and which stage(s) it was in (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory = $true)]$Manifest)
+    $inStages = @()
+    try {
+        $stages = $Manifest['stages']
+        if ($null -ne $stages) {
+            foreach ($name in @($stages.Keys)) {
+                $st = $stages[$name]
+                if ($null -ne $st -and [string]$st['status'] -eq 'Running') { $inStages += [string]$name }
+            }
+        }
+    }
+    catch { $inStages = @() }
+    $where = ''
+    if ($inStages.Count -gt 0) { $where = ' while stage ' + ($inStages -join ', ') + ' was running' }
+    return ('. The previous attempt never recorded an end (no summary, no cleanup): it was cut short' + $where + ' - a closed console window, a killed process or a crash, not a Ctrl+C. Its last log line is the last thing it did.')
+}
+
 function Find-IQResumableRun {
     <#
     .SYNOPSIS
@@ -412,6 +436,7 @@ function Initialize-IQRun {
             $isResume = $true
             $manifest = $existing
             $reason = "-Resume Auto: manifest for '$effectiveRunId' has status '$($existing['status'])', resuming"
+            if ([string]$existing['status'] -eq 'Running') { $reason += (Get-IQCutShortNote -Manifest $existing) }
         }
         else {
             $candidate = $null

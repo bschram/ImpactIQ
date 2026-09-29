@@ -515,7 +515,9 @@ function Get-IQModelXmlaMemory {
         if ($source -notin @('SignIn', 'PowerBIModule')) { $source = 'SignIn' }
         $url = ([string](Get-IQModelMember -Object $raw -Name 'ResourceUrl')).TrimEnd('/')
         if ([string]::IsNullOrWhiteSpace($url)) { return $null }
-        return @{ ResourceUrl = $url; Form = $form; TokenSource = $source; LearnedUtc = [string](Get-IQModelMember -Object $raw -Name 'LearnedUtc') }
+        $provisional = $false
+        try { $provisional = [bool](ConvertTo-IQModelBool -Value (Get-IQModelMember -Object $raw -Name 'Provisional')) } catch { $provisional = $false }
+        return @{ ResourceUrl = $url; Form = $form; TokenSource = $source; LearnedUtc = [string](Get-IQModelMember -Object $raw -Name 'LearnedUtc'); Provisional = $provisional }
     }
     catch {
         Write-IQLog -Level Debug -Stage 'ModelBackup' -Message ("XMLA connection memory {0} could not be read; ignored: {1}" -f $path, $_.Exception.Message)
@@ -529,10 +531,13 @@ function Save-IQModelXmlaMemory {
     Remembers the accepted connection variant for the next runs (delete State\xmla-connection.json to forget) (private).
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)]$Connection)
+    param(
+        [Parameter(Mandatory = $true)]$Connection,
+        [Parameter(Mandatory = $false)][switch]$Provisional
+    )
     $envName = ''
     try { $envName = [string]$script:IQ.Endpoints.Name } catch { $envName = '' }
-    $out = @{ Environment = $envName; ResourceUrl = [string]$Connection.ResourceUrl; Form = [string]$Connection.Form; TokenSource = [string]$Connection.TokenSource; LearnedUtc = [datetime]::UtcNow.ToString('o') }
+    $out = @{ Environment = $envName; ResourceUrl = [string]$Connection.ResourceUrl; Form = [string]$Connection.Form; TokenSource = [string]$Connection.TokenSource; LearnedUtc = [datetime]::UtcNow.ToString('o'); Provisional = [bool]$Provisional }
     try { ConvertTo-IQJsonFile -Object $out -Path (Get-IQModelXmlaMemoryPath) }
     catch { Write-IQLog -Level Debug -Stage 'ModelBackup' -Message ('XMLA connection memory could not be written: ' + $_.Exception.Message) }
 }
@@ -565,7 +570,13 @@ function Get-IQModelXmlaConnection {
             $conn.Form = [string]$remembered.Form
             $conn.TokenSource = [string]$remembered.TokenSource
             $conn.Remembered = $true
-            Write-IQLog -Level Info -Stage 'ModelBackup' -Message ("Using the XMLA connection an earlier run found accepted ({0}; learned {1}; delete State\xmla-connection.json to forget)." -f (Get-IQModelXmlaVariantLabel -Variant $conn), [string]$remembered.LearnedUtc)
+            if ($remembered.Provisional) {
+                $conn.Provisional = $true
+                Write-IQLog -Level Info -Stage 'ModelBackup' -Message ("Starting with the XMLA connection the previous run asked for but could not verify ({0}; its module sign-in was not completed in time on {1}); the probe runs again if it is refused." -f (Get-IQModelXmlaVariantLabel -Variant $conn), [string]$remembered.LearnedUtc)
+            }
+            else {
+                Write-IQLog -Level Info -Stage 'ModelBackup' -Message ("Using the XMLA connection an earlier run found accepted ({0}; learned {1}; delete State\xmla-connection.json to forget)." -f (Get-IQModelXmlaVariantLabel -Variant $conn), [string]$remembered.LearnedUtc)
+            }
         }
     }
     $script:IQ['XmlaConnection'] = $conn
@@ -639,6 +650,54 @@ function Test-IQModelXmlaAuthFailure {
     return ($text -match '(?i)Authentication failed for all authenticators|AADSTS|token is invalid|invalid_grant|The token|401 Unauthorized')
 }
 
+function Test-IQModelXmlaPermissionRefusal {
+    <#
+    .SYNOPSIS
+    $true when a Tabular Editor result was refused on permission (Discover / not authorized), i.e. the credential itself was accepted (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $false)][AllowNull()]$Result)
+    if ($null -eq $Result) { return $false }
+    $text = [string](Get-IQModelMember -Object $Result -Name 'StdOut') + "`n" + [string](Get-IQModelMember -Object $Result -Name 'StdErr')
+    return ($text -match '(?i)does not have permission|permission to call the Discover|not authorized|access is denied')
+}
+
+function Initialize-IQModelXmlaToken {
+    <#
+    .SYNOPSIS
+    Obtains the Power BI PowerShell module token for XMLA at start-up, while the operator is present, when this run will (or is likely to) need it.
+    .DESCRIPTION
+    Called by the entry point right after the sign-in when ModelBackup is planned. The module token is fetched now
+    when the connection in force already names it (pinned by -XmlaTokenSource, remembered or provisionally requested by
+    an earlier run), or when this is an interactive run on a sovereign cloud whose sign-in did not go through the module
+    (the GCC XMLA endpoint is known to refuse the Az token, 2026-09-22): the module session then exists before the first
+    export and the mid-stage probe never has to open a sign-in window. Headless runs and Public-cloud runs do nothing here.
+    #>
+    [CmdletBinding()]
+    param()
+    if (-not (Get-Command -Name Get-IQPowerBIModuleXmlaToken -ErrorAction SilentlyContinue)) { return }
+    $conn = Get-IQModelXmlaConnection
+    $stage = 'ModelBackup'
+    if ([string]$conn.TokenSource -eq 'PowerBIModule') {
+        Write-IQLog -Level Info -Stage $stage -Message 'The XMLA exports use the Power BI PowerShell module token; obtaining it now so no sign-in window opens during the stage.'
+        try { $token = Get-IQModelXmlaToken }
+        catch { Write-IQLog -Level Warn -Stage $stage -Message ('The Power BI module token could not be obtained at start-up: ' + $_.Exception.Message); return }
+        if ([string]::IsNullOrWhiteSpace($token)) { Write-IQLog -Level Warn -Stage $stage -Message 'No Power BI module token at start-up; the exports start with the sign-in token.' }
+        return
+    }
+    if ((Get-IQModelXmlaTokenSourceOption) -ne 'Auto') { return }
+    if (-not $script:IQ.Interactive) { return }
+    if ((Get-IQModelXmlaSignInProvider) -eq 'Module') { return }
+    $resource = ''
+    try { $resource = [string]$script:IQ.Endpoints.PowerBIResource } catch { $resource = '' }
+    if ([string]::IsNullOrWhiteSpace($resource) -or $resource -like ($script:IQModelCommercialPowerBIResource + '*')) { return }
+    Write-IQLog -Level Info -Stage $stage -Message 'Sovereign cloud: the XMLA endpoint is known to refuse the Az token (GCC, 2026-09-22), so the Power BI PowerShell module signs in now, while you are here, instead of in the middle of the stage.'
+    try { $token = Get-IQPowerBIModuleXmlaToken -SignInTimeoutMinutes 15 }
+    catch { $token = $null }
+    if ([string]::IsNullOrWhiteSpace($token)) { Write-IQLog -Level Info -Stage $stage -Message 'No Power BI module session at start-up; the exports start with the sign-in token and the probe decides.' }
+}
+
 function Get-IQModelXmlaVariantList {
     <#
     .SYNOPSIS
@@ -705,7 +764,17 @@ function Invoke-IQModelXmlaProbe {
         try { $token = Get-IQModelXmlaToken -ResourceUrl $v.ResourceUrl -TokenSource $v.TokenSource } catch { $token = $null }
         if ([string]::IsNullOrWhiteSpace($token)) {
             $why = 'no token for that audience from this sign-in'
-            if ($v.TokenSource -eq 'PowerBIModule') { $why = 'no Power BI PowerShell module token (see the Auth line above)' }
+            if ($v.TokenSource -eq 'PowerBIModule') {
+                $why = 'no Power BI PowerShell module token (see the Auth line above)'
+                $timedOut = $false
+                try { $timedOut = [bool]($script:IQ.Auth -is [System.Collections.IDictionary] -and $script:IQ.Auth.Contains('ModuleSignInTimedOut') -and $script:IQ.Auth['ModuleSignInTimedOut']) } catch { $timedOut = $false }
+                if ($timedOut -and -not $out.ContainsKey('ProvisionalSaved')) {
+                    $out.ProvisionalSaved = $true
+                    Save-IQModelXmlaMemory -Connection @{ ResourceUrl = $v.ResourceUrl; Form = $v.Form; TokenSource = 'PowerBIModule' } -Provisional
+                    Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message 'The module sign-in was not completed in time; the next run asks for it at start-up (State\xmla-connection.json, provisional) and starts the exports with the module token.'
+                    $why = 'the module sign-in was not completed in time'
+                }
+            }
             $out.Tried += ($label + ': ' + $why)
             Write-IQLog -Level Debug -Stage $Stage -Item $Work.Item -Message ('XMLA variant skipped (' + $label + '): ' + $why)
             continue
@@ -725,6 +794,17 @@ function Invoke-IQModelXmlaProbe {
             return $out
         }
         $summary = Get-IQModelResultSummary -Result $r
+        if (Test-IQModelXmlaPermissionRefusal -Result $r) {
+            # A named-user permission error means the credential got through: the connection works, this model does not
+            # grant XMLA (2026-09-22: the probe ran on an unreadable model and gave up on 30 others).
+            $accepted = @{ ResourceUrl = $v.ResourceUrl; Form = $v.Form; TokenSource = $v.TokenSource; Pinned = $true; SourcePinned = $true; Probed = $true }
+            $script:IQ['XmlaConnection'] = $accepted
+            Save-IQModelXmlaMemory -Connection $accepted
+            $out.Variant = $v; $out.Result = $r; $out.PermissionRefusal = $true
+            $out.Tried += ($label + ': accepted (this model refused on permission)')
+            Write-IQLog -Level Warn -Stage $Stage -Item $Work.Item -Message ("XMLA accepted the credential with {0} but this model refuses on permission ({1}); the remaining models use that connection and the next runs start with it (State\xmla-connection.json)." -f $label, ($summary -replace '</?euii>', ''))
+            return $out
+        }
         $out.Tried += ($label + ': ' + $summary)
         Write-IQLog -Level Info -Stage $Stage -Item $Work.Item -Message ('XMLA variant refused (' + $label + '): ' + $summary)
     }
@@ -759,6 +839,47 @@ function Get-IQModelXmlaFailureClassification {
         return @{ Status = 'Failed'; Message = ($Message + '. The XMLA endpoint refused the access token that every REST call accepts.' + $tried + ' The GCC XMLA endpoint accepts the Power BI PowerShell module token where the Az token is refused (-XmlaTokenSource PowerBIModule; an interactive run or -AuthMode Credential can obtain it). Otherwise check the capacity XMLA Endpoint setting (Read or Read Write), the tenant setting "Allow XMLA endpoints and Analyze in Excel with on-premises semantic models", and Build permission on the model; tools\Test-IQXmlaAccess-Legacy.ps1 reproduces this in two minutes; no .bim exported (ModelDetail can still use DAX)') }
     }
     return @{ Status = 'Failed'; Message = $Message }
+}
+
+function Test-IQModelXmlaConnectionChanged {
+    <#
+    .SYNOPSIS
+    $true when the connection in force differs from the one this work item's export was started with (XmlaVariantUsed) (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)]$Work)
+    $used = $null
+    try { if ($Work.ContainsKey('XmlaVariantUsed')) { $used = $Work.XmlaVariantUsed } } catch { $used = $null }
+    if ($null -eq $used) { return $false }
+    $now = Get-IQModelXmlaConnection
+    foreach ($k in 'ResourceUrl', 'Form', 'TokenSource') { if ([string]$used[$k] -ne [string]$now[$k]) { return $true } }
+    return $false
+}
+
+function Invoke-IQModelXmlaRerun {
+    <#
+    .SYNOPSIS
+    Runs one export again, synchronously, with the connection now in force; returns the Tabular Editor result or $null when no token is available (private).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Work,
+        [Parameter(Mandatory = $false)][string]$Stage = 'ModelBackup'
+    )
+    $conn = Get-IQModelXmlaConnection
+    $token = $null
+    try { $token = Get-IQModelXmlaToken -ResourceUrl $conn.ResourceUrl -TokenSource $conn.TokenSource } catch { $token = $null }
+    if ([string]::IsNullOrWhiteSpace($token)) { return $null }
+    $timeout = 20
+    try { $timeout = [int](Get-IQModelOption -Name 'ToolTimeoutMinutes' -Default 20) } catch { $timeout = 20 }
+    if ($timeout -lt 1) { $timeout = 1 }
+    Write-IQLog -Level Info -Stage $Stage -Item $Work.Item -Message ('The export started with a connection the probe has since replaced; running it again with ' + (Get-IQModelXmlaVariantLabel -Variant $conn))
+    if (Test-Path -LiteralPath $Work.BimPath) { Remove-Item -LiteralPath $Work.BimPath -Force -ErrorAction SilentlyContinue }
+    $scriptPath = New-IQModelRenameScript -Key $Work.Key -BaseName $Work.BaseName
+    $arguments = New-IQModelXmlaArgumentList -Work $Work -Token $token -ScriptPath $scriptPath -Form $conn.Form
+    $Work['XmlaVariantUsed'] = @{ ResourceUrl = [string]$conn.ResourceUrl; Form = [string]$conn.Form; TokenSource = [string]$conn.TokenSource }
+    return (Invoke-IQTabularEditor -ArgumentList $arguments -TimeoutMinutes $timeout -LogName ('xmla-rerun-' + (Get-IQSafeKey -Value ([string]$Work.Key))) -Stage $Stage -Item $Work.Item)
 }
 
 function Complete-IQModelBackupJob {
@@ -808,7 +929,8 @@ function Complete-IQModelBackupJob {
         $problem = 'XMLA export produced no complete .bim'
         $probeEnabled = $true
         try { $probeEnabled = -not [bool](Get-IQModelOption -Name 'NoXmlaProbe' -Default $false) } catch { $probeEnabled = $true }
-        if ($probeEnabled -and -not ($script:IQ.ContainsKey('XmlaProbeDone') -and $script:IQ['XmlaProbeDone']) -and (Test-IQModelXmlaAuthFailure -Result $result)) {
+        $authFailed = Test-IQModelXmlaAuthFailure -Result $result
+        if ($probeEnabled -and -not ($script:IQ.ContainsKey('XmlaProbeDone') -and $script:IQ['XmlaProbeDone']) -and $authFailed) {
             $probe = Invoke-IQModelXmlaProbe -Work $w -Stage 'ModelBackup'
             $script:IQ['XmlaProbeTried'] = (@($probe.Tried) -join '; ')
             if ($probe.Success -and (Test-IQModelBimComplete -Path $bim)) {
@@ -819,6 +941,28 @@ function Complete-IQModelBackupJob {
                 $w['Checkpointed'] = 'Succeeded'
                 Write-IQLog -Level Success -Stage 'ModelBackup' -Item $w.Item -Message ("Exported {0} ({1:N0} bytes) - {2}" -f $bim, $size, $note)
                 return
+            }
+            if ($probe.ContainsKey('PermissionRefusal') -and $probe.PermissionRefusal -and $null -ne $probe.Result) {
+                # The credential was accepted with the switched connection; this model itself refuses -> permission outcome.
+                $result = $probe.Result
+                $authFailed = $false
+            }
+        }
+        elseif ($authFailed -and (Test-IQModelXmlaConnectionChanged -Work $w)) {
+            # This job started with the connection that was in force before the probe (run in parallel) switched it;
+            # run it once more with the accepted connection before recording anything (2026-09-22: ReportCardView).
+            $rerun = Invoke-IQModelXmlaRerun -Work $w -Stage 'ModelBackup'
+            if ($null -ne $rerun) {
+                if (Test-IQModelBimComplete -Path $bim -RemoveInvalid) {
+                    $size = 0
+                    try { $size = (Get-Item -LiteralPath $bim).Length } catch { $size = 0 }
+                    $note = ('XMLA accepted on the re-run with ' + (Get-IQModelXmlaVariantLabel -Variant (Get-IQModelXmlaConnection)))
+                    Set-IQItemDone -Stage 'ModelBackup' -ItemKey $key -Item $w.Item -Outputs @($bim) -Method 'XMLA' -Message $note -Data @{ BaseName = $w.BaseName; BimPath = $bim; WorkspaceId = $w.WorkspaceId; DatasetId = $w.DatasetId } | Out-Null
+                    $w['Checkpointed'] = 'Succeeded'
+                    Write-IQLog -Level Success -Stage 'ModelBackup' -Item $w.Item -Message ("Exported {0} ({1:N0} bytes) - {2}" -f $bim, $size, $note)
+                    return
+                }
+                $result = $rerun
             }
         }
     }
@@ -1193,6 +1337,7 @@ function Invoke-IQModelBackupStage {
             $scripts += $scriptPath
             if (Test-Path -LiteralPath $w.BimPath) { Remove-Item -LiteralPath $w.BimPath -Force -ErrorAction SilentlyContinue }
             # Connection variant in force (audience + "User ID=;Password=" / "Password=" form): see the probe above.
+            $w['XmlaVariantUsed'] = @{ ResourceUrl = [string]$xmlaConn.ResourceUrl; Form = [string]$xmlaConn.Form; TokenSource = [string]$xmlaConn.TokenSource }
             $arguments = New-IQModelXmlaArgumentList -Work $w -Token $token -ScriptPath $scriptPath -Form $xmlaConn.Form
             Write-IQLog -Level Info -Stage $stage -Item $w.Item -Message ('Exporting ' + $w.BaseName)
             $jobs += @{ ItemKey = $w.Key; Item = $w.Item; FilePath = $tePath; ArgumentList = $arguments; WorkingDirectory = [string]$script:IQ.BaseFolder; LogName = ('xmla-' + (Get-IQSafeKey -Value $w.Key)) }
@@ -1598,6 +1743,12 @@ function Invoke-IQModelDetailStage {
         if (Test-IQTimeBudget -Stage $stage -Item $w.Item) { $budgetStop = $true; break }
         if ($w.NoAccess) {
             Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Skipped -Message 'No workspace access (shared report) - model detail unavailable' | Out-Null
+            $summary.Skipped++
+            continue
+        }
+        if (Test-IQModelSystemDataset -Name ([string]$w.DatasetName)) {
+            # ModelBackup never exports these and executeQueries answers HTTP 400 on them (48 such lines on 2026-09-22).
+            Set-IQItemDone -Stage $stage -ItemKey $w.Key -Item $w.Item -Status Skipped -Message 'Skipped: system-generated usage metrics model (no user content to document; executeQueries is refused on it)' -Data @{ BaseName = $w.BaseName; DatasetId = $w.DatasetId; WorkspaceId = $w.WorkspaceId; SystemDataset = $true } | Out-Null
             $summary.Skipped++
             continue
         }
