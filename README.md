@@ -395,7 +395,8 @@ PowerBIModule` (settings file `XmlaTokenSource`) or `-XmlaTokenResource <url>`. 
 module's sign-in: use `-AuthMode Credential`, or run interactively once so the connection is remembered.
 Three details from the 2026-09-22 runs: an interactive run on a sovereign cloud signs the module in **at start-up**,
 right after the Az sign-in, so no window opens in the middle of the stage (the same happens when the remembered or
-pinned source is the module); a module sign-in that is not completed within 10 minutes is given up (the run continues
+pinned source is the module), and that window is brought to the front and its taskbar button flashed, since Windows
+leaves a window created by a background thread behind everything else; a module sign-in that is not completed within 10 minutes is given up (the run continues
 with the sign-in token, the next run asks at start-up); a *does not have permission* answer during the probe counts as
 an accepted credential (only that model is skipped on permission), and an export that started with the old connection
 while the probe switched it is run again with the accepted one.

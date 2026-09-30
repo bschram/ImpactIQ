@@ -874,6 +874,19 @@ Describe 'Connect-IQPowerBIModuleBounded (a module sign-in with a time limit, 20
         Get-IQPowerBIModuleXmlaToken | Should -BeNullOrEmpty
         Should -Invoke Connect-IQPowerBIModuleBounded -Times 0
     }
+    It 'raises each window of this process once while the sign-in is pending, and skips that off Windows' {
+        $override = { param([string]$EnvironmentName, [string]$TenantId) Start-Sleep -Seconds 2; 'Bearer RAISED-TOKEN' -replace '^Bearer ', '' }
+        Mock Get-IQAuthProcessWindowList { @(@{ Handle = 4242; Title = 'Sign in to your account' }) }
+        Mock Show-IQAuthWindowInFront { }
+        Connect-IQPowerBIModuleBounded -TimeoutMinutes 0.5 -ScriptOverride $override | Should -Be 'RAISED-TOKEN'
+        Should -Invoke Show-IQAuthWindowInFront -Times 1 -Exactly -ParameterFilter { $Handle -eq 4242 }
+        (Get-Content -LiteralPath $script:IQ.LogFile -Raw) | Should -Match "Sign-in window 'Sign in to your account' brought to the front"
+    }
+    It 'the window helper is Windows-only and never throws elsewhere' {
+        $script:IQ.IsWindows = $false
+        @(Get-IQAuthProcessWindowList).Count | Should -Be 0 -Because 'the user32 helper is Windows-only'
+        { Show-IQAuthWindowInFront -Handle 1 } | Should -Not -Throw
+    }
     It 'falls back to the plain module sign-in when the runspace path itself fails' {
         $override = { param([string]$EnvironmentName, [string]$TenantId) throw 'no embedded browser here' }
         Connect-IQPowerBIModuleBounded -TimeoutMinutes 0.5 -ScriptOverride $override | Should -Be 'MODULE-VIA-PLAIN'

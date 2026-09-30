@@ -212,7 +212,11 @@ sign-in runs in a separate runspace with a **10-minute limit** (15 at start-up):
 holds the run (2026-09-22: 22 hours); the run continues with the sign-in token, the models of that run fail with the
 reason, and `State\xmla-connection.json` records the module source provisionally so the next run asks at start-up.
 The refresh of that token (`Get-PowerBIAccessToken`, MSAL silent) is served from the same runspace when the main one
-has no session.
+has no session. Because that window belongs to a background thread of a console process, Windows does not bring it
+to the front on its own (2026-09-30: it was only found on a second virtual desktop); while the sign-in is pending the
+run looks for its own new top-level windows and raises each once (restore, top of the z-order, foreground when
+allowed, taskbar flash) and logs `Sign-in window '...' brought to the front`. If it still does not show, check the
+taskbar and the other virtual desktops (Win+Tab).
 
 ## 5. The token cache (DeviceCode)
 
