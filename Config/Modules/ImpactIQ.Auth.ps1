@@ -1776,6 +1776,98 @@ function Get-IQToken {
     return $token
 }
 
+function Initialize-IQAuthNativeWindow {
+    <#
+    .SYNOPSIS
+        Compiles the small user32 helper used to find and raise this process's own top-level windows (Windows only; $true when available) (private).
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    if (-not $script:IQ.IsWindows) { return $false }
+    if ('ImpactIQ.NativeWindow' -as [type]) { return $true }
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+namespace ImpactIQ {
+    public static class NativeWindow {
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+        [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int max);
+        [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
+        [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        [DllImport("user32.dll")] private static extern bool FlashWindowEx(ref FLASHWINFO info);
+        [StructLayout(LayoutKind.Sequential)] private struct FLASHWINFO { public uint cbSize; public IntPtr hwnd; public uint dwFlags; public uint uCount; public uint dwTimeout; }
+        public static List<string> ListProcessWindows(int pid) {
+            var found = new List<string>();
+            EnumWindows((hWnd, lParam) => {
+                uint owner; GetWindowThreadProcessId(hWnd, out owner);
+                if (owner == (uint)pid && IsWindowVisible(hWnd)) {
+                    var sb = new StringBuilder(512); GetWindowText(hWnd, sb, sb.Capacity);
+                    found.Add(hWnd.ToInt64().ToString() + "|" + sb.ToString());
+                }
+                return true;
+            }, IntPtr.Zero);
+            return found;
+        }
+        public static void BringToFront(long handle) {
+            var hWnd = new IntPtr(handle);
+            ShowWindow(hWnd, 9);                                                   // SW_RESTORE
+            SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040); // HWND_TOPMOST, NOSIZE|NOMOVE|SHOWWINDOW
+            SetWindowPos(hWnd, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040); // HWND_NOTOPMOST
+            SetForegroundWindow(hWnd);
+            var info = new FLASHWINFO { cbSize = (uint)Marshal.SizeOf(typeof(FLASHWINFO)), hwnd = hWnd, dwFlags = 0x00000003 | 0x0000000C, uCount = 0, dwTimeout = 0 }; // FLASHW_ALL | FLASHW_TIMERNOFG
+            FlashWindowEx(ref info);
+        }
+    }
+}
+'@
+        return $true
+    }
+    catch {
+        Write-IQLog -Level Debug -Stage Auth -Message ('Native window helper not available: ' + $_.Exception.Message)
+        return $false
+    }
+}
+
+function Get-IQAuthProcessWindowList {
+    <#
+    .SYNOPSIS
+        Visible top-level windows owned by this process as @{ Handle; Title } (the embedded sign-in browser is one); empty off Windows (private).
+    #>
+    [CmdletBinding()]
+    param()
+    $list = @()
+    if (-not (Initialize-IQAuthNativeWindow)) { return $list }
+    try {
+        foreach ($entry in @([ImpactIQ.NativeWindow]::ListProcessWindows([System.Diagnostics.Process]::GetCurrentProcess().Id))) {
+            $text = [string]$entry
+            $bar = $text.IndexOf('|')
+            if ($bar -lt 1) { continue }
+            $list += @{ Handle = [long]$text.Substring(0, $bar); Title = $text.Substring($bar + 1) }
+        }
+    }
+    catch { $list = @() }
+    return $list
+}
+
+function Show-IQAuthWindowInFront {
+    <#
+    .SYNOPSIS
+        Restores a window of this process, lifts it to the top of the z-order (topmost, then normal), gives it the foreground when allowed and flashes its taskbar button (private; never throws).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][long]$Handle)
+    if (-not (Initialize-IQAuthNativeWindow)) { return }
+    try { [ImpactIQ.NativeWindow]::BringToFront($Handle) } catch { $null = $_.Exception }
+}
+
 function Connect-IQPowerBIModuleBounded {
     <#
     .SYNOPSIS
@@ -1818,9 +1910,26 @@ function Connect-IQPowerBIModuleBounded {
         $ps = [powershell]::Create()
         $ps.Runspace = $runspace
         $ps.AddScript($code.ToString()).AddParameter('EnvironmentName', $envName).AddParameter('TenantId', $tenant) | Out-Null
-        Write-IQLog -Level Info -Stage Auth -Message ("A Microsoft sign-in window for the Power BI PowerShell module opens now (it may sit behind other windows); the run waits at most {0} minute(s) for it." -f $TimeoutMinutes)
+        Write-IQLog -Level Info -Stage Auth -Message ("A Microsoft sign-in window for the Power BI PowerShell module opens now; the run brings it to the front and flashes its taskbar button, and waits at most {0} minute(s) for it. If you still do not see it: check the taskbar and other virtual desktops (Win+Tab)." -f $TimeoutMinutes)
         $handle = $ps.BeginInvoke()
-        if (-not $handle.AsyncWaitHandle.WaitOne([TimeSpan]::FromMinutes($TimeoutMinutes))) {
+        # The window is created by the sign-in runspace's thread, which never has foreground rights in a console process,
+        # so Windows leaves it behind everything else (2026-09-30: it was only found on a second virtual desktop). While
+        # waiting, look for this process's own new top-level windows and raise each one once.
+        $deadline = [datetime]::UtcNow.AddMinutes($TimeoutMinutes)
+        $raised = @{}
+        $finished = $false
+        while (-not $finished) {
+            if ($handle.AsyncWaitHandle.WaitOne(500)) { $finished = $true; break }
+            if ([datetime]::UtcNow -gt $deadline) { break }
+            foreach ($w in @(Get-IQAuthProcessWindowList)) {
+                $key = [string]$w.Handle
+                if ($raised.ContainsKey($key)) { continue }
+                $raised[$key] = $true
+                Show-IQAuthWindowInFront -Handle $w.Handle
+                Write-IQLog -Level Info -Stage Auth -Message ("Sign-in window '{0}' brought to the front." -f $w.Title)
+            }
+        }
+        if (-not $finished) {
             try { $ps.BeginStop($null, $null) | Out-Null } catch { $null = $_.Exception }
             if ($null -ne $auth -and ($auth -is [hashtable])) { $auth['ModuleSignInTimedOut'] = $true }
             Write-IQLog -Level Warn -Stage Auth -Message ("The Power BI PowerShell module sign-in was not completed within {0} minute(s); giving up on it for now (the run continues with the sign-in token)." -f $TimeoutMinutes)
